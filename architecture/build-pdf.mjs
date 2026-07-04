@@ -27,17 +27,17 @@ const EMBED = F.body && F.mono; // only embed if we at least have body + mono
 // Standard-font fallback needs Latin-1; swap common non-WinAnsi glyphs to ASCII.
 const SANITIZE = !EMBED;
 function san(s) {
-  if (!SANITIZE) {
-    // Even with Ubuntu Mono, a few emoji/symbols aren't present — normalize those only.
-    return s.replace(/✅/g, '[x]').replace(/⚠️?/g, '[!]').replace(/➖/g, '[-]')
-            .replace(/❌/g, '[x]').replace(/•/g, '•');
-  }
+  // Glyphs missing from the Ubuntu proportional/mono faces (and from the standard PDF
+  // fonts) — normalize in BOTH modes so nothing renders as tofu (□).
+  s = s
+    .replace(/[►▶▸]/g, '>').replace(/[◄◀]/g, '<').replace(/[▼▾]/g, 'v').replace(/[▲▴]/g, '^')
+    .replace(/[⇄⇆↔]/g, '<->').replace(/[⇒⇨]/g, '=>').replace(/[⇐]/g, '<=')
+    .replace(/✅/g, '[x]').replace(/⚠️?/g, '[!]').replace(/➖/g, '[-]').replace(/❌/g, '[x]');
+  if (!SANITIZE) return s; // Ubuntu fonts embedded: keep box-drawing, arrows (→ ←) as-is
   return s
     .replace(/[│┃]/g, '|').replace(/[─━]/g, '-').replace(/[┌┬┐├┼┤└┴┘╔╗╚╝╠╣╦╩╬]/g, '+')
-    .replace(/[►▶▸]/g, '>').replace(/[◄◀]/g, '<').replace(/[▼▾]/g, 'v').replace(/[▲▴]/g, '^')
-    .replace(/✅/g, '[x]').replace(/⚠️?/g, '[!]').replace(/➖/g, '[-]').replace(/❌/g, '[x]')
     .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[—–]/g, '-').replace(/•/g, '*')
-    .replace(/…/g, '...').replace(/→/g, '->').replace(/⇄/g, '<->').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+    .replace(/…/g, '...').replace(/→/g, '->').replace(/←/g, '<-').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
 }
 
 const doc = new PDFDocument({ size: 'A4', margins: { top: 54, bottom: 54, left: 54, right: 54 }, bufferPages: true });
@@ -70,15 +70,19 @@ function inlineRuns(tok) {
   return runs;
 }
 function fontFor(r) { return r.code ? (r.bold ? FONTS.monoBold : FONTS.mono) : r.bold ? FONTS.bold : r.italic ? FONTS.italic : FONTS.body; }
+// Render a chain of styled runs as ONE continued text flow. Never pass positional x/y —
+// that resets pdfkit's cursor and breaks inline continuation (the marker/first-letter
+// overlap bug). Only the first run carries the paragraph indent.
 function writeRuns(runs, opts = {}) {
-  const size = opts.size || 10.5; let first = true;
+  const size = opts.size || 10.5;
+  const indent = opts.indent || 0;
+  const color = opts.color || '#1a1a1a';
+  if (runs.length === 0) { doc.font(FONTS.body).fontSize(size).text(' '); return; }
   runs.forEach((r, i) => {
-    doc.font(fontFor(r)).fontSize(size).fillColor(r.code ? '#b5330a' : '#1a1a1a');
     const last = i === runs.length - 1;
-    doc.text(r.t, first ? undefined : doc.x, first ? undefined : doc.y, { continued: !last, indent: first ? (opts.indent || 0) : 0 });
-    first = false;
+    doc.font(fontFor(r)).fontSize(size).fillColor(r.code ? '#b5330a' : color);
+    doc.text(r.t, { continued: !last, indent: i === 0 ? indent : 0 });
   });
-  if (runs.length === 0) doc.text(' ');
 }
 
 function heading(tok, next) {
@@ -162,11 +166,15 @@ for (let i = 0; i < tokens.length; i++) {
     case 'heading_open': heading(t, tokens[i + 1]); i += 2; break;
     case 'paragraph_open': {
       const inl = tokens[i + 1];
-      if (listStack.length) { const lvl = listStack.length; const marker = listStack[lvl - 1].ordered ? `${listStack[lvl - 1].n++}. ` : '• ';
-        doc.font(FONTS.body).fontSize(10.5).fillColor('#1a1a1a');
-        doc.text(marker, doc.page.margins.left + (lvl - 1) * 14 + 2, doc.y, { continued: true, indent: 0 });
-        writeRuns(inlineRuns(inl), { size: 10.5 });
-      } else { doc.moveDown(0.15); writeRuns(inlineRuns(inl), { size: 10.5 }); }
+      const runs = inlineRuns(inl);
+      if (listStack.length) {
+        const lvl = listStack.length; const top = listStack[lvl - 1];
+        const marker = top.ordered ? `${top.n++}.  ` : '•  ';
+        doc.moveDown(0.08);
+        // Prepend the marker as the first run so it flows inline with the text (no cursor reset).
+        runs.unshift({ t: marker, bold: false, italic: false, code: false });
+        writeRuns(runs, { size: 10.5, indent: (lvl - 1) * 16 });
+      } else { doc.moveDown(0.15); writeRuns(runs, { size: 10.5 }); }
       i += 2; break; }
     case 'bullet_list_open': listStack.push({ ordered: false }); break;
     case 'ordered_list_open': listStack.push({ ordered: true, n: 1 }); break;
@@ -174,9 +182,8 @@ for (let i = 0; i < tokens.length; i++) {
     case 'blockquote_open': { doc.moveDown(0.2); const sy = doc.y; // gather inner paragraphs
       let depth = 1; const buf = []; let j = i + 1;
       while (j < tokens.length && depth > 0) { if (tokens[j].type === 'blockquote_open') depth++; else if (tokens[j].type === 'blockquote_close') depth--; if (depth > 0 && tokens[j].type === 'inline') buf.push(tokens[j]); j++; }
-      doc.save();
-      for (const inl of buf) { doc.font(FONTS.italic).fontSize(9.5).fillColor('#40515e'); const runs = inlineRuns(inl).map((r) => ({ ...r })); doc.text('', doc.page.margins.left + 12, doc.y); writeRuns(runs, { size: 9.5 }); doc.moveDown(0.2); }
-      doc.restore(); doc.moveTo(doc.page.margins.left + 3, sy).lineTo(doc.page.margins.left + 3, doc.y).lineWidth(2).strokeColor('#c8d6e5').stroke();
+      for (const inl of buf) { const runs = inlineRuns(inl).map((r) => ({ ...r, italic: !r.code })); writeRuns(runs, { size: 9.5, indent: 12, color: '#40515e' }); doc.moveDown(0.2); }
+      doc.moveTo(doc.page.margins.left + 3, sy).lineTo(doc.page.margins.left + 3, doc.y).lineWidth(2).strokeColor('#c8d6e5').stroke();
       doc.moveDown(0.2); doc.fillColor('#1a1a1a'); i = j - 1; break; }
     case 'fence': case 'code_block': codeBlock(t.content); break;
     case 'hr': doc.moveDown(0.2).moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).lineWidth(0.5).strokeColor('#c8d6e5').stroke().moveDown(0.4); break;
