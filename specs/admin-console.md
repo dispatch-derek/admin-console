@@ -1,11 +1,16 @@
 # AnythingLLM Administration Console — Specification v1
 
-Status: Draft rev 3 (spec-review resolutions applied) — for implementation and QA
-Grounding reference: `docs/anythingllm-surface.md` (authoritative; captured from the live
-instance on 2026-07-03). Every functional requirement below cites the concrete endpoint(s)
-and/or field(s) from that document.
+Status: Draft rev 4 (governing-architecture conformance applied) — for implementation and QA
+Grounding reference: `docs/anythingllm-surface.md` (authoritative engine surface; captured from
+the live instance on 2026-07-03). Every functional requirement below cites the concrete
+engine endpoint(s)/field(s) it maps to.
+Governing architecture: `docs/governing-architecture.md` (binding white-label strategy; source
+`front-end-custom/web/plan/AnythingLLM_Customization_Strategy.pdf`). §4 and the event model
+below conform to it.
 Change history: rev 1 initial draft; rev 2 folded resolved decisions OQ-1..OQ-6 (§12);
-rev 3 applied spec-review resolutions BL-1..NI-3 (§13).
+rev 3 applied spec-review resolutions BL-1..NI-3 (§13); rev 4 aligned the architecture to the
+governing white-label strategy — BFF as anti-corruption layer, product-verb API, engine shapes
+confined to the BFF, verify-after-write, and an `admin.*` domain-event catalog (§14).
 
 Section numbers (§1, §1.1, …) and requirement IDs (REQ-###) are **stable**. Downstream tests
 cite them. Never renumber or reuse an ID; append new sections/IDs or mark items **DEPRECATED**.
@@ -143,116 +148,206 @@ account store is entirely independent of the AnythingLLM `users` table and API k
 
 ## §4 Architecture
 
+This section conforms to `docs/governing-architecture.md`. The AnythingLLM engine is a **sealed,
+replaceable dependency** reached ONLY through its `/api/v1/*` web API. The BFF is the
+**anti-corruption layer**: the single piece of code that knows the engine exists, translating
+between our stable product API and the engine's current (unstable, hidden) shapes.
+
 ### §4.1 Package structure
 - REQ-020 — The repo is two packages: `bff/` (Fastify + TypeScript) and `web/` (React +
   TypeScript + Vite), mirroring the customer app (grounding §6). Default ports: BFF `3002`, web
   dev server `5173`; Vite proxies `/api/*` to the BFF. *Test:* `web` dev config proxies
   `/api/*`; `bff` listens on `config.port` (default `3002`).
 
-### §4.2 Route/client pairing (mandatory pattern)
-- REQ-021 — Every browser-exposed capability MUST have (a) a BFF route that injects auth and
-  maps upstream errors, and (b) a typed web client function calling only the BFF (relative
-  `/api/*` path). The browser MUST NEVER call AnythingLLM directly. *Test:* static check — no
-  `web/` source references `ANYTHINGLLM_BASE_URL` or an absolute upstream URL; every web client
-  call targets `/api/*`.
-- REQ-022 — BFF routes forward to the corresponding `/api/v1/...` upstream path, `slug`/`id`
-  path params URL-encoded (mirrors `encodeURIComponent` usage in `bff/src/index.ts`). *Test:* a
-  slug containing a space/`/` is encoded before reaching upstream.
-- REQ-023 — Upstream error mapping (MA-3, NI-3). The BFF forwards the upstream status and returns
-  a JSON `{ message }` body that the web app renders verbatim (REQ-097a). The console defines no
-  streaming routes, so there is no streaming-specific mapping. Two distinct `403` cases MUST be
-  disambiguated by the BFF:
+### §4.2 The BFF as anti-corruption layer — per-call responsibility chain
+- REQ-021 — The browser MUST NEVER call the engine directly and the frontend speaks ONLY our
+  clean product API (relative `/api/*`); every browser-exposed capability has a BFF product route
+  plus a typed web client function. *Test:* static check — no `web/` source references
+  `ANYTHINGLLM_BASE_URL`, an absolute engine URL, or a `/v1/...` path; every web client call
+  targets a product `/api/*` route.
+- REQ-026 — **Sole broker.** The BFF is the only code that references engine URLs, `/api/v1`
+  paths, or engine request/response shapes; no engine knowledge exists outside it. *Test:* engine
+  path/field references appear only under `bff/src/` (engine-adapter module), never in `web/`.
+- REQ-027 — **Per-call responsibility chain (ordered).** On EVERY product route the BFF performs,
+  in order: (1) authenticate our staff user (§3.2) and establish the caller identity;
+  (2) resolve identity → look up the target engine workspace **slug** (and any user handle) via
+  our own mapping layer (§4.3) — engine slugs/ids are OPAQUE handles, never parsed or derived;
+  (3) attach the server-side engine API key (`Authorization: Bearer`, REQ-013); (4) translate the
+  product request into the engine's current `/api/v1` request shape; (5) call the engine and
+  re-shape the response back into our clean product model before returning it. Steps (6)
+  verify-after-write and (7) emit-event apply to mutations (REQ-028, REQ-029). *Test:* a product
+  read route with no session yields `401` (step 1); a captured engine request bears the API key
+  (step 3) and engine field names (step 4); the response returned to the browser contains only
+  product field names, no engine field names (step 5).
+- REQ-028 — **Verify-after-write (step 6; applies to every mutating route).** After any call that
+  writes engine state (create/update/delete/settings/membership/documents), the BFF re-reads the
+  relevant state from the engine and confirms the intended outcome BEFORE reporting success to the
+  browser; the engine has known write-consistency gaps. If verification fails, the route returns a
+  non-success status with `{ message }` and reports the write as NOT confirmed. *Test:* stub the
+  engine so a write returns 200 but the follow-up read shows the change absent → the product route
+  returns a non-success ("could not confirm the change was saved") and no success event
+  (REQ-029b) is emitted.
+- REQ-029 — **Emit a domain event (step 7).** After a mutation is verified (REQ-028), the BFF
+  emits exactly one `admin.*` domain event to the shared on-box event bus (§14). *Test:* a
+  verified workspace update publishes one `admin.workspace.updated` event; a read route publishes
+  none.
+
+### §4.3 Boundary rules — engine shapes confined; opaque handles
+- REQ-021a — **HARD RULE (release-blocking): no engine leakage into the frontend.** No engine
+  field-name and no engine request-or-response shape may appear in `web/` (or any future
+  feature-service) source. The frontend's types and payloads use ONLY our product vocabulary;
+  the BFF owns the product↔engine field mapping (e.g. §5.2 REQ-032 table). *Test:* a static scan
+  of `web/` finds none of the engine identifiers (e.g. `openAiTemp`, `openAiPrompt`,
+  `openAiHistory`, `similarityThreshold`, `chatProvider`, `chatMode`, `topN`, `update-embeddings`,
+  or any `*ModelPref`/env key from grounding §5); such an occurrence is a release-blocking defect.
+- REQ-021b — **Opaque handles & identity mapping.** Engine workspace slugs and user ids are
+  opaque handles that our layer stores and looks up; the console MUST NOT parse, pattern-match, or
+  synthesize them. Any user→workspace (and, in principle, tenant→workspace) identity mapping the
+  console needs lives in OUR own store, not by interpreting engine identifiers. Because each box
+  is single-tenant (one customer per install, §1.2), the tenant mapping is minimal — but the
+  principle holds and user→workspace assignment state (§6.4) is owned by our layer, keyed to
+  opaque engine handles. *Test:* code review confirms the BFF looks slugs/ids up from our mapping
+  layer and never derives them from other values.
+
+### §4.4 Product-verb API & engine mapping
+- REQ-022 — **Product verbs, not engine mirrors.** BFF routes are product-oriented resources/verbs
+  (e.g. `POST /api/workspaces`, `PATCH /api/workspaces/:id/settings`, `POST /api/users`), NOT
+  copies of engine paths. Our product API is the stable contract; the engine endpoint each product
+  route currently maps to is documented ONLY inside the BFF adapter and in this spec's
+  "Engine mapping (BFF-internal)" notes (§5–§7). The BFF is responsible for mapping product
+  requests onto whatever the engine currently expects, URL-encoding opaque handles when composing
+  engine paths. *Test:* the frontend calls only product routes; changing an engine path requires
+  editing only the BFF adapter/mapping note, not the frontend or the product route contract.
+- REQ-022a — **Contract tests.** The BFF anti-corruption layer is covered by contract tests
+  against the pinned engine version, asserting each product route's translation (step 4) and
+  re-shaping (step 5). *Test:* the contract-test suite runs against the pinned engine and fails if
+  a product↔engine mapping drifts.
+
+### §4.5 Error mapping
+- REQ-023 — Engine error mapping (MA-3, NI-3). The BFF maps engine errors to product responses
+  and returns a JSON `{ message }` body the web app renders verbatim (REQ-097a). The console
+  defines no streaming routes, so there is no streaming-specific mapping. Two distinct `403`
+  cases MUST be disambiguated by the BFF:
   - **Key-rejection 403** (the developer API key is invalid/revoked): `403 { message: "AnythingLLM
     rejected the API key — check ANYTHINGLLM_API_KEY (server configuration)." }`.
   - **Authorization/precondition 403** (e.g. multi-user mode off, or the action needs a role the
     key lacks): `403 { message: "AnythingLLM refused this action: multi-user mode may be off or
     the operation is not permitted for this API key." }`.
-  `400 → 400 { message }` (validation); other non-OK → upstream status with a `{ message }` body
+  `400 → 400 { message }` (validation); other non-OK → mapped status with a `{ message }` body
   (default operator text per REQ-097). *Test:* stub the two `403` variants and assert distinct
-  `message` bodies; stub `400/404/429/500` and assert the status is forwarded with a `{ message }`.
+  `message` bodies; stub `400/404/429/500` and assert a mapped status with a `{ message }`.
+
+### §4.6 Health check
 - REQ-024 — The BFF exposes `GET /health → { ok: true }` and does not require a session for it
   (mirrors existing BFF). *Test:* unauthenticated `GET /health` returns `200 { ok: true }`.
 
-### §4.3 Typed contracts
-- REQ-025 — Request/response shapes for every route are declared as TypeScript interfaces in
-  `bff/src/types.ts` and mirrored in `web/src/types/`, derived from the field lists in grounding
-  §3–§5. *Test:* type-check passes; a workspace update body only permits fields enumerated in
-  §5.2.
+### §4.7 Typed contracts
+- REQ-025 — Product request/response shapes are declared as TypeScript interfaces shared with the
+  web app (product vocabulary only); engine shapes are declared SEPARATELY in a BFF-internal
+  engine-adapter module and never exported to `web/`. *Test:* type-check passes; `web/` imports
+  only product types; the workspace-settings product type exposes product field names (§5.2), not
+  engine field names.
 
 ---
 
 ## §5 Workspaces
 
-Endpoints (grounding §3): `GET /api/v1/workspaces`, `GET /api/v1/workspace/{slug}`,
-`POST /api/v1/workspace/new`, `POST /api/v1/workspace/{slug}/update`,
-`DELETE /api/v1/workspace/{slug}`, `POST /api/v1/workspace/{slug}/update-embeddings`,
-`POST /api/v1/workspace/{slug}/update-pin`.
+Product API (frontend consumes these; §4.4). Workspaces are addressed by an opaque `:id` handle
+(§4.3 REQ-021b) that the BFF resolves to the engine slug.
+
+> **Engine mapping (BFF-internal, grounding §3):** `GET /api/workspaces` → `GET /v1/workspaces`;
+> `GET /api/workspaces/:id` → `GET /v1/workspace/{slug}`; `POST /api/workspaces` →
+> `POST /v1/workspace/new`; `PATCH /api/workspaces/:id/settings` →
+> `POST /v1/workspace/{slug}/update`; `DELETE /api/workspaces/:id` →
+> `DELETE /v1/workspace/{slug}`; `PUT /api/workspaces/:id/knowledge` →
+> `POST /v1/workspace/{slug}/update-embeddings`; `POST /api/workspaces/:id/knowledge/pin` →
+> `POST /v1/workspace/{slug}/update-pin`. These engine paths appear ONLY in the BFF adapter, never
+> in `web/` (REQ-021a).
 
 ### §5.1 Listing & viewing
-- REQ-030 — The console lists all workspaces via BFF `GET /api/workspaces` → upstream
-  `GET /v1/workspaces`, showing at minimum `name`, `slug`, and configured `chatProvider` /
-  `chatModel` (grounding §3). *Test:* list renders one row per workspace returned upstream.
-- REQ-031 — Selecting a workspace loads its full settings via BFF `GET /api/workspace/:slug` →
-  upstream `GET /v1/workspace/{slug}` and displays every editable field in §5.2. *Test:* each
-  field value matches the upstream response.
+- REQ-030 — The console lists all workspaces via product route `GET /api/workspaces`, showing at
+  minimum `displayName`, the opaque `id` handle, and the configured `llmProvider`/`llmModel`
+  (product fields per REQ-032). *Test:* list renders one row per workspace; the BFF maps the
+  engine `GET /v1/workspaces` result to product shape (no engine field names cross to `web/`).
+- REQ-031 — Selecting a workspace loads its full product settings via `GET /api/workspaces/:id`
+  and displays every editable field in §5.2. The BFF re-shapes the engine
+  `GET /v1/workspace/{slug}` response into the product model. *Test:* each product field value
+  corresponds to the engine value after mapping.
 
 ### §5.2 Editing settings
-- REQ-032 — The console edits, via BFF `POST /api/workspace/:slug/update` → upstream
-  `POST /v1/workspace/{slug}/update`, all per-workspace fields (grounding §3): `name`,
-  `chatProvider`, `chatModel`, `chatMode` (`chat`|`query`), `openAiTemp`, `openAiHistory`,
-  `openAiPrompt` (system prompt), `similarityThreshold`, `topN`, `agentProvider`, `agentModel`,
-  `queryRefusalResponse`, `vectorSearchMode`, `pfpFilename`. *Test:* changing each field and
-  saving results in the corresponding key in the upstream request body; re-fetch reflects it.
-- REQ-033 — The update request body contains ONLY fields the operator changed; omitted fields
-  are left untouched upstream (grounding §3 "only provided fields are changed"). *Test:* edit
-  only `openAiTemp` → request body has exactly `{ openAiTemp }`.
-- REQ-034 — `chatMode` selection is constrained to `chat` or `query` (grounding §3); the editor
-  offers exactly those two options and never `automatic`. **Out-of-range incoming value (BL-3):**
-  if a workspace's fetched `chatMode` is any value outside {`chat`,`query`} (e.g. `automatic` set
-  by the customer app), the editor displays that value read-only/as-is, does NOT list it as a
-  selectable option, and MUST NOT write `chatMode` back unless the operator explicitly changes it
-  to `chat` or `query` (partial-write per REQ-033). *Test:* loading a workspace with
-  `chatMode:"automatic"` shows it read-only; saving an unrelated field does not include
-  `chatMode` in the request body; the selector still exposes only `chat` and `query`.
-- REQ-035 — Numeric fields are validated before submit with pinned inclusive bounds (MA-6):
-  `openAiTemp` — float, `0.0 ≤ x ≤ 2.0` (enforced upper cap 2.0); `openAiHistory` — integer
-  `≥ 0`; `similarityThreshold` — float, `0.0 ≤ x ≤ 1.0` inclusive; `topN` — integer `≥ 1`.
-  Invalid input is rejected client-side with a field error and not sent. *Test:* `topN = 0`
-  blocks submit; `similarityThreshold = 1.5` blocks submit; `openAiTemp = 2.5` blocks submit;
-  `similarityThreshold = 0.0` and `= 1.0` are accepted.
-- REQ-036 — `null`/inherit semantics (MA-6): clearing a nullable field to inherit its default is
-  performed by sending JSON `null` for that key (NOT an empty string) via
-  `POST /v1/workspace/{slug}/update`; omitting a key entirely means "no change" (REQ-033). This
-  applies to `chatProvider`/`chatModel`/`agentProvider`/`agentModel` and other nullable fields,
-  per grounding §3 ("null = inherit system default"). *Test:* clearing `chatModel` sends
-  `{ "chatModel": null }` and the workspace inherits the system default on re-fetch; an untouched
-  `chatModel` is absent from the body.
+- REQ-032 — The console edits workspace settings via product route
+  `PATCH /api/workspaces/:id/settings`. The frontend uses ONLY product field names; the BFF
+  maps them to engine fields (grounding §3). **Product↔engine field map (BFF-internal):**
+  `displayName`→`name`, `llmProvider`→`chatProvider`, `llmModel`→`chatModel`,
+  `responseMode`→`chatMode` (`chat`|`query`), `temperature`→`openAiTemp`,
+  `historyWindow`→`openAiHistory`, `systemPrompt`→`openAiPrompt`,
+  `retrievalThreshold`→`similarityThreshold`, `retrievalTopN`→`topN`,
+  `agentLlmProvider`→`agentProvider`, `agentLlmModel`→`agentModel`,
+  `noResultsMessage`→`queryRefusalResponse`, `retrievalMode`→`vectorSearchMode`,
+  `avatar`→`pfpFilename`. This is a mutating route: verify-after-write (REQ-028) re-reads the
+  workspace and confirms the change, then emits `admin.workspace.updated` (§14). *Test:* changing
+  each product field maps to the correct engine key in the engine request body; the response to
+  the browser carries product field names only; a verified save emits one
+  `admin.workspace.updated`.
+- REQ-033 — The settings PATCH carries ONLY fields the operator changed; omitted product fields
+  are left untouched (the BFF sends only the mapped engine keys, grounding §3 "only provided
+  fields are changed"). *Test:* editing only `temperature` results in an engine body of exactly
+  `{ openAiTemp }`.
+- REQ-034 — `responseMode` selection is constrained to `chat` or `query` (engine `chatMode`,
+  grounding §3); the editor offers exactly those two options and never `automatic`.
+  **Out-of-range incoming value (BL-3):** if a workspace's fetched mode is any value outside
+  {`chat`,`query`} (e.g. `automatic` set by the customer app), the editor displays that value
+  read-only/as-is, does NOT list it as a selectable option, and MUST NOT write `responseMode`
+  back unless the operator explicitly changes it to `chat` or `query` (partial-write per
+  REQ-033). *Test:* loading a workspace whose engine `chatMode` is `automatic` shows it read-only;
+  saving an unrelated field does not include `chatMode` in the engine body; the selector still
+  exposes only `chat` and `query`.
+- REQ-035 — Numeric fields are validated before submit with pinned inclusive bounds (MA-6),
+  product names (engine names in parentheses): `temperature` (`openAiTemp`) — float,
+  `0.0 ≤ x ≤ 2.0` (enforced upper cap 2.0); `historyWindow` (`openAiHistory`) — integer `≥ 0`;
+  `retrievalThreshold` (`similarityThreshold`) — float, `0.0 ≤ x ≤ 1.0` inclusive; `retrievalTopN`
+  (`topN`) — integer `≥ 1`. Invalid input is rejected client-side with a field error and not sent.
+  *Test:* `retrievalTopN = 0` blocks submit; `retrievalThreshold = 1.5` blocks submit;
+  `temperature = 2.5` blocks submit; `retrievalThreshold = 0.0` and `= 1.0` are accepted.
+- REQ-036 — `null`/inherit semantics (MA-6): clearing a nullable product field to inherit its
+  default is performed by sending JSON `null` for that field (NOT an empty string) on
+  `PATCH /api/workspaces/:id/settings`; the BFF forwards `null` on the mapped engine key; omitting
+  a field means "no change" (REQ-033). This applies to `llmProvider`/`llmModel`/`agentLlmProvider`/
+  `agentLlmModel` (engine `chatProvider`/`chatModel`/`agentProvider`/`agentModel`) and other
+  nullable fields, per grounding §3 ("null = inherit system default"). *Test:* clearing `llmModel`
+  causes the engine body `{ "chatModel": null }` and the workspace inherits the system default on
+  re-fetch; an untouched `llmModel` is absent from the body.
 - REQ-036a — **Model selection uses live Ollama discovery (resolves OQ-3; MA-5).** When the
-  **effective provider** (§2) for a workspace model field is `ollama`, `chatModel` and
-  `agentModel` are chosen from a dropdown populated from the live pulled-model list via the model
-  discovery route (§7.10, REQ-075). For any other effective provider, the field is validated
-  free-text (REQ-064a). If Ollama is unreachable, the field degrades gracefully to free-text with
-  a surfaced warning (REQ-076). *Test:* with effective provider `ollama` and Ollama reachable,
-  `chatModel` is a dropdown of pulled models; with a non-Ollama effective provider or Ollama
-  unreachable, it is free-text.
+  **effective provider** (§2) for a workspace model field is `ollama`, `llmModel` and
+  `agentLlmModel` are chosen from a dropdown populated from the live pulled-model list via the
+  model discovery product route (§7.10, REQ-075). For any other effective provider, the field is
+  validated free-text (REQ-064a). If Ollama is unreachable, the field degrades gracefully to
+  free-text with a surfaced warning (REQ-076). *Test:* with effective provider `ollama` and Ollama
+  reachable, `llmModel` is a dropdown of pulled models; with a non-Ollama effective provider or
+  Ollama unreachable, it is free-text.
 
 ### §5.3 Create & delete
-- REQ-037 — The console creates a workspace via BFF `POST /api/workspace/new` → upstream
-  `POST /v1/workspace/new` with at least a `name`; upstream assigns the unique `slug`
-  (grounding §3). *Test:* creating "Support KB" returns a workspace with a non-empty `slug`.
-- REQ-038 — Workspace deletion (BFF `DELETE /api/workspace/:slug` → upstream
-  `DELETE /v1/workspace/{slug}`) is a **dangerous operation** governed by §8. *Test:* see
-  REQ-081.
+- REQ-037 — The console creates a workspace via product route `POST /api/workspaces` with at least
+  a `displayName`; the engine (`POST /v1/workspace/new`, grounding §3) assigns the opaque slug,
+  which the BFF records in our mapping layer (§4.3) and returns as the product `id`. Mutating:
+  verify-after-write (REQ-028) confirms the new workspace reads back, then emits
+  `admin.workspace.created` (§14). *Test:* creating "Support KB" returns a product workspace with
+  a non-empty opaque `id`; a verified create emits one `admin.workspace.created`.
+- REQ-038 — Workspace deletion via product route `DELETE /api/workspaces/:id` (engine
+  `DELETE /v1/workspace/{slug}`) is a **dangerous operation** governed by §8. Verify-after-write
+  confirms the workspace is gone, then emits `admin.workspace.deleted` (§14). *Test:* see REQ-081;
+  a verified delete emits one `admin.workspace.deleted`.
 
-### §5.4 Documents & pins
-- REQ-039 — The console can attach and detach workspace documents via BFF
-  `POST /api/workspace/:slug/update-embeddings` → upstream
-  `POST /v1/workspace/{slug}/update-embeddings` and pin/unpin via
-  `POST /v1/workspace/{slug}/update-pin` (grounding §3). The selectable document list is sourced
-  from BFF `GET /api/documents` → upstream `GET /v1/documents` (MI-5). `update-embeddings`
-  supports both `adds` and `deletes` (attach/detach). Detaching/removing documents is a
-  **dangerous operation** governed by §8. *Test:* the attach picker is populated from
-  `GET /v1/documents`; attaching a doc adds it; detaching triggers the §8 confirmation.
+### §5.4 Documents & knowledge
+- REQ-039 — The console attaches and detaches workspace documents via product route
+  `PUT /api/workspaces/:id/knowledge` (engine `POST /v1/workspace/{slug}/update-embeddings`,
+  supporting both adds and deletes) and pins/unpins via `POST /api/workspaces/:id/knowledge/pin`
+  (engine `update-pin`), grounding §3. The selectable document list is sourced from product route
+  `GET /api/documents` (engine `GET /v1/documents`, MI-5). Detaching/removing documents is a
+  **dangerous operation** governed by §8. Mutating: verify-after-write (REQ-028) re-reads workspace
+  documents and confirms the change, then emits `admin.workspace.documents_changed` (§14). *Test:*
+  the attach picker is populated from `GET /api/documents`; attaching a doc adds it and, once
+  verified, emits `admin.workspace.documents_changed`; detaching triggers the §8 confirmation.
 
 ---
 
@@ -264,55 +359,81 @@ routes accept the developer API key but only FUNCTION once multi-user mode is al
 BFF cannot perform; it is an out-of-band prerequisite (BL-2, §6.1, §11). AnythingLLM API-key
 administration (`GET /system/api-keys`) is likewise session-auth-only and out of scope (§11).
 
+> **Engine mapping (BFF-internal, grounding §4):** `GET /api/multi-user-status` →
+> `GET /v1/admin/is-multi-user-mode`; `GET /api/users` → `GET /v1/admin/users`; `POST /api/users`
+> → `POST /v1/admin/users/new`; `PATCH /api/users/:id` → `POST /v1/admin/users/{id}`;
+> `DELETE /api/users/:id` → `DELETE /v1/admin/users/{id}`; `GET /api/invites` →
+> `GET /v1/admin/invites`; `POST /api/invites` → `POST /v1/admin/invite/new`;
+> `DELETE /api/invites/:id` → `DELETE /v1/admin/invite/{id}`; `GET /api/workspaces/:id/members` →
+> `GET /v1/admin/workspaces/{workspaceId}/users`; `POST /api/workspaces/:id/members` →
+> `POST /v1/admin/workspaces/{workspaceSlug}/manage-users`; `GET /api/oversight/chats` →
+> `POST /v1/admin/workspace-chats`. Engine int flags (e.g. `suspended` 0/1) are mapped to product
+> booleans; engine paths appear ONLY in the BFF adapter (REQ-021a). The BFF resolves the opaque
+> workspace `:id` to the engine numeric id / slug via our mapping layer (§4.3).
+
 ### §6.1 Multi-user-mode precondition & blocked state (BL-2)
 - REQ-040 — Before rendering any §6 user-management view, the console detects multi-user state
-  via BFF `GET /api/admin/is-multi-user-mode` → upstream `GET /v1/admin/is-multi-user-mode`. When
+  via product route `GET /api/multi-user-status` (engine `GET /v1/admin/is-multi-user-mode`). When
   multi-user mode is OFF, the console MUST block/disable ALL §6 user, invite, and
   workspace-membership UI and show a clear notice instructing the operator to enable multi-user
   mode **out-of-band in the native AnythingLLM UI** (the console cannot enable it — the enable
   route requires session auth). The console offers NO in-console "enable multi-user" action.
-  *Test:* with `MultiUserMode:false`, the user/invite/membership controls are disabled and the
-  out-of-band notice is shown; no request to any enable-multi-user route is issued; with
-  `MultiUserMode:true`, the §6 UI is enabled.
+  *Test:* with multi-user OFF, the user/invite/membership controls are disabled and the
+  out-of-band notice is shown; no request to any enable-multi-user route is issued; with multi-user
+  ON, the §6 UI is enabled.
 
 ### §6.2 Users
-- REQ-041 — List users via BFF `GET /api/admin/users` → upstream `GET /v1/admin/users`, showing
-  `username`, `role`, `suspended`, `dailyMessageLimit` (grounding §4). *Test:* one row per
-  upstream user with those fields.
-- REQ-042 — Create a user via BFF `POST /api/admin/users/new` → upstream
-  `POST /v1/admin/users/new` with `username`, `password`, and `role` ∈ {`default`,`admin`,
-  `manager`} (grounding §4). *Test:* role selector offers exactly those three values.
-- REQ-043 — Edit a user via BFF `POST /api/admin/users/:id` → upstream
-  `POST /v1/admin/users/{id}`, supporting `role`, `suspended` (0/1), and `dailyMessageLimit`
-  (grounding §4). *Test:* suspending a user sets `suspended:1` upstream.
-- REQ-044 — Delete a user via BFF `DELETE /api/admin/users/:id` → upstream
-  `DELETE /v1/admin/users/{id}`; this is a **dangerous operation** governed by §8. *Test:* see
-  REQ-082.
+- REQ-041 — List users via product route `GET /api/users`, showing product fields `username`,
+  `role`, `suspended` (boolean, mapped from engine `suspended` 0/1), `dailyMessageLimit`
+  (grounding §4). *Test:* one row per user with those product fields; no engine int flag reaches
+  `web/`.
+- REQ-042 — Create a user via product route `POST /api/users` with `username`, `password`, and
+  `role` ∈ {`default`,`admin`,`manager`} (engine `POST /v1/admin/users/new`, grounding §4).
+  Mutating: verify-after-write (REQ-028) confirms the user exists, then emits `admin.user.created`
+  (§14). *Test:* role selector offers exactly those three values; a verified create emits one
+  `admin.user.created`.
+- REQ-043 — Edit a user via product route `PATCH /api/users/:id` (engine
+  `POST /v1/admin/users/{id}`), supporting `role`, `suspended` (product boolean → engine 0/1),
+  and `dailyMessageLimit` (grounding §4). Mutating: verify-after-write confirms the change, then
+  emits `admin.user.updated`; additionally, toggling `suspended` true→ emits
+  `admin.user.suspended` and false→ emits `admin.user.reactivated` (§14). *Test:* suspending a
+  user sets engine `suspended:1` and, once verified, emits `admin.user.suspended`.
+- REQ-044 — Delete a user via product route `DELETE /api/users/:id` (engine
+  `DELETE /v1/admin/users/{id}`); a **dangerous operation** governed by §8. Verify-after-write
+  confirms removal, then emits `admin.user.deleted` (§14). *Test:* see REQ-082; a verified delete
+  emits one `admin.user.deleted`.
 
 ### §6.3 Invites
-- REQ-045 — List invites via BFF `GET /api/admin/invites` → upstream `GET /v1/admin/invites`,
-  showing `code`, `status` (default `pending`), `claimedBy`, `workspaceIds` (grounding §4).
-  *Test:* each invite row shows code and status.
-- REQ-046 — Create an invite via BFF `POST /api/admin/invite/new` → upstream
-  `POST /v1/admin/invite/new`, optionally scoping to `workspaceIds` (csv) (grounding §4).
-  *Test:* creating an invite with two workspaces stores both ids.
-- REQ-047 — Delete/revoke an invite via BFF `DELETE /api/admin/invite/:id` → upstream
-  `DELETE /v1/admin/invite/{id}` (grounding §4). *Test:* deleted invite disappears from list.
+- REQ-045 — List invites via product route `GET /api/invites`, showing `code`, `status` (default
+  `pending`), `claimedBy`, and the scoped workspace handles (engine `GET /v1/admin/invites`,
+  grounding §4). *Test:* each invite row shows code and status.
+- REQ-046 — Create an invite via product route `POST /api/invites`, optionally scoping to
+  workspace handles (BFF maps to engine `workspaceIds` csv on `POST /v1/admin/invite/new`,
+  grounding §4). Mutating: verify-after-write confirms the invite exists, then emits
+  `admin.invite.created` (§14). *Test:* creating an invite scoped to two workspaces stores both;
+  a verified create emits one `admin.invite.created`.
+- REQ-047 — Revoke an invite via product route `DELETE /api/invites/:id` (engine
+  `DELETE /v1/admin/invite/{id}`, grounding §4). Mutating: verify-after-write confirms removal,
+  then emits `admin.invite.revoked` (§14). *Test:* a revoked invite disappears from the list and
+  emits one `admin.invite.revoked`.
 
 ### §6.4 Workspace-user assignments
-- REQ-048 — View which users may access a workspace via BFF
-  `GET /api/admin/workspaces/:workspaceId/users` → upstream
-  `GET /v1/admin/workspaces/{workspaceId}/users` (grounding §4, `workspace_users` join). The
-  numeric `workspaceId` is obtained from `GET /v1/workspaces` (which returns each workspace's
-  `id`). *Test:* list matches upstream membership.
-- REQ-049 — **Normative membership endpoint (BL-1, MI-2).** Update workspace membership via BFF
-  `POST /api/admin/workspaces/:slug/manage-users` → upstream
+- REQ-048 — View which users may access a workspace via product route
+  `GET /api/workspaces/:id/members` (engine `GET /v1/admin/workspaces/{workspaceId}/users`,
+  `workspace_users` join, grounding §4). The BFF resolves the opaque product `:id` to the engine
+  numeric workspace id via our mapping layer (§4.3; the numeric id originates from
+  `GET /v1/workspaces`). *Test:* list matches engine membership after mapping.
+- REQ-049 — **Normative membership endpoint (BL-1, MI-2).** Update workspace membership via
+  product route `POST /api/workspaces/:id/members`, which the BFF maps to engine
   `POST /v1/admin/workspaces/{workspaceSlug}/manage-users` with body `{ userIds: number[],
   reset: boolean }`. Semantics (verified): `reset:false` ADDS the given users to current
   membership; `reset:true` REPLACES membership with exactly the given users. This slug-keyed
-  endpoint is the single normative path (no numeric-id `update-users` overwrite endpoint is
-  used). *Test:* `manage-users` with `reset:false` and one `userId` adds that user without
-  dropping existing members; `reset:true` with a set replaces membership with exactly that set.
+  engine endpoint is the single normative path (no numeric-id `update-users` overwrite endpoint is
+  used). Mutating: verify-after-write (REQ-028) re-reads membership and confirms it, then emits
+  `admin.workspace_user.assigned` for each added user and `admin.workspace_user.unassigned` for
+  each removed user (§14). *Test:* `reset:false` with one `userId` adds that user without dropping
+  existing members and emits one `admin.workspace_user.assigned`; `reset:true` replaces membership
+  with exactly the given set and emits the corresponding assigned/unassigned events.
 
 ### §6.5 API keys — out of scope (MA-1)
 - REQ-050 — **RETIRED / moved to §11 (REQ-117).** AnythingLLM API-key administration is
@@ -322,25 +443,36 @@ administration (`GET /system/api-keys`) is likewise session-auth-only and out of
 
 ### §6.6 Oversight
 - REQ-051 — Subject to the §6.1 multi-user precondition, the console may view workspace chat
-  history for oversight via BFF proxy to upstream `POST /v1/admin/workspace-chats` (grounding §4).
-  Chat EXPORT (`GET /v1/system/export-chats`) is a non-goal for v1 (§11 REQ-118). *Test:* the
-  chat-oversight view issues the `workspace-chats` call and renders returned history; no
+  history for oversight via product route `GET /api/oversight/chats` (engine
+  `POST /v1/admin/workspace-chats`, grounding §4). This is a read-only route (no verify-after-write,
+  no event). Chat EXPORT (`GET /v1/system/export-chats`) is a non-goal for v1 (§11 REQ-118).
+  *Test:* the chat-oversight view issues the oversight call and renders returned history; no
   export-chats route is exposed.
 
 ---
 
 ## §7 Instance-wide Settings
 
-Read via BFF `GET /api/system` → upstream `GET /v1/system` (secrets returned as booleans;
-grounding §5). Write via BFF `POST /api/system/update-env` → upstream
-`POST /v1/system/update-env`. Diagnostics: `GET /v1/system/env-dump`,
-`GET /v1/system/vector-count`.
+Product API: `GET /api/settings` (read), `PATCH /api/settings` (write curated categories),
+`GET /api/settings/raw` and `PUT /api/settings/raw` (guarded raw editor, §7.11), plus diagnostics
+`GET /api/diagnostics/*` and model discovery `GET /api/models/ollama` (§7.10).
+
+> **Engine mapping (BFF-internal, grounding §5):** `GET /api/settings` → `GET /v1/system` (secrets
+> as booleans); `PATCH /api/settings` and `PUT /api/settings/raw` → `POST /v1/system/update-env`;
+> `GET /api/diagnostics/env` → `GET /v1/system/env-dump` (masked); `GET /api/diagnostics/vectors`
+> → `GET /v1/system/vector-count`. Curated category forms present product-labeled controls; the
+> BFF maps each control to the engine env key(s) below. Engine env-key names do NOT appear in
+> `web/` for the curated forms (REQ-021a); the raw editor (§7.11) is the one sanctioned tool that
+> transports engine keys, treated there as opaque operator-supplied strings (REQ-078e).
 
 The console MUST cover **every** category below and expose each category's active/representative
 keys. The `update-env` handler accepts **186 keys** (grounding §5); the curated forms need not
 surface one control per key but MUST provide full coverage of every category in §7.1–§7.8 and MUST
 be able to write any accepted key they expose. Model-selection discovery is defined in §7.10 and
-the guarded raw editor (which can write ANY accepted key) in §7.11.
+the guarded raw editor (which can write ANY accepted key) in §7.11. Every settings write is
+mutating: verify-after-write (REQ-028) re-reads `GET /v1/system` and confirms the change before
+success, then emits `admin.instance.setting_changed` (and `admin.instance.provider_changed` when
+a provider selector changes), §14.
 
 ### §7.0 Secret handling (applies to every category)
 - REQ-060 — For every secret-bearing key, the UI shows a "**set** / **not set**" indicator
@@ -359,7 +491,10 @@ the guarded raw editor (which can write ANY accepted key) in §7.11.
 ### §7.1 LLM provider selection
 - REQ-063 — The console reads/writes `LLMProvider` and `ModelRouterId` (grounding §5.1). The
   active instance uses Ollama. Changing `LLMProvider` is a **dangerous operation** (§8, REQ-083).
-  *Test:* selecting a provider writes `LLMProvider`; the change passes through the §8 guardrail.
+  On a verified change of a provider selector (`LLMProvider`, `EmbeddingEngine`, `VectorDB`,
+  `TextToSpeechProvider`, `SpeechToTextProvider`), the BFF emits `admin.instance.provider_changed`
+  in addition to `admin.instance.setting_changed` (§14). *Test:* selecting a provider writes
+  `LLMProvider`, passes the §8 guardrail, and (once verified) emits `admin.instance.provider_changed`.
 
 ### §7.2 LLM provider credentials/config (per provider)
 - REQ-064 — The console exposes a per-provider configuration form for every provider group in
@@ -475,11 +610,21 @@ the guarded raw editor (which can write ANY accepted key) in §7.11.
 
 ### §7.11 Guarded raw environment editor (resolves OQ-2)
 Beyond the curated forms (§7.1–§7.8), the console provides an advanced editor that can read and
-**write** arbitrary env keys accepted by `POST /v1/system/update-env`.
+**write** arbitrary env keys accepted by the engine `update-env` handler, reached via the product
+routes `GET /api/settings/raw` and `PUT /api/settings/raw` (BFF maps to `GET /v1/system` /
+`POST /v1/system/update-env`).
 
 - REQ-078 — The raw editor is gated behind an explicit **"advanced mode" acknowledgement** before
   it is usable in a session. *Test:* the raw editor's write controls are inert until the operator
   acknowledges advanced mode.
+- REQ-078e — **Engine keys as opaque strings (§4.3 reconciliation).** The raw editor is the one
+  sanctioned surface where engine env-key names are visible; they are handled as opaque
+  operator-entered/selected strings (data), NOT compiled-in frontend field references, and the
+  frontend carries no engine request/response shape for them — it posts `{ key, value }` pairs to
+  `PUT /api/settings/raw` and the BFF validates and maps them. This preserves REQ-021a (no engine
+  shape leaks into frontend types/code). *Test:* the `web/` raw-editor code contains no hardcoded
+  engine key identifiers; the key list it validates against is fetched from the BFF (grounding §5
+  set, REQ-078b).
 - REQ-078a — **Raw editor read source (MA-2).** The raw editor reads current state as follows:
   non-secret current values come from the `settings` object of `GET /v1/system`; secret-bearing
   keys are shown as set/not-set (boolean) only, with overwrite-without-reveal (§7.0,
@@ -502,8 +647,10 @@ Beyond the curated forms (§7.1–§7.8), the console provides an advanced edito
   REQ-088a). *Test:* the raw `update-env` call is not issued until the typed token matches the
   displayed token; the diff masks secret values.
 - REQ-078d — Every raw-editor write is audit-logged (§10, REQ-093) with actor, key names (values
-  redacted for secrets per REQ-062/094), timestamp, and outcome. *Test:* a raw write produces one
-  audit entry listing the key names with secret values redacted.
+  redacted for secrets per REQ-062/094), timestamp, and outcome; and, once verify-after-write
+  (REQ-028) confirms the change, emits one `admin.raw_env.written` event carrying the key names
+  touched with secret values redacted (§14). *Test:* a verified raw write produces one audit entry
+  and one `admin.raw_env.written` event, both listing key names with secret values redacted.
 
 ---
 
@@ -569,6 +716,14 @@ Both this console and the customer-facing app operate against the **same** Anyth
 - REQ-092 — **Fresh-read before dangerous writes.** Before a dangerous instance-settings change
   (§8), the console re-reads `GET /v1/system` and shows the current value so the operator acts on
   live state. *Test:* opening the confirmation dialog triggers a fresh `GET /v1/system`.
+- REQ-092a — **Fresh-read-before-write vs verify-after-write are complementary, not duplicates.**
+  Fresh-read-before-write (REQ-092) is a PRE-write guard against clobbering concurrent changes
+  from the customer app / native UI (the operator confirms against current state). Verify-after-
+  write (§4.2 REQ-028) is a POST-write confirmation that the engine actually persisted our change
+  (guarding the engine's known write-consistency gaps) and is the precondition for emitting the
+  success domain event (§14). Both apply to mutating operations; neither replaces the other.
+  *Test:* a dangerous settings change performs a fresh read before the confirmation dialog AND a
+  re-read after the write to confirm persistence before reporting success.
 
 ---
 
@@ -633,9 +788,11 @@ Both this console and the customer-facing app operate against the **same** Anyth
   under a nominal single-instance load (≤ 200 workspaces, ≤ 500 users), assuming a responsive
   upstream. *Test:* measured p95 for `GET /api/workspaces` render is under threshold with seeded
   data.
-- REQ-101 — The instance-settings screen loads `GET /v1/system` once per view open and batches an
-  operator's edits into a single `POST /v1/system/update-env` submission. *Test:* saving five
-  changed keys issues exactly one upstream `update-env` call.
+- REQ-101 — The instance-settings screen loads `GET /api/settings` once per view open and batches
+  an operator's edits into a single `PATCH /api/settings` submission; the BFF issues one engine
+  `POST /v1/system/update-env` write plus the verify-after-write re-read (REQ-028). *Test:* saving
+  five changed keys issues exactly one engine `update-env` call (followed by the verification
+  read), and emits one `admin.instance.setting_changed` on success.
 
 ---
 
@@ -728,7 +885,7 @@ as ground truth. Each item below is addressed:
 - **MA-2** — Raw editor read source specified (non-secret from `GET /v1/system` `settings`;
   secrets set/not-set; unread keys write-only "not returned/unknown"). → §7.11 REQ-078a.
 - **MA-3** — Blanket `403` split into key-rejection vs authz/precondition with distinct messages;
-  UI renders BFF `message` verbatim. → §4.2 REQ-023, §10.2 REQ-097/097a.
+  UI renders BFF `message` verbatim. → §4.5 REQ-023, §10.2 REQ-097/097a.
 - **MA-4** — `export-chats` moved to non-goals; dangling REQ-051 export reference removed. →
   §6.6 REQ-051, §11 REQ-118.
 - **MA-5** — "Effective provider" defined; Ollama discovery keyed on it. → §2 glossary, §5.2
@@ -750,4 +907,83 @@ as ground truth. Each item below is addressed:
 - **NI-2** — REQ-085 cross-reference corrected (§7.8, not §7.3) and reframed given BL-2 removal.
   → §8 REQ-085.
 - **NI-3** — Dead streaming `502` text removed from REQ-023 (console defines no streaming routes).
-  → §4.2 REQ-023.
+  → §4.5 REQ-023.
+
+---
+
+## §13.1 Governing-architecture conformance (rev 4)
+
+Rev 4 aligns the spec to `docs/governing-architecture.md` (binding white-label strategy). No
+previously resolved product decision (OQ-1..OQ-6, BL-1..NI-3) is reopened; this pass is purely
+architectural. Changes:
+
+- **BFF = anti-corruption layer** with the mandated ordered per-call responsibility chain
+  (authenticate → resolve identity/slug → attach engine key → translate → call/re-shape →
+  verify-after-write → emit event). → §4.2 REQ-021, REQ-026–REQ-029.
+- **No engine shape in the frontend** (hard, release-blocking rule); engine field-names/shapes
+  confined to the BFF adapter. → §4.3 REQ-021a, §4.7 REQ-025.
+- **Opaque handles**: engine slugs/user ids are opaque; identity/user→workspace mapping lives in
+  our layer. → §4.3 REQ-021b.
+- **Product-verb API**: engine-mirroring routes replaced by product resources; engine endpoints
+  documented only in BFF-internal mapping notes. → §4.4 REQ-022/022a; route reframing across
+  §5–§7 (REQ-030–039, REQ-040–051, §7 intro/§7.11) with product↔engine field map (REQ-032).
+- **Verify-after-write** obligation on every mutation, reconciled with fresh-read-before-write.
+  → §4.2 REQ-028, §9 REQ-092a.
+- **Domain-event catalog** on the shared on-box bus (`admin.*`), emitted only after a verified
+  write; failed/unverified writes emit no success event. → §14.
+- Reference to the governing doc added in the header and §4.
+
+---
+
+## §14 Event Catalog
+
+Per boundary rule 2 of `docs/governing-architecture.md`, the console **synthesizes** domain events
+at our boundary: we make the engine call, verify the result, then publish the event to **our own**
+shared on-box event bus. We never hack the engine to emit and never listen to the engine directly.
+All events use the `admin.*` namespace.
+
+### §14.1 General event obligations
+- REQ-029a — **Emit only after verified write.** A success event is published only AFTER
+  verify-after-write (REQ-028) confirms the intended outcome. *Test:* stub the verify read to show
+  the change absent → no `admin.*` event is published.
+- REQ-029b — **No event on failure/unverified write.** If a mutating call fails upstream, is
+  rejected by a guardrail, or fails verification, NO success event is emitted (an audit entry with
+  the failure outcome is still recorded per REQ-093). *Test:* a write that returns non-OK or fails
+  verification produces zero `admin.*` success events and one failure audit entry.
+- REQ-029c — **Minimal payload & redaction.** Every event carries at minimum: `event` (name),
+  `actor` (staff user id, §3.2), `target` (opaque identifiers — workspace `id`, user `id`, invite
+  `id`, or setting category/keys), `changes` (what changed; secret values ALWAYS redacted per
+  REQ-062/094), and `timestamp` (ISO-8601). Payloads carry opaque handles, never parsed engine
+  internals (§4.3). *Test:* a `admin.instance.setting_changed` event for a secret key lists the
+  key name with the value redacted and carries actor/target/timestamp.
+- REQ-029d — **Publication target.** Events publish to the shared on-box event bus so independent
+  feature services may subscribe and react (event-sourced flow). *Test:* a subscriber on the bus
+  receives the published event after a verified write.
+
+### §14.2 Catalog
+Each event below is emitted only after verify-after-write succeeds (REQ-029a) for the cited
+requirement's operation.
+
+| Event | Emitted by (REQ) | Trigger | Payload highlights (beyond actor + timestamp) |
+|---|---|---|---|
+| `admin.workspace.created` | REQ-037 | workspace create verified | workspace `id`, `displayName` |
+| `admin.workspace.updated` | REQ-032 | settings change verified | workspace `id`, changed product fields |
+| `admin.workspace.deleted` | REQ-038 | workspace delete verified | workspace `id` |
+| `admin.workspace.documents_changed` | REQ-039 | attach/detach verified | workspace `id`, added/removed document refs |
+| `admin.workspace_user.assigned` | REQ-049 | member added, verified | workspace `id`, user `id` |
+| `admin.workspace_user.unassigned` | REQ-049 | member removed, verified | workspace `id`, user `id` |
+| `admin.user.created` | REQ-042 | user create verified | user `id`, `username`, `role` |
+| `admin.user.updated` | REQ-043 | user edit verified | user `id`, changed fields |
+| `admin.user.suspended` | REQ-043 | `suspended` false→true verified | user `id` |
+| `admin.user.reactivated` | REQ-043 | `suspended` true→false verified | user `id` |
+| `admin.user.deleted` | REQ-044 | user delete verified | user `id` |
+| `admin.invite.created` | REQ-046 | invite create verified | invite `id`, scoped workspace handles |
+| `admin.invite.revoked` | REQ-047 | invite revoke verified | invite `id` |
+| `admin.instance.setting_changed` | §7 intro / REQ-101 | curated settings write verified | category, key names touched (secrets redacted) |
+| `admin.instance.provider_changed` | REQ-063 | provider selector change verified | which selector (e.g. `LLMProvider`), new provider |
+| `admin.raw_env.written` | REQ-078d | raw editor write verified | key names touched (secrets redacted) |
+
+- REQ-029e — **Coverage.** Every mutating product route in §5–§7 maps to at least one catalog
+  event above; read-only routes (e.g. REQ-030/031/041/045/048/051, discovery §7.10, diagnostics
+  §7.9) emit none. *Test:* each mutating route, on a verified write, emits its cataloged event;
+  each read route emits none.
