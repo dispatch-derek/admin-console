@@ -1,0 +1,6 @@
+{
+  "devDependencies": {
+    "markdown-it": "^14.3.0",
+    "pdfkit": "^0.19.1"
+  }
+}
