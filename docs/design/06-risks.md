@@ -1,15 +1,24 @@
 # Open Technical Risks & Assumptions
 
-## R1 — Event bus dependency (highest) — spec/architecture tension
+## R1 — Event bus dependency — RESOLVED for v1 (interim outbox)
 The governing architecture mandates publishing every verified write to a **shared on-box
-event bus** (rule 2, REQ-029d), but that bus is not known to exist on the appliance yet,
-and neither the spec nor the grounding names a concrete bus product/endpoint.
-**Mitigation (this design):** publish behind an abstract `EventBus` with a transactional
-outbox; default to an in-process emitter + durable `event_outbox`; add a relay when
-`EVENT_BUS_URL` is configured (`04-cross-cutting.md` §c). **Open:** the real bus's
-protocol, delivery guarantees, and topic/subject naming — an in-process bus means no
-independent feature service can subscribe cross-process until the real bus lands.
-This is the one place the spec's intent runs ahead of the available infrastructure.
+event bus** (rule 2, REQ-029d), but that bus does not exist on the appliance yet, and
+neither the spec nor the grounding names a concrete bus product/endpoint.
+
+**Decision (product owner, 2026-07-03):** proceed with the **interim outbox** for v1. The
+console publishes behind an abstract `EventBus` with a transactional outbox; default to an
+in-process emitter + durable `event_outbox`; a relay drains the outbox to the real bus when
+`EVENT_BUS_URL` is configured (`04-cross-cutting.md` §c). No concrete bus technology is
+chosen now and no product-wide bus contract is defined yet — both are deferred. Because
+every write already writes an `event_outbox` row in the same transaction as the verify
+result, adopting the real bus later is a new adapter behind `EventBus`, with **no route or
+service changes**.
+
+**Still deferred (not blocking v1 build):** the real bus's technology, wire protocol,
+delivery/ordering guarantees, and topic/subject naming — a product-wide decision covering
+the customer app and feature services too. Consequence in the interim: an in-process bus
+means no *independent, cross-process* feature service can subscribe until the real bus
+lands; the outbox preserves the events durably until then.
 
 ## R2 — Two 403s may not be cleanly separable
 REQ-023/097 require distinguishing key-rejection from authorization/precondition 403s, but
