@@ -32,12 +32,13 @@ function san(s) {
   s = s
     .replace(/[►▶▸]/g, '>').replace(/[◄◀]/g, '<').replace(/[▼▾]/g, 'v').replace(/[▲▴]/g, '^')
     .replace(/[⇄⇆↔]/g, '<->').replace(/[⇒⇨]/g, '=>').replace(/[⇐]/g, '<=')
+    .replace(/→/g, '->').replace(/←/g, '<-') // not in Ubuntu's proportional face
     .replace(/✅/g, '[x]').replace(/⚠️?/g, '[!]').replace(/➖/g, '[-]').replace(/❌/g, '[x]');
-  if (!SANITIZE) return s; // Ubuntu fonts embedded: keep box-drawing, arrows (→ ←) as-is
+  if (!SANITIZE) return s; // Ubuntu fonts embedded: keep box-drawing as-is
   return s
     .replace(/[│┃]/g, '|').replace(/[─━]/g, '-').replace(/[┌┬┐├┼┤└┴┘╔╗╚╝╠╣╦╩╬]/g, '+')
     .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[—–]/g, '-').replace(/•/g, '*')
-    .replace(/…/g, '...').replace(/→/g, '->').replace(/←/g, '<-').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+    .replace(/…/g, '...').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
 }
 
 const doc = new PDFDocument({ size: 'A4', margins: { top: 54, bottom: 54, left: 54, right: 54 }, bufferPages: true });
@@ -77,6 +78,7 @@ function writeRuns(runs, opts = {}) {
   const size = opts.size || 10.5;
   const indent = opts.indent || 0;
   const color = opts.color || '#1a1a1a';
+  doc.x = doc.page.margins.left; // block starts at the left margin; indent is applied per-first-run
   if (runs.length === 0) { doc.font(FONTS.body).fontSize(size).text(' '); return; }
   runs.forEach((r, i) => {
     const last = i === runs.length - 1;
@@ -89,6 +91,7 @@ function heading(tok, next) {
   const level = Number(tok.tag.slice(1));
   const sizes = { 1: 21, 2: 16, 3: 13, 4: 11.5, 5: 10.5, 6: 10 };
   doc.moveDown(level <= 2 ? 0.7 : 0.5);
+  doc.x = doc.page.margins.left; // reset any x left dirty by a prior table/code block
   const y = doc.y;
   doc.font(FONTS.bold).fontSize(sizes[level] || 11).fillColor(level === 1 ? '#0a3d62' : '#12507a');
   doc.text(san(next.content), { paragraphGap: 2 });
@@ -118,6 +121,7 @@ function codeBlock(content) {
     doc.y = top + h; i += n;
     if (i < lines.length) doc.addPage();
   }
+  doc.x = doc.page.margins.left; // positioned text above left x dirty
   doc.moveDown(0.4).fillColor('#1a1a1a');
 }
 
@@ -155,6 +159,7 @@ function renderTable(rows) {
     doc.moveDown(0.15);
   };
   norm.forEach((r, i) => drawRow(r, i === 0));
+  doc.x = doc.page.margins.left; // positioned cells left x dirty
   doc.moveDown(0.4);
 }
 
@@ -182,8 +187,11 @@ for (let i = 0; i < tokens.length; i++) {
     case 'blockquote_open': { doc.moveDown(0.2); const sy = doc.y; // gather inner paragraphs
       let depth = 1; const buf = []; let j = i + 1;
       while (j < tokens.length && depth > 0) { if (tokens[j].type === 'blockquote_open') depth++; else if (tokens[j].type === 'blockquote_close') depth--; if (depth > 0 && tokens[j].type === 'inline') buf.push(tokens[j]); j++; }
-      for (const inl of buf) { const runs = inlineRuns(inl).map((r) => ({ ...r, italic: !r.code })); writeRuns(runs, { size: 9.5, indent: 12, color: '#40515e' }); doc.moveDown(0.2); }
-      doc.moveTo(doc.page.margins.left + 3, sy).lineTo(doc.page.margins.left + 3, doc.y).lineWidth(2).strokeColor('#c8d6e5').stroke();
+      const origL = doc.page.margins.left;
+      doc.page.margins.left = origL + 14; // indent EVERY wrapped line, clear of the quote bar
+      for (const inl of buf) { const runs = inlineRuns(inl).map((r) => ({ ...r, italic: !r.code })); writeRuns(runs, { size: 9.5, color: '#40515e' }); doc.moveDown(0.2); }
+      doc.page.margins.left = origL;
+      doc.moveTo(origL + 3, sy).lineTo(origL + 3, doc.y).lineWidth(2).strokeColor('#c8d6e5').stroke();
       doc.moveDown(0.2); doc.fillColor('#1a1a1a'); i = j - 1; break; }
     case 'fence': case 'code_block': codeBlock(t.content); break;
     case 'hr': doc.moveDown(0.2).moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).lineWidth(0.5).strokeColor('#c8d6e5').stroke().moveDown(0.4); break;
