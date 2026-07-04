@@ -1,12 +1,21 @@
 # AnythingLLM Administration Console — Specification v1
 
-Status: Draft for implementation and QA
+Status: Draft rev 3 (spec-review resolutions applied) — for implementation and QA
 Grounding reference: `docs/anythingllm-surface.md` (authoritative; captured from the live
 instance on 2026-07-03). Every functional requirement below cites the concrete endpoint(s)
 and/or field(s) from that document.
+Change history: rev 1 initial draft; rev 2 folded resolved decisions OQ-1..OQ-6 (§12);
+rev 3 applied spec-review resolutions BL-1..NI-3 (§13).
 
 Section numbers (§1, §1.1, …) and requirement IDs (REQ-###) are **stable**. Downstream tests
 cite them. Never renumber or reuse an ID; append new sections/IDs or mark items **DEPRECATED**.
+
+> **Verified API-auth facts** (from AnythingLLM source, treated as ground truth in this rev):
+> `POST /system/enable-multi-user` and `GET /system/api-keys` require SESSION auth
+> (`validatedRequest`), NOT the developer API key — they are **unreachable** by our BFF (which
+> holds only the API key). All `/v1/admin/*` user/invite/membership routes DO accept the API key
+> but only function once multi-user mode is already ON. `GET /v1/workspaces` returns each
+> workspace's numeric `id`; `GET /v1/documents` lists documents.
 
 ---
 
@@ -15,9 +24,10 @@ cite them. Never renumber or reuse an ID; append new sections/IDs or mark items 
 ### §1.1 Purpose
 The AnythingLLM Administration Console (the "console") is an internal, staff-operated web
 application for administering a **single** customer's self-hosted AnythingLLM installation. It
-exposes the full administrative surface of the native AnythingLLM admin UI: workspace
-management, user/role/invite/API-key management, and all instance-wide settings
-(grounding §3–§5).
+exposes the administrative surface of the native AnythingLLM admin UI reachable via the
+developer API key: workspace management, user/role/invite management, and all instance-wide
+settings (grounding §3–§5). Capabilities that AnythingLLM gates behind session auth (API-key
+administration, enabling multi-user mode) are out of scope for the BFF — see §11.
 
 ### §1.2 Deployment model
 - REQ-001 — Each console deployment targets exactly one AnythingLLM instance, configured by
@@ -49,6 +59,13 @@ management, user/role/invite/API-key management, and all instance-wide settings
 - **End-user** — a user record in the customer's AnythingLLM `users` table (grounding §4).
 - **Secret-bearing setting** — an env key whose value `GET /v1/system` returns as a boolean
   (set/unset), never plaintext (grounding §5, §5.8 note).
+- **Effective provider** (MA-5) — for a given model field, the workspace's own `chatProvider`
+  (or `agentProvider` for agent fields) if set, otherwise the system `LLMProvider` (grounding
+  §3, §5.1). Live-Ollama model discovery (dropdown, §7.10) applies when the effective provider is
+  `ollama`; otherwise the field is validated free-text.
+- **Authorized staff** (BL-4) — any authenticated staff operator (there is a single role,
+  REQ-010). Staff-lifecycle actions are permitted to any authorized staff, subject to the
+  self-/last-account guardrails in REQ-018a.
 - **Dangerous operation** — an action that can destroy data or invalidate embeddings/access;
   enumerated in §8.
 
@@ -93,15 +110,34 @@ account store is entirely independent of the AnythingLLM `users` table and API k
   confirm with a valid code) before granting any admin access, and issues one-time recovery
   codes. *Test:* a freshly created account cannot reach `/api/*` admin routes until enrollment
   completes.
-- REQ-018 — **Staff account lifecycle.** The console supports, for staff accounts:
-  create, disable/re-enable (a disabled account cannot log in), and password reset. Disabling is
-  reversible and distinct from deletion. *Test:* a disabled staff account is refused at step (1)
-  with `401`; re-enabling restores login.
+- REQ-018 — **Staff account lifecycle.** Any authorized staff (§2) can, for staff accounts:
+  create, disable/re-enable (a disabled account cannot log in), delete, and password reset.
+  Disabling is reversible and distinct from deletion. *Test:* a disabled staff account is refused
+  at step (1) with `401`; re-enabling restores login.
+- REQ-018a — **Lifecycle guardrails (BL-4).** An operator MUST NOT be able to disable or delete
+  (a) their own currently-authenticated account, or (b) the LAST remaining enabled staff account.
+  Attempts are rejected by the BFF (`409`/`403` with an explanatory `message`) and never applied.
+  Every staff-lifecycle action (create/disable/re-enable/delete/password-reset) and every MFA
+  reset is audited per REQ-093/093a. *Test:* an operator disabling their own account is rejected;
+  disabling the only enabled account is rejected; each successful lifecycle action produces one
+  audit entry.
 - REQ-019 — **MFA reset & recovery.** Staff can authenticate with a one-time recovery code when
-  the authenticator is unavailable (each recovery code is single-use), and an authorized staff
-  account can reset another account's TOTP enrollment (forcing re-enrollment per REQ-017).
-  Recovery codes and TOTP secrets are stored hashed/encrypted, never in plaintext logs. *Test:*
-  a recovery code logs in once then is rejected on reuse; a reset TOTP forces re-enrollment.
+  the authenticator is unavailable (each recovery code is single-use), and any authorized staff
+  (§2) can reset another account's TOTP enrollment (forcing re-enrollment per REQ-017); the
+  self-/last-account guardrails of REQ-018a do not restrict MFA reset. Recovery codes and TOTP
+  secrets are stored hashed/encrypted, never in plaintext logs, and every MFA reset is audited.
+  *Test:* a recovery code logs in once then is rejected on reuse; a reset TOTP forces
+  re-enrollment and produces an audit entry.
+- REQ-019a — **First staff-account bootstrap (BL-5).** On a fresh deployment with an empty staff
+  store, the BFF seeds exactly ONE initial staff account from startup configuration: username
+  from `ADMIN_BOOTSTRAP_USERNAME` and a one-time setup credential from `ADMIN_BOOTSTRAP_TOKEN`
+  (both required env vars via `requireEnv`, mirroring `bff/src/config.ts`). The bootstrap account
+  MUST, on first login, set a new password (invalidating `ADMIN_BOOTSTRAP_TOKEN`) AND enroll MFA
+  per REQ-017 before any admin access is granted. The seed runs only when the staff store is
+  empty; it never overwrites existing accounts. No unauthenticated public "create first admin"
+  web endpoint exists. *Test:* with an empty store and both env vars set, the bootstrap account
+  can log in once with the token and is forced through password-set + MFA enrollment; with a
+  non-empty store, no seed occurs; the setup token is rejected after first use.
 
 ---
 
@@ -122,9 +158,18 @@ account store is entirely independent of the AnythingLLM `users` table and API k
 - REQ-022 — BFF routes forward to the corresponding `/api/v1/...` upstream path, `slug`/`id`
   path params URL-encoded (mirrors `encodeURIComponent` usage in `bff/src/index.ts`). *Test:* a
   slug containing a space/`/` is encoded before reaching upstream.
-- REQ-023 — Upstream error mapping (mirrors existing BFF): `403 → 403 {message:"Invalid API
-  Key"}`; `400 → 400`; other non-OK → `502` (streaming) or upstream status (JSON) with a
-  `{ message }` body. *Test:* stub upstream `403/400/500` and assert mapped statuses/bodies.
+- REQ-023 — Upstream error mapping (MA-3, NI-3). The BFF forwards the upstream status and returns
+  a JSON `{ message }` body that the web app renders verbatim (REQ-097a). The console defines no
+  streaming routes, so there is no streaming-specific mapping. Two distinct `403` cases MUST be
+  disambiguated by the BFF:
+  - **Key-rejection 403** (the developer API key is invalid/revoked): `403 { message: "AnythingLLM
+    rejected the API key — check ANYTHINGLLM_API_KEY (server configuration)." }`.
+  - **Authorization/precondition 403** (e.g. multi-user mode off, or the action needs a role the
+    key lacks): `403 { message: "AnythingLLM refused this action: multi-user mode may be off or
+    the operation is not permitted for this API key." }`.
+  `400 → 400 { message }` (validation); other non-OK → upstream status with a `{ message }` body
+  (default operator text per REQ-097). *Test:* stub the two `403` variants and assert distinct
+  `message` bodies; stub `400/404/429/500` and assert the status is forwarded with a `{ message }`.
 - REQ-024 — The BFF exposes `GET /health → { ok: true }` and does not require a session for it
   (mirrors existing BFF). *Test:* unauthenticated `GET /health` returns `200 { ok: true }`.
 
@@ -161,25 +206,35 @@ Endpoints (grounding §3): `GET /api/v1/workspaces`, `GET /api/v1/workspace/{slu
 - REQ-033 — The update request body contains ONLY fields the operator changed; omitted fields
   are left untouched upstream (grounding §3 "only provided fields are changed"). *Test:* edit
   only `openAiTemp` → request body has exactly `{ openAiTemp }`.
-- REQ-034 — `chatMode` is constrained to `chat` or `query` (grounding §3). Note: the customer
-  app's `ChatMode` type also lists `automatic`; the workspace-config editor MUST offer only the
-  values the workspace table accepts (`chat`, `query`). *Test:* the mode selector exposes
-  exactly `chat` and `query`.
-- REQ-035 — Numeric fields are validated before submit: `openAiTemp` (float ≥ 0),
-  `openAiHistory` (int ≥ 0), `similarityThreshold` (float 0–1), `topN` (int ≥ 1). Invalid input
-  is rejected client-side with a field error and not sent. *Test:* `topN = 0` blocks submit;
-  `similarityThreshold = 1.5` blocks submit.
-- REQ-036 — `null`/inherit semantics are preserved: clearing `chatProvider`/`chatModel`/
-  `agentProvider`/`agentModel` sends an explicit "inherit system default" (null) rather than an
-  empty string, per grounding §3 ("null = inherit system default"). *Test:* clearing
-  `chatModel` causes the workspace to inherit the system default on re-fetch.
-- REQ-036a — **Model selection uses live Ollama discovery (resolves OQ-3).** When the effective
-  provider for a workspace model field is Ollama (active instance provider), `chatModel` and
+- REQ-034 — `chatMode` selection is constrained to `chat` or `query` (grounding §3); the editor
+  offers exactly those two options and never `automatic`. **Out-of-range incoming value (BL-3):**
+  if a workspace's fetched `chatMode` is any value outside {`chat`,`query`} (e.g. `automatic` set
+  by the customer app), the editor displays that value read-only/as-is, does NOT list it as a
+  selectable option, and MUST NOT write `chatMode` back unless the operator explicitly changes it
+  to `chat` or `query` (partial-write per REQ-033). *Test:* loading a workspace with
+  `chatMode:"automatic"` shows it read-only; saving an unrelated field does not include
+  `chatMode` in the request body; the selector still exposes only `chat` and `query`.
+- REQ-035 — Numeric fields are validated before submit with pinned inclusive bounds (MA-6):
+  `openAiTemp` — float, `0.0 ≤ x ≤ 2.0` (enforced upper cap 2.0); `openAiHistory` — integer
+  `≥ 0`; `similarityThreshold` — float, `0.0 ≤ x ≤ 1.0` inclusive; `topN` — integer `≥ 1`.
+  Invalid input is rejected client-side with a field error and not sent. *Test:* `topN = 0`
+  blocks submit; `similarityThreshold = 1.5` blocks submit; `openAiTemp = 2.5` blocks submit;
+  `similarityThreshold = 0.0` and `= 1.0` are accepted.
+- REQ-036 — `null`/inherit semantics (MA-6): clearing a nullable field to inherit its default is
+  performed by sending JSON `null` for that key (NOT an empty string) via
+  `POST /v1/workspace/{slug}/update`; omitting a key entirely means "no change" (REQ-033). This
+  applies to `chatProvider`/`chatModel`/`agentProvider`/`agentModel` and other nullable fields,
+  per grounding §3 ("null = inherit system default"). *Test:* clearing `chatModel` sends
+  `{ "chatModel": null }` and the workspace inherits the system default on re-fetch; an untouched
+  `chatModel` is absent from the body.
+- REQ-036a — **Model selection uses live Ollama discovery (resolves OQ-3; MA-5).** When the
+  **effective provider** (§2) for a workspace model field is `ollama`, `chatModel` and
   `agentModel` are chosen from a dropdown populated from the live pulled-model list via the model
-  discovery route (§7.10, REQ-075). For any non-Ollama provider, the field falls back to
-  validated free-text entry (REQ-064a). If Ollama is unreachable, the field degrades gracefully
-  to free-text with a surfaced warning (REQ-076). *Test:* with Ollama reachable, `chatModel` is a
-  dropdown of pulled models; with a non-Ollama provider or Ollama unreachable, it is free-text.
+  discovery route (§7.10, REQ-075). For any other effective provider, the field is validated
+  free-text (REQ-064a). If Ollama is unreachable, the field degrades gracefully to free-text with
+  a surfaced warning (REQ-076). *Test:* with effective provider `ollama` and Ollama reachable,
+  `chatModel` is a dropdown of pulled models; with a non-Ollama effective provider or Ollama
+  unreachable, it is free-text.
 
 ### §5.3 Create & delete
 - REQ-037 — The console creates a workspace via BFF `POST /api/workspace/new` → upstream
@@ -190,26 +245,35 @@ Endpoints (grounding §3): `GET /api/v1/workspaces`, `GET /api/v1/workspace/{slu
   REQ-081.
 
 ### §5.4 Documents & pins
-- REQ-039 — The console can attach/detach workspace documents via BFF
+- REQ-039 — The console can attach and detach workspace documents via BFF
   `POST /api/workspace/:slug/update-embeddings` → upstream
   `POST /v1/workspace/{slug}/update-embeddings` and pin/unpin via
-  `POST /v1/workspace/{slug}/update-pin` (grounding §3). Detaching/removing documents is a
-  **dangerous operation** governed by §8. *Test:* attaching a doc adds it; detaching triggers
-  the §8 confirmation.
+  `POST /v1/workspace/{slug}/update-pin` (grounding §3). The selectable document list is sourced
+  from BFF `GET /api/documents` → upstream `GET /v1/documents` (MI-5). `update-embeddings`
+  supports both `adds` and `deletes` (attach/detach). Detaching/removing documents is a
+  **dangerous operation** governed by §8. *Test:* the attach picker is populated from
+  `GET /v1/documents`; attaching a doc adds it; detaching triggers the §8 confirmation.
 
 ---
 
-## §6 Users, Roles, Invites, API Keys
+## §6 Users, Roles, Invites
 
-Roles (grounding §4): `default`, `admin`, `manager`. Admin/user endpoints require multi-user
-mode enabled (grounding §4, §5.8).
+Roles (grounding §4): `default`, `admin`, `manager`. All `/v1/admin/*` user/invite/membership
+routes accept the developer API key but only FUNCTION once multi-user mode is already ON
+(verified fact, see header). Enabling multi-user mode is a session-auth-only operation that the
+BFF cannot perform; it is an out-of-band prerequisite (BL-2, §6.1, §11). AnythingLLM API-key
+administration (`GET /system/api-keys`) is likewise session-auth-only and out of scope (§11).
 
-### §6.1 Multi-user-mode precondition
-- REQ-040 — Before rendering user-management views, the console checks BFF
-  `GET /api/admin/is-multi-user-mode` → upstream `GET /v1/admin/is-multi-user-mode`. If
-  disabled, the console shows an explanatory state and a guarded enable action (§8, REQ-085)
-  instead of the user table. *Test:* with `MultiUserMode:false`, the user table is not shown and
-  the enable-multi-user guardrail is offered.
+### §6.1 Multi-user-mode precondition & blocked state (BL-2)
+- REQ-040 — Before rendering any §6 user-management view, the console detects multi-user state
+  via BFF `GET /api/admin/is-multi-user-mode` → upstream `GET /v1/admin/is-multi-user-mode`. When
+  multi-user mode is OFF, the console MUST block/disable ALL §6 user, invite, and
+  workspace-membership UI and show a clear notice instructing the operator to enable multi-user
+  mode **out-of-band in the native AnythingLLM UI** (the console cannot enable it — the enable
+  route requires session auth). The console offers NO in-console "enable multi-user" action.
+  *Test:* with `MultiUserMode:false`, the user/invite/membership controls are disabled and the
+  out-of-band notice is shown; no request to any enable-multi-user route is issued; with
+  `MultiUserMode:true`, the §6 UI is enabled.
 
 ### §6.2 Users
 - REQ-041 — List users via BFF `GET /api/admin/users` → upstream `GET /v1/admin/users`, showing
@@ -238,24 +302,30 @@ mode enabled (grounding §4, §5.8).
 ### §6.4 Workspace-user assignments
 - REQ-048 — View which users may access a workspace via BFF
   `GET /api/admin/workspaces/:workspaceId/users` → upstream
-  `GET /v1/admin/workspaces/{workspaceId}/users` (grounding §4, `workspace_users` join).
-  *Test:* list matches upstream membership.
-- REQ-049 — Update workspace membership via BFF
-  `POST /api/admin/workspaces/:workspaceId/update-users` → upstream
-  `POST /v1/admin/workspaces/{workspaceId}/update-users`, and/or
-  `POST /v1/admin/workspaces/{workspaceSlug}/manage-users` (grounding §4). *Test:* adding a user
-  to a workspace appears in a subsequent membership fetch.
+  `GET /v1/admin/workspaces/{workspaceId}/users` (grounding §4, `workspace_users` join). The
+  numeric `workspaceId` is obtained from `GET /v1/workspaces` (which returns each workspace's
+  `id`). *Test:* list matches upstream membership.
+- REQ-049 — **Normative membership endpoint (BL-1, MI-2).** Update workspace membership via BFF
+  `POST /api/admin/workspaces/:slug/manage-users` → upstream
+  `POST /v1/admin/workspaces/{workspaceSlug}/manage-users` with body `{ userIds: number[],
+  reset: boolean }`. Semantics (verified): `reset:false` ADDS the given users to current
+  membership; `reset:true` REPLACES membership with exactly the given users. This slug-keyed
+  endpoint is the single normative path (no numeric-id `update-users` overwrite endpoint is
+  used). *Test:* `manage-users` with `reset:false` and one `userId` adds that user without
+  dropping existing members; `reset:true` with a set replaces membership with exactly that set.
 
-### §6.5 API keys
-- REQ-050 — The console can view API-key records (`name`, `createdBy`; the `secret` is unique
-  and treated as sensitive) (grounding §4 `api_keys`). Displayed key secrets, if returned upstream
-  on creation, are shown once and never re-fetched in plaintext. *Test:* re-opening an existing
-  key does not display its `secret`.
+### §6.5 API keys — out of scope (MA-1)
+- REQ-050 — **RETIRED / moved to §11 (REQ-117).** AnythingLLM API-key administration is
+  session-auth-only (`GET /system/api-keys` uses `validatedRequest`, not the developer API key)
+  and is therefore unreachable by the BFF. API-key viewing/creation/rotation is a **non-goal**
+  for v1 (§11 REQ-117). This ID is retained for traceability and MUST NOT be reused.
 
 ### §6.6 Oversight
-- REQ-051 — The console may view workspace chat history for oversight via BFF proxy to upstream
-  `POST /v1/admin/workspace-chats` (grounding §4). Exporting chats is governed by §8/§10.
-  *Test:* the chat-oversight view issues the upstream call and renders returned history.
+- REQ-051 — Subject to the §6.1 multi-user precondition, the console may view workspace chat
+  history for oversight via BFF proxy to upstream `POST /v1/admin/workspace-chats` (grounding §4).
+  Chat EXPORT (`GET /v1/system/export-chats`) is a non-goal for v1 (§11 REQ-118). *Test:* the
+  chat-oversight view issues the `workspace-chats` call and renders returned history; no
+  export-chats route is exposed.
 
 ---
 
@@ -371,9 +441,13 @@ the guarded raw editor (which can write ANY accepted key) in §7.11.
   `RequiresAuth`, `MultiUserMode`, `MemoryEnabled`, `MemoryAutoExtraction`,
   `HasExistingEmbeddings`, `HasCachedEmbeddings`. *Test:* `RequiresAuth`/`MultiUserMode` render
   from `GET /v1/system`; `DisableTelemetry` is writable.
-- REQ-073 — Multi-user mode is toggled through the admin flow (grounding §5.8, §4). Enabling and
-  disabling multi-user mode, and changing `AuthToken`/`JWTSecret`, are **dangerous operations**
-  (§8, REQ-085, REQ-086). *Test:* toggling multi-user mode requires the §8 guardrail.
+- REQ-073 — **Multi-user mode is NOT toggled by the console (BL-2).** Enabling/disabling
+  multi-user mode requires session auth (`POST /system/enable-multi-user`) and is unreachable by
+  the BFF; it is an out-of-band prerequisite managed in the native AnythingLLM UI (§6.1). The
+  console reads and displays `MultiUserMode` (REQ-072) but exposes no toggle. Changing
+  `AuthToken`/`JWTSecret` via `update-env` remains a **dangerous operation** (§8, REQ-086).
+  *Test:* the security settings view shows `MultiUserMode` read-only and offers no enable/disable
+  control; no request to `enable-multi-user` is ever issued.
 
 ### §7.9 Diagnostics
 - REQ-074 — The console surfaces `GET /v1/system/vector-count` and MAY surface
@@ -406,18 +480,27 @@ Beyond the curated forms (§7.1–§7.8), the console provides an advanced edito
 - REQ-078 — The raw editor is gated behind an explicit **"advanced mode" acknowledgement** before
   it is usable in a session. *Test:* the raw editor's write controls are inert until the operator
   acknowledges advanced mode.
-- REQ-078a — The raw editor can read current env state (via `GET /v1/system` / masked `env-dump`)
-  and write any accepted key via `POST /v1/system/update-env`. Secret-bearing values are shown
-  masked as set/not-set with overwrite-without-reveal (§7.0, REQ-060/061); stored secret values
-  are never displayed. *Test:* a secret key in the raw editor shows set/not-set, never plaintext;
-  a non-secret key shows its current value.
-- REQ-078b — **Key whitelist enforcement.** The raw editor validates every key against the known
-  ~186-key accepted set (grounding §5); unknown keys are rejected client-side and by the BFF with
-  `400` (reuses REQ-096) and never forwarded upstream. *Test:* submitting `NotARealKey` is
-  rejected with `400` and does not reach upstream.
-- REQ-078c — **Per-write typed confirmation.** Each raw write requires a typed confirmation naming
-  the key(s) being written (a dangerous operation under §8, REQ-088a). *Test:* the raw
-  `update-env` call is not issued until the confirmation criterion is satisfied.
+- REQ-078a — **Raw editor read source (MA-2).** The raw editor reads current state as follows:
+  non-secret current values come from the `settings` object of `GET /v1/system`; secret-bearing
+  keys are shown as set/not-set (boolean) only, with overwrite-without-reveal (§7.0,
+  REQ-060/061) — stored secret values are never displayed; keys accepted by `update-env` but not
+  returned by any read endpoint are shown as "not returned / unknown" and are **write-only**. The
+  masked `env-dump` remains read-only diagnostics (REQ-074). Writes go to
+  `POST /v1/system/update-env`. *Test:* a secret key shows set/not-set never plaintext; a
+  non-secret key shows its `GET /v1/system` value; a write-only key shows "not returned/unknown"
+  and can still be written.
+- REQ-078b — **Key whitelist enforcement (NI-1).** The raw editor validates every key against the
+  exact accepted key set enumerated in grounding §5 (exactly 186 keys) — the single source of
+  truth. Unknown keys are rejected client-side and by the BFF with `400` (reuses REQ-096) and
+  never forwarded upstream. *Test:* submitting `NotARealKey` is rejected with `400` and does not
+  reach upstream; every key in grounding §5 is accepted.
+- REQ-078c — **Multi-key raw-write confirmation (MI-3).** Before a raw write proceeds, the editor
+  displays a **masked diff** listing every key being written as `key → new state` (for secrets,
+  the new state is shown masked as "will be set/overwritten", never the value; for non-secrets,
+  the new value), and requires the operator to type a fixed confirmation token displayed on
+  screen. The write is issued only on an exact token match (a dangerous operation under §8,
+  REQ-088a). *Test:* the raw `update-env` call is not issued until the typed token matches the
+  displayed token; the diff masks secret values.
 - REQ-078d — Every raw-editor write is audit-logged (§10, REQ-093) with actor, key names (values
   redacted for secrets per REQ-062/094), timestamp, and outcome. *Test:* a raw write produces one
   audit entry listing the key names with secret values redacted.
@@ -446,21 +529,25 @@ Beyond the curated forms (§7.1–§7.8), the console provides an advanced edito
   may be **invalidated / incompatible** and re-embedding may be required, referencing
   `HasExistingEmbeddings` / vector-count where available. *Test:* the warning text is shown and
   the change is gated behind explicit confirmation.
-- REQ-085 — **Enable multi-user mode** (§7.3-admin flow, REQ-073): guardrail explains it is a
-  prerequisite for user management (grounding §1) and coordinates with the customer app (§9).
-  *Test:* enabling requires confirmation and surfaces the coexistence notice.
-- REQ-086 — **Disable multi-user mode / change `AuthToken` / change `JWTSecret`** (REQ-072/073):
-  guardrail warns of forced logout / lockout risk for both this console's end-user set and the
-  customer app. *Test:* these changes are gated behind explicit confirmation.
+- REQ-085 — **DEPRECATED (BL-2).** The former in-console "enable multi-user mode" guardrail is
+  removed: the console performs no multi-user enable/disable (§7.8 REQ-073, §6.1 REQ-040).
+  Multi-user mode is an out-of-band prerequisite. This ID is retained for traceability and MUST
+  NOT be reused. (The prior "§7.3" cross-reference was erroneous; the security settings live in
+  §7.8 — NI-2.)
+- REQ-086 — **Change `AuthToken` / change `JWTSecret`** (§7.8, REQ-072/073): via `update-env`,
+  guardrail warns of forced-logout / lockout risk for the customer app and any AnythingLLM
+  sessions. (Multi-user disable is NOT a console action — BL-2, REQ-073.) *Test:* changing
+  `AuthToken` or `JWTSecret` is gated behind explicit confirmation.
 - REQ-087 — **Remove documents** (`DELETE /v1/system/remove-documents`, and workspace
   detach/`update-embeddings` per REQ-039): confirmation names affected scope and warns the vector
   data is deleted. *Test:* remove-documents call fires only after confirmation.
 - REQ-088 — Every dangerous operation is recorded in the audit log (§10, REQ-093) with actor,
   target, timestamp, and outcome. *Test:* a confirmed workspace delete produces one audit entry.
 - REQ-088a — **Raw environment write** (§7.11, REQ-078c): each raw `update-env` write is a
-  dangerous operation requiring a typed confirmation naming the key(s), key-whitelist validation
-  (REQ-078b), and audit logging (REQ-078d). *Test:* a raw write is not issued until the typed
-  confirmation matches, and an unknown key is rejected before any confirmation.
+  dangerous operation requiring the masked-diff + fixed-confirmation-token step (REQ-078c),
+  key-whitelist validation (REQ-078b), and audit logging (REQ-078d). *Test:* a raw write is not
+  issued until the typed token matches the displayed token, and an unknown key is rejected before
+  any confirmation.
 
 ---
 
@@ -469,10 +556,12 @@ Beyond the curated forms (§7.1–§7.8), the console provides an advanced edito
 Both this console and the customer-facing app operate against the **same** AnythingLLM instance
 (grounding §2). This section governs shared concerns.
 
-- REQ-090 — **MultiUserMode is shared instance state.** The console MUST read current
-  `MultiUserMode` from `GET /v1/system` before offering to change it and MUST warn (REQ-085/086)
-  that the toggle affects the customer app's user experience. *Test:* the multi-user toggle
-  reflects live upstream state, not a cached assumption.
+- REQ-090 — **MultiUserMode is shared instance state (read-only in this console).** The console
+  reads current `MultiUserMode` from `GET /v1/system` / `GET /v1/admin/is-multi-user-mode` and
+  reflects live upstream state (never a cached assumption), but does NOT toggle it (BL-2,
+  REQ-073, REQ-040). Because enabling is out-of-band, coordination with the customer app about
+  the mode is informational only. *Test:* the displayed `MultiUserMode` matches live upstream and
+  no console control mutates it.
 - REQ-091 — **Avoid clobbering concurrent edits.** For workspace and instance-settings edits,
   the console MUST submit only operator-changed fields (REQ-033, REQ-061) so it never overwrites
   fields it did not display, reducing the risk of reverting changes made via the customer app or
@@ -500,18 +589,36 @@ Both this console and the customer-facing app operate against the **same** Anyth
 - REQ-094 — Secrets (AnythingLLM API key, staff credentials/tokens, and any secret-bearing env
   value in transit) are never written to logs in plaintext (extends REQ-062). *Test:* grep of
   BFF logs after an `update-env` with a secret finds no plaintext secret.
-- REQ-095 — CORS on the BFF restricts origins to the console's own web origin(s) in production
-  (the customer app's permissive `origin:true` is NOT acceptable for an admin tool). *Test:* a
-  cross-origin request from a disallowed origin is rejected.
-- REQ-096 — The BFF validates/whitelists inbound `update-env` keys against the accepted key set
-  (grounding §5) before forwarding, rejecting unknown keys with `400`. *Test:* posting an
-  unrecognized env key returns `400` and does not reach upstream.
+- REQ-095 — CORS is environment-specific (MI-6): in **production** the BFF restricts allowed
+  origins to the console's own configured web origin(s) — the customer app's permissive
+  `origin:true` is NOT acceptable for an admin tool; in **development** a permissive origin
+  (e.g. the Vite dev server, `origin:true`) is allowed for local workflow. The mode is selected
+  by environment configuration, defaulting to the restrictive production policy when unset.
+  *Test:* in production config a request from a disallowed origin is rejected; in dev config the
+  local dev origin is accepted.
+- REQ-096 — The BFF validates/whitelists inbound `update-env` keys against the exact accepted key
+  set enumerated in grounding §5 (exactly 186 keys; the single source of truth, NI-1) before
+  forwarding, rejecting unknown keys with `400`. *Test:* posting an unrecognized env key returns
+  `400` and does not reach upstream.
 
 ### §10.2 Error handling
 - REQ-097 — Upstream errors are mapped and surfaced to the operator with actionable messages
-  (extends REQ-023): `403` → "AnythingLLM rejected the API key" (config problem, not operator
-  input); `400` → field-level validation feedback where derivable; `5xx`/network → a retryable
-  error state. *Test:* stubbed `403/400/500` each render the corresponding operator message.
+  (extends REQ-023, MA-3/MI-1):
+  - `403` (key-rejection) → config-problem message naming `ANYTHINGLLM_API_KEY` (not operator
+    input);
+  - `403` (authorization/precondition) → message noting multi-user mode may be off or the action
+    is not permitted for this key;
+  - `400` → field-level validation feedback where derivable;
+  - **default mapping for other statuses (MI-1):** `401` → "AnythingLLM authentication failed";
+    `404` → "The requested AnythingLLM resource was not found"; `429` → "AnythingLLM is rate
+    limiting — retry shortly" (retryable); `5xx` / network / any other non-OK → a generic
+    retryable "AnythingLLM is unavailable or returned an error" state.
+  *Test:* stubbed `401/403(key)/403(authz)/404/429/500` each render the corresponding operator
+  message.
+- REQ-097a — **Verbatim message rendering (MA-3).** The web app renders the BFF-provided
+  `{ message }` string verbatim for the error banner/field (the BFF is the authority for operator
+  text per REQ-023/097). *Test:* a BFF `403 { message: "…" }` appears character-for-character in
+  the UI.
 - REQ-098 — No partial-success ambiguity: if an `update-env` write returns non-OK, the UI states
   that the change was NOT saved and does not show the new value as persisted. *Test:* forced
   upstream failure leaves the field showing its prior state.
@@ -542,6 +649,17 @@ Both this console and the customer-facing app operate against the **same** Anyth
 - REQ-115 — Billing, licensing, or provider-account provisioning outside AnythingLLM.
 - REQ-116 — Direct browser-to-AnythingLLM calls or exposing the API key to the browser (forbidden
   by §4).
+- REQ-117 — **AnythingLLM API-key administration (MA-1).** Viewing/creating/rotating/deleting
+  AnythingLLM API keys is out of scope for v1: `GET /system/api-keys` (and key mutation) require
+  session auth (`validatedRequest`), which the BFF (developer-API-key only) cannot satisfy.
+  Supersedes retired REQ-050.
+- REQ-118 — **Chat export (MA-4).** `GET /v1/system/export-chats` is out of scope for v1
+  (oversight viewing via `POST /v1/admin/workspace-chats` remains, REQ-051).
+- REQ-119 — **User impersonation (MI-4).** Issuing end-user auth tokens via
+  `GET /v1/users/{id}/issue-auth-token` is out of scope for v1.
+- REQ-120 — **Enabling/disabling multi-user mode (BL-2).** `POST /system/enable-multi-user`
+  requires session auth and is unreachable by the BFF; multi-user mode is an out-of-band
+  prerequisite enabled in the native AnythingLLM UI (§6.1, §7.8 REQ-073).
 
 ---
 
@@ -573,10 +691,11 @@ for traceability; each decision is folded into the requirements cited below.
   active provider and exposes a reliable tag list, eliminating typo-prone free-text for the common
   case while staying resilient. *Folded into:* §5.2 REQ-036a, §7.2 REQ-064a/REQ-065, §7.3
   REQ-067, §7.10 REQ-075–REQ-077.
-- OQ-4 — **API-key scope: RESOLVED → view-only in v1** (adopts the recommended default). No
-  create/rotate/delete of AnythingLLM API keys in v1. *Rationale:* no create/delete `/api/v1`
-  endpoints are confirmed in the grounded surface; avoids acting on an unverified API. *Folded
-  into:* §6.5 REQ-050 (unchanged), §11 scope.
+- OQ-4 — **API-key scope: RESOLVED → view-only in v1, THEN superseded by spec review (MA-1).**
+  The spec review verified that `GET /system/api-keys` requires session auth and is unreachable
+  by the BFF, so even view-only is impossible with the developer API key. API-key administration
+  is now a **non-goal** (§11 REQ-117); REQ-050 is retired. *Folded into:* §6.5 REQ-050 (retired),
+  §11 REQ-117.
 - OQ-5 — **Audit-log persistence: RESOLVED → stdout + BFF-local append-only store**, shippable to
   central logging later (adopts the recommended default). *Rationale:* durable local record plus
   standard log-shipping path without committing to a specific central platform in v1. *Folded
@@ -585,3 +704,50 @@ for traceability; each decision is folded into the requirements cited below.
   ETag/optimistic-concurrency mechanism (AnythingLLM offers none in the grounded surface). Adopts
   the recommended default. *Rationale:* partial-field writes plus fresh reads adequately mitigate
   clobbering at expected operator concurrency. *Folded into:* §9 REQ-091, REQ-092 (unchanged).
+
+---
+
+## §13 Spec-review resolutions
+
+Rev 3 applies the review at `docs/spec-review.md`. Verified API-auth facts (header) are treated
+as ground truth. Each item below is addressed:
+
+- **BL-1** — `manage-users` (slug, `{userIds[], reset}`) is the single normative membership
+  endpoint; `update-users` ambiguity removed. → §6.4 REQ-049.
+- **BL-2** — Multi-user enable/disable removed from the console (session-auth-only, out-of-band
+  prerequisite); detection + blocked-state added. → §6.1 REQ-040, §7.8 REQ-073, §8 REQ-085
+  (deprecated)/REQ-086, §9 REQ-090, §11 REQ-120.
+- **BL-3** — Out-of-range incoming `chatMode` (e.g. `automatic`) shown read-only, never offered,
+  never written unless explicitly changed. → §5.2 REQ-034.
+- **BL-4** — Single role stands; "authorized staff" defined; self-/last-account guardrails +
+  auditing added. → §2 glossary, §3.2 REQ-018a, REQ-019.
+- **BL-5** — First staff-account bootstrap seeded from `ADMIN_BOOTSTRAP_USERNAME` /
+  `ADMIN_BOOTSTRAP_TOKEN`, forced password-set + MFA enrollment on first login. → §3.2 REQ-019a.
+- **MA-1** — API-key viewing unreachable (session auth) → moved to non-goals; REQ-050 retired. →
+  §6.5 REQ-050, §11 REQ-117.
+- **MA-2** — Raw editor read source specified (non-secret from `GET /v1/system` `settings`;
+  secrets set/not-set; unread keys write-only "not returned/unknown"). → §7.11 REQ-078a.
+- **MA-3** — Blanket `403` split into key-rejection vs authz/precondition with distinct messages;
+  UI renders BFF `message` verbatim. → §4.2 REQ-023, §10.2 REQ-097/097a.
+- **MA-4** — `export-chats` moved to non-goals; dangling REQ-051 export reference removed. →
+  §6.6 REQ-051, §11 REQ-118.
+- **MA-5** — "Effective provider" defined; Ollama discovery keyed on it. → §2 glossary, §5.2
+  REQ-036a, §7.10 REQ-077.
+- **MA-6** — Numeric bounds pinned (`similarityThreshold` [0,1], `openAiTemp` [0,2], `topN` ≥1
+  int, `openAiHistory` ≥0 int); null-clearing = send JSON `null`, omission = no change. → §5.2
+  REQ-035/036.
+- **MI-1** — Default operator-message mapping for `401/404/429/other`. → §10.2 REQ-097.
+- **MI-2** — Resolved with BL-1 (slug-keyed, no numeric workspaceId for membership writes). →
+  §6.4 REQ-049.
+- **MI-3** — Multi-key raw-write confirmation = masked diff + fixed typed token. → §7.11 REQ-078c,
+  §8 REQ-088a.
+- **MI-4** — Impersonation (`issue-auth-token`) → non-goal. → §11 REQ-119.
+- **MI-5** — Workspace document list sourced from `GET /v1/documents`; attach+detach via
+  `update-embeddings`. → §5.4 REQ-039.
+- **MI-6** — Dev-mode permissive CORS vs restrictive production CORS. → §10.1 REQ-095.
+- **NI-1** — "~186-key" replaced with the exact grounding §5 accepted set (exactly 186) as single
+  source of truth. → §7.11 REQ-078b, §10.1 REQ-096.
+- **NI-2** — REQ-085 cross-reference corrected (§7.8, not §7.3) and reframed given BL-2 removal.
+  → §8 REQ-085.
+- **NI-3** — Dead streaming `502` text removed from REQ-023 (console defines no streaming routes).
+  → §4.2 REQ-023.

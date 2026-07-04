@@ -82,6 +82,19 @@ Roles (source `models/user.js`): **`default`**, **`admin`**, **`manager`**.
 
 `workspace_users`: join of `user_id` ↔ `workspace_id` (which users may access which workspace).
 
+> **API-key vs session auth (verified against source, corrects an earlier assumption):** The developer
+> API surface our BFF uses (`/api/v1`, authenticated with `validApiKey`) covers workspaces, user/invite
+> CRUD, membership, and system settings — BUT only once multi-user mode is already ON, and a few
+> operations are **session-auth only** (`validatedRequest`, native-UI login) and are UNREACHABLE with the
+> API key:
+> - `POST /system/enable-multi-user` — enabling multi-user mode. There is NO API-key path; it must be
+>   done out-of-band in the native AnythingLLM UI. (v1 admin console treats this as a prerequisite.)
+> - `GET /system/api-keys` — listing AnythingLLM API keys. No API-key path; hence API-key management is a
+>   v1 non-goal.
+> Membership has two endpoints: `.../{workspaceId}/update-users` (numeric id, full overwrite) and
+> `.../{workspaceSlug}/manage-users` (slug, `{userIds[], reset}`; reset=false adds, reset=true replaces).
+> The spec uses `manage-users` (slug-keyed). `GET /v1/workspaces` returns each workspace's numeric `id`.
+
 Admin/user API endpoints (require multi-user mode + admin/manager role):
 - `GET /v1/admin/is-multi-user-mode`
 - `GET /v1/admin/users`, `POST /v1/admin/users/new`, `POST /v1/admin/users/{id}`, `DELETE /v1/admin/users/{id}`
