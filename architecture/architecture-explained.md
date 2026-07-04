@@ -6,7 +6,7 @@
 > how the boundary rules are enforced). `architecture-explained.pdf` in this directory is a
 > generated artifact — regenerate it from this file after edits.
 >
-> Last updated: 2026-07-03 · Traces to `specs/admin-console.md` (rev 4),
+> Last updated: 2026-07-04 · Traces to `specs/admin-console.md` (rev 5),
 > `docs/governing-architecture.md`, and `docs/design/00–06`.
 
 ## 1. What this app is
@@ -74,11 +74,16 @@ The web app consumes product verbs (e.g. `POST /api/workspaces`,
 each maps to is documented **inside the BFF only** (`docs/design/02-product-api.md`). No
 engine field-name appears in `web/` — a release-blocking rule enforced by a static scan.
 
-### Domain events (`admin.*`, emitted on verified writes)
-`workspace.created/updated/deleted/documents_changed`, `workspace_user.assigned/unassigned`,
-`user.created/updated/suspended/reactivated/deleted`, `invite.created/revoked`,
-`instance.setting_changed`, `instance.provider_changed`, `raw_env.written`. Payloads carry
-actor (staff id), target ids, what changed (secrets redacted), timestamp. Full schemas:
+### Domain events (`admin.*`, emitted after a write attempt succeeds)
+`workspace.created/updated/deleted/documents_changed/knowledge_pinned/knowledge_unpinned`,
+`workspace_user.assigned/unassigned`, `user.created/updated/suspended/reactivated/deleted`,
+`invite.created/revoked`, `instance.setting_changed`, `instance.provider_changed`,
+`raw_env.written`. A mutation emits **one or more** events — one per state delta (e.g. one
+`workspace_user.assigned` per added member; `setting_changed` plus one `provider_changed` per
+changed provider selector). Payloads carry actor (staff id), target ids, what changed (secrets
+redacted), timestamp, and a **`verified` flag**: writes whose outcome the engine's read surface
+can confirm are `verified:true`; unobservable secret-overwrites and write-only env keys are
+best-effort `verified:false` (they still emit, so the action is auditable). Full schemas:
 `docs/design/03-data-models.md` and spec §14.
 
 ## 3. Boundary-rule conformance (governing architecture)
