@@ -55,7 +55,7 @@ export async function deleteWorkspace(id: string): Promise<void>;
 export async function getMultiUserStatus(): Promise<{ enabled: boolean }>;
 export async function listOllamaModels(): Promise<{ models: OllamaModel[] } | { unavailable: true; message: string }>;
 export async function getSettings(): Promise<SettingsView>;
-export async function patchSettings(changes: Record<string, unknown>): Promise<SettingsView>;
+export async function patchSettings(changes: Record<string, unknown>): Promise<SettingsWriteResult>; // carries per-control-id verify map (REQ-101/098b, R-3)
 export async function getRawEnv(): Promise<RawEnvEntry[]>;
 export async function putRawEnv(entries: { key: string; value: string }[]): Promise<RawEnvEntry[]>;
 ```
@@ -79,8 +79,14 @@ state and routes to `/login` (REQ-014).
   writes (REQ-078c). A dangerous settings dialog triggers a fresh `getSettings()` read
   first (REQ-092).
 - **Verbatim errors (REQ-097a):** `ErrorBanner` prints the BFF `{message}` unchanged.
-- **No-partial-success (REQ-098):** on a failed settings write the field keeps its prior
-  value and the UI states the change was not saved.
+- **No-partial-success (REQ-098):** on a failed (non-OK) settings write the field keeps its
+  prior value and the UI states the change was not saved.
+- **Per-field verify state (REQ-098a/098b):** on a 2xx `PATCH /api/settings` the settings
+  UI reads the per-control-id `verified` map from the `SettingsWriteResult` response (R-3;
+  never the bus) and renders per control: `true` = saved; observable `false` = not confirmed
+  / may not have saved; secret-overwrite / write-only `false` = submitted but not verified
+  (re-check via the provider or re-enter). It never shows a single "all saved" banner when
+  the map contains any `false`.
 
 ## Read-view performance (REQ-100)
 

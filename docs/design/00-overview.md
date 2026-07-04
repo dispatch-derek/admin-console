@@ -1,7 +1,7 @@
 # Admin Console — Design Overview
 
-Status: implementation architecture, rev 1. Designs to spec `specs/admin-console.md`
-(rev 4) under the binding `docs/governing-architecture.md`.
+Status: implementation architecture, rev 2. Designs to spec `specs/admin-console.md`
+(rev 7) under the binding `docs/governing-architecture.md`.
 
 This overview names the packages, the dependency direction, where each of the four
 boundary rules is enforced, and the concrete technology choices. Detail lives in the

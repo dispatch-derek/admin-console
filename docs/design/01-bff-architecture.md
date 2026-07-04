@@ -5,7 +5,7 @@ layers, the file layout, and the two internal interfaces the spec singles out: t
 **engine adapter** (the only place engine `/api/v1` shapes live) and the **event
 emitter**. It also specifies the generic **verify-after-write** mechanism.
 
-Satisfies: §4 (REQ-020–REQ-029e), plus the enforcement points for §10 NFRs.
+Satisfies: §4 (REQ-020–REQ-029f), plus the enforcement points for §10 NFRs.
 
 ## Layered module map (`bff/src/`)
 
@@ -86,9 +86,13 @@ Every mutating product route service runs, in order:
 5. **Call + re-shape** — adapter calls the engine, mappers re-shape the response into the
    product model. Reads stop here.
 6. **Verify-after-write** — `services/verify.ts` re-reads and confirms (REQ-028).
-7. **Emit event** — `events/emitter` publishes exactly one `admin.*` event (REQ-029),
-   and `audit/audit` records the outcome (REQ-093). On failure at 6, no event, failure
-   audit only (REQ-029b).
+7. **Emit event(s)** — `events/emitter` publishes **one or more** `admin.*` events, one per
+   state delta (REQ-029/029e): most routes emit one; membership emits one assigned/unassigned
+   per user (REQ-049); a batched settings write emits one `setting_changed` plus one
+   `provider_changed` per changed selector (REQ-101/063). `audit/audit` records the outcome
+   (REQ-093). On failure at 6, no success event, failure audit only (REQ-029b) — EXCEPT the
+   batched settings write, which is not all-or-nothing suppressed on a 2xx engine write
+   (REQ-029f, see verify note below).
 
 Read routes run steps 1–5 only (REQ-027 test).
 
@@ -168,14 +172,28 @@ Per-mutation confirmation predicates:
 | user update (REQ-043) | `listUsers()` | changed fields match |
 | user delete (REQ-044) | `listUsers()` | username absent |
 | invite create/revoke (REQ-046/047) | `listInvites()` | present / absent |
-| settings write (REQ-101) | `getSystem()` | each non-secret changed key equals value; secret keys confirmed set |
-| raw env write (REQ-078d) | `getSystem()` | same as settings, over the submitted keys |
+| settings write (REQ-101) | `getSystem()` | PER control: observable key equals value / secret key now set → `true`; observable change absent → `false`; secret-overwrite & write-only → best-effort `false` (not re-read). Produces a per-control-id map, not a scalar (REQ-029f) |
+| raw env write (REQ-078d) | `getSystem()` | per submitted key: observable → equals value; write-only → best-effort `false` (scalar per key) |
 
-If `confirm` is false, the route returns a non-success `{ message }` ("could not confirm
-the change was saved"), emits NO event (REQ-029b), and writes a failure audit entry.
+If `confirm` is false, a **single-delta** mutation returns a non-success `{ message }`
+("could not confirm the change was saved"), emits NO event (REQ-029b), and writes a failure
+audit entry.
+
+**Batched settings-write exception (REQ-029f, REQ-029b batch exception).** The curated
+`PATCH /api/settings` write is NOT run through the all-or-nothing `verifiedWrite` throw path.
+On a 2xx engine write the service builds the per-control-id `verified` map (observable keys
+re-read; secret-overwrite/write-only recorded best-effort `false`) and STILL emits
+`admin.instance.setting_changed` even if some observable keys re-read `false` — suppressing
+it would hide secret/write-only keys in the same call that persisted. Each changed provider
+selector emits its own `admin.instance.provider_changed` carrying its scalar `verified`,
+emitted with `verified:false` when its re-read shows no change (R-2). The map is returned to
+the web app in the `SettingsWriteResult` HTTP response (REQ-101/098b, R-3). Only a non-OK
+engine write suppresses both events (REQ-029b) and returns the no-partial-success state
+(REQ-098). The batched audit entry records the per-control-id map (REQ-093).
 
 Note: secret keys read back only as booleans (set/unset), so their verify predicate is
-"is now set", not value equality (REQ-060, REQ-078a).
+"is now set", not value equality (REQ-060, REQ-078a). An already-set secret overwritten
+(rotated) reads `true` both before and after, so it is unobservable → best-effort `false`.
 
 ## Event emitter interface (`events/emitter.ts`, `events/bus.ts`)
 
@@ -186,8 +204,9 @@ for the event schemas and `04-cross-cutting.md` for the bus/outbox design.
 export interface AdminEventEnvelope<P = unknown> {
   event: AdminEventName;      // e.g. 'admin.workspace.updated' (catalog.ts)
   actor: string;              // staff user id (REQ-029c)
-  target: Record<string, string | number>; // opaque handles only (REQ-021b)
+  target: Record<string, string | number | string[]>; // opaque handles / product-control ids (REQ-021b)
   changes?: P;                // secret values redacted (REQ-029c, REQ-062)
+  verified: boolean | Record<string, boolean>; // scalar per mutation/key, EXCEPT setting_changed = per-control-id map (REQ-028/029c/029f)
   timestamp: string;          // ISO-8601
 }
 
@@ -199,7 +218,9 @@ export interface EventBus {
 // transaction as the verify result, then publishes to the configured EventBus.
 export function emitAdminEvent<P>(
   name: AdminEventName, actor: string,
-  target: AdminEventEnvelope['target'], changes?: P,
+  target: AdminEventEnvelope['target'],
+  verified: boolean | Record<string, boolean>, // map only for setting_changed (REQ-029f)
+  changes?: P,
 ): Promise<void>;
 ```
 

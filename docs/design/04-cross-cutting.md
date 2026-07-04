@@ -105,8 +105,12 @@ For non-Ollama providers, discovery is not attempted; free-text validation appli
 - **Masked diff + typed token (REQ-078c, §8 REQ-088a):** before `PUT /api/settings/raw`
   the UI shows `key → new state` (secrets masked as "will be set/overwritten"; non-secrets
   show new value) and requires an exact typed confirmation token. BFF re-validates.
-- **Audit + event (REQ-078d):** a verified write produces one audit entry and one
-  `admin.raw_env.written` event, both listing key names with secret values redacted.
+- **Audit + event (REQ-078d, REQ-078f):** a write produces one audit entry and ONLY one
+  `admin.raw_env.written` event (scalar `verified`), both listing key names with secret
+  values redacted. A raw write NEVER also emits `setting_changed`/`provider_changed`, even
+  for curated-category or provider-selector keys (break-glass changes), because raw pairs are
+  opaque and unmapped (N-4); bus consumers watching provider/setting changes must ALSO
+  subscribe to `admin.raw_env.written`.
 
 ## (f) Secret handling (§7.0)
 
@@ -139,8 +143,11 @@ body/shape — a key-auth rejection (invalid/revoked developer key) vs an
 authorization/precondition refusal (multi-user off, or action not permitted for the key).
 The mapping rule: a 403 on any route when the key is structurally rejected → key-rejection
 message; a 403 tied to an operation that needs multi-user/role → precondition message.
-Verify-after-write failures return a distinct 409 "could not confirm the change was saved"
-(REQ-028), and a non-OK `update-env` yields the no-partial-success state (REQ-098).
+Verify-after-write failures for single-delta ops return a distinct 409 "could not confirm
+the change was saved" (REQ-028), and a non-OK `update-env` yields the no-partial-success
+state (REQ-098). The batched curated settings write is the exception: a 2xx `update-env`
+does NOT 409 on a partial verify failure — it returns 200 with the per-control-id `verified`
+map (`SettingsWriteResult`) the web app renders per-field state from (REQ-098a/098b, R-3).
 
 ## (h) Config via requireEnv (mirrors sibling `bff/src/config.ts`)
 

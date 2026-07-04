@@ -76,7 +76,7 @@ actor        TEXT             -- staff id, or 'system'/'anonymous' for pre-auth 
 action       TEXT NOT NULL    -- method+route or auth event name
 target       TEXT             -- opaque identifiers (json)
 outcome      TEXT NOT NULL    -- 'success' | 'failure'
-detail       TEXT             -- json; secret VALUES redacted (REQ-062/094), key names kept
+detail       TEXT             -- json; secret VALUES redacted (REQ-062/094), key names kept; carries the `verified` result — a boolean for single-delta ops, the per-control-id map for a batched settings write (REQ-093, REQ-029f)
 ```
 Append-only by discipline: the app only ever INSERTs; no UPDATE/DELETE code path exists,
 and a runtime guard/trigger rejects mutation (REQ-093a test). Every mutating product
@@ -94,8 +94,11 @@ the real bus. Lets us satisfy REQ-029d even before the on-box bus exists.
 
 Common envelope (REQ-029c) — see `events/emitter.ts` in `01-bff-architecture.md`:
 ```ts
-{ event, actor, target: {opaque handles}, changes?, timestamp } // secrets redacted
+{ event, actor, target: {opaque handles}, changes?, verified, timestamp } // secrets redacted
 ```
+`verified` (REQ-028/029c) is a **boolean** for single-delta events, EXCEPT
+`admin.instance.setting_changed`, whose `verified` is a **per-control-id map**
+(product-control id → boolean), never a scalar (REQ-029f, see below).
 
 Per-event payloads (all also carry actor + timestamp):
 
@@ -114,13 +117,36 @@ Per-event payloads (all also carry actor + timestamp):
 | `admin.user.deleted` | `{userId}` | — | REQ-044 |
 | `admin.invite.created` | `{inviteId}` | `{workspaceIds: string[]}` | REQ-046 |
 | `admin.invite.revoked` | `{inviteId}` | — | REQ-047 |
-| `admin.instance.setting_changed` | `{category}` | `{keys: string[]}` (secret values redacted; key names kept) | REQ-101 |
-| `admin.instance.provider_changed` | `{selector}` | `{newProvider}` | REQ-063 |
-| `admin.raw_env.written` | `{}` | `{keys: string[]}` (secret values redacted) | REQ-078d |
+| `admin.instance.setting_changed` | `{categories: string[], controlIds: string[]}` | `{categories: string[], controlIds: string[]}` (product-control ids, secret values redacted); `verified` is a **per-control-id map** (REQ-029c/029f) | §7 intro / REQ-101 / REQ-029c / REQ-029f |
+| `admin.instance.provider_changed` | `{selector}` (product selector id: `llm.provider`/`embedding.engine`/`vectorDb.provider`/`tts.provider`/`stt.provider`, REQ-063) | `{newProvider}`; own scalar `verified` (REQ-029f) | REQ-063 / REQ-029f |
+| `admin.raw_env.written` | `{}` | `{keys: string[]}` (opaque operator keys, secret values redacted); scalar `verified` | REQ-078d / REQ-078f |
 
 Rules: emitted only after `verifiedWrite` succeeds (REQ-029a); none on failure/unverified
-(REQ-029b); every mutating route maps to ≥1 event, reads to none (REQ-029e); targets carry
-opaque handles only, never parsed engine internals (REQ-021b).
+(REQ-029b); a mutation maps to **one or more** events, one per state delta (membership emits
+one assigned/unassigned per user; a batched settings write emits one `setting_changed` plus
+one `provider_changed` per changed selector), reads to none (REQ-029/029e); targets carry
+opaque handles/product-control ids only, never parsed engine internals (REQ-021b).
+
+**Batched curated settings write (`admin.instance.setting_changed`, REQ-029f/101).** The
+curated `PATCH /api/settings` save is ONE engine `update-env` call that may mix key classes,
+so its event is NOT all-or-nothing suppressed on a 2xx write (REQ-029b batch exception):
+- `verified` is a **per-control-id map** (product-control id → boolean), never a single
+  scalar (REQ-029c). Observable keys carry their re-read result (`true` confirmed / `false`
+  change-absent); unobservable secret-overwrites and write-only keys carry best-effort
+  `false` but STILL emit (auditable). A single observable key failing re-read records `false`
+  in the map but MUST NOT suppress the event and hide secret/write-only keys that persisted.
+- `admin.instance.provider_changed` is a distinct event, one per changed provider selector,
+  each carrying its OWN scalar `verified`. On a 2xx batch a selector whose re-read shows no
+  actual change is emitted with `verified:false` (emit-with-`false`, NOT suppressed — R-2).
+- If the engine write returns non-OK (nothing persisted), REQ-029b applies and BOTH
+  `setting_changed` and `provider_changed` are suppressed (failure audit only).
+
+**Raw-editor scope (REQ-078f, N-4).** A raw-editor write emits ONLY `admin.raw_env.written`
+— never `setting_changed`/`provider_changed`, even for curated-category or provider-selector
+keys (e.g. a break-glass `LLMProvider` change), because raw writes are opaque `{key,value}`
+pairs not mapped to product-control ids/categories. Bus consumers that must observe
+break-glass provider/setting changes MUST subscribe to `admin.raw_env.written` in ADDITION
+to the curated events; watching only the curated events misses raw-editor changes.
 
 ### Event name type (`events/catalog.ts`)
 ```ts
@@ -133,4 +159,21 @@ export type AdminEventName =
   | 'admin.invite.created' | 'admin.invite.revoked'
   | 'admin.instance.setting_changed' | 'admin.instance.provider_changed'
   | 'admin.raw_env.written';
+
+// admin.instance.setting_changed payload (REQ-029c/029f/101, MIN-3): `verified` is a
+// per-control-id MAP, never a scalar; product-control ids per the shared type (REQ-062b);
+// secret values redacted.
+export interface SettingChangedPayload {
+  categories: string[];                // §7.1–§7.8 categories touched
+  controlIds: string[];                // touched product-control ids (REQ-062b)
+  verified: Record<string, boolean>;   // product-control id → verified (REQ-029f)
+}
+
+// admin.instance.provider_changed payload (REQ-063/029f): one per changed selector, own
+// scalar `verified` (false when the 2xx re-read shows no actual change — R-2).
+export interface ProviderChangedPayload {
+  selector: string;                    // product selector id (REQ-063), e.g. 'llm.provider'
+  newProvider: string;
+  verified: boolean;
+}
 ```

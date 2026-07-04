@@ -28,8 +28,8 @@ export interface WorkspaceSettings extends Workspace {
   agentLlmProvider: string | null;         // agentProvider
   agentLlmModel: string | null;            // agentModel
   noResultsMessage: string | null;         // queryRefusalResponse
-  retrievalMode: string | null;            // vectorSearchMode
-  avatar: string | null;                   // pfpFilename
+  retrievalMode: string | null;            // vectorSearchMode; validated free-text (trimmed, non-empty), default 'default', NO enforced enum (REQ-036b)
+  avatar: string | null;                   // pfpFilename; existing filename-string ref only, binary upload out of scope (REQ-036c, REQ-121)
 }
 // PATCH body: Partial<WorkspaceSettings> minus id; null = inherit, omitted = no change (REQ-033/036)
 
@@ -46,7 +46,16 @@ export interface Invite {
 }
 export interface DocumentRef { id: string; title: string; }
 export interface SettingsView {            // GET /api/settings, product-labeled
-  categories: SettingCategory[];           // each control carries a product label + set/notSet for secrets
+  categories: SettingCategory[];           // each control carries a product-control id + label + set/notSet for secrets
+}
+// PATCH /api/settings response (REQ-101 HTTP-response contract, R-3): carries the
+// per-control-id verify map the web app reads to render per-field verification state
+// (REQ-098a/098b). Product-control ids are governed by the shared type (REQ-062b).
+// This is the HTTP-response twin of the admin.instance.setting_changed payload (delivered
+// over HTTP; web/ cannot read the on-box bus, REQ-029d).
+export interface SettingsWriteResult extends SettingsView {
+  verified: Record<string, boolean>;       // product-control id → verified (REQ-029f); NOT a scalar
+  changedCategories: string[];             // §7.1–§7.8 categories touched (MIN-3)
 }
 export interface RawEnvEntry {
   key: string;                             // opaque operator string (REQ-078e)
@@ -93,7 +102,10 @@ Staff routes touch only the BFF store, not the engine; they emit audit entries, 
 
 Field mapping for PATCH is the REQ-032 table, applied in `engine/mappers.ts`. Only
 changed fields are sent (REQ-033); JSON `null` = inherit (REQ-036); `responseMode`
-out-of-range value is never written unless explicitly changed (REQ-034).
+out-of-range value is never written unless explicitly changed (REQ-034). `avatar` is set as
+an existing engine `pfpFilename` string reference only — no binary upload (REQ-036c, REQ-121).
+Document detach (`PUT .../knowledge` deletes) is workspace-scoped; the instance-wide
+`DELETE /v1/system/remove-documents` is a non-goal and has no product route (REQ-122).
 
 ## Users, invites, membership (§6)
 
@@ -123,23 +135,40 @@ verified membership against the prior set to emit one assigned/unassigned event 
 | Method / path | Req | Resp | Engine call | Mutates → event |
 |---|---|---|---|---|
 | `GET /api/settings` | — | `SettingsView` | `GET /v1/system` | no (REQ-060) |
-| `PATCH /api/settings` | `{changes: Record<label,value>}` | `SettingsView` | `POST /v1/system/update-env` | yes → `admin.instance.setting_changed` (+`provider_changed`) (REQ-101, REQ-063) |
+| `PATCH /api/settings` | `{changes: Record<controlId,value>}` (product-control ids, REQ-062b) | `SettingsWriteResult` (view + per-control-id `verified` map, REQ-101/R-3) | `POST /v1/system/update-env` | yes → one `admin.instance.setting_changed` (+ one `provider_changed` per changed selector) (REQ-101, REQ-063, REQ-029f) |
 | `GET /api/settings/raw` | — | `RawEnvEntry[]` | `GET /v1/system` (+ key set from `env-keys.ts`) | no (REQ-078a) |
 | `PUT /api/settings/raw` | `{entries:{key,value}[]}` | `RawEnvEntry[]` | `POST /v1/system/update-env` | yes → `admin.raw_env.written` (REQ-078d, §8 REQ-088a) |
 | `GET /api/diagnostics/vectors` | — | `{count:number}` | `GET /v1/system/vector-count` | no (REQ-074) |
 | `GET /api/diagnostics/env` | — | masked `Record<string,string>` | `GET /v1/system/env-dump` | no (REQ-074) |
 | `GET /api/models/ollama` | `?basePath?` | `{models:OllamaModel[]}` or `{unavailable:true,message}` | Ollama `GET /api/tags` | no (REQ-075/076) |
 
-Curated `PATCH /api/settings` maps product-labeled controls to engine env keys inside the
-BFF; the label→key map is BFF-internal (REQ-021a). The write is validated against the
-186-key whitelist (`env-keys.ts`, REQ-096). Secret fields obey overwrite-without-reveal:
-a blank field is dropped from the patch (REQ-061). Provider-selector changes
-(`LLMProvider`, `EmbeddingEngine`, `VectorDB`, `TextToSpeechProvider`,
-`SpeechToTextProvider`) additionally emit `admin.instance.provider_changed` (REQ-063).
+Curated `PATCH /api/settings` maps product-control ids (spelled by the shared
+product-settings type, the contract of record — REQ-062b) to engine env keys inside the
+BFF; the id→key map is BFF-internal and MAY use engine-derived names on its engine side only
+(REQ-021a/062a). The write is validated against the 186-key whitelist (`env-keys.ts`,
+REQ-096). Secret fields obey overwrite-without-reveal: a blank field is dropped from the
+patch (REQ-061). Provider-selector changes (product ids `llm.provider`, `embedding.engine`,
+`vectorDb.provider`, `tts.provider`, `stt.provider`, REQ-063) additionally emit one
+`admin.instance.provider_changed` each.
+
+Because a curated save is one `update-env` call mixing key classes, the BFF is NOT
+all-or-nothing on a 2xx write (REQ-029b batch exception, REQ-029f): it returns a
+per-control-id `verified` map — observable keys carry their re-read result, unobservable
+secret-overwrites and write-only keys carry best-effort `false` (still emitted/audited). The
+same map is both the `SettingsWriteResult` HTTP response the web app renders per-field state
+from (REQ-098a/098b, R-3) and the `admin.instance.setting_changed` payload for bus consumers
+(REQ-029c/029f); `web/` reads the HTTP response, never the bus (REQ-029d). A provider
+selector whose 2xx re-read shows no actual change still emits `provider_changed` with
+`verified:false` (R-2); a non-OK engine write suppresses both events (failure audit only,
+REQ-029b) and yields the no-partial-success state (REQ-098).
 
 Raw editor: keys are opaque operator strings validated against `env-keys.ts` both
 client- and server-side (REQ-078b/078e); unknown keys → 400. The masked diff + typed
 token gate is a UI concern (REQ-078c) enforced before `PUT`; the BFF still re-validates.
+A raw write emits ONLY `admin.raw_env.written` — never `setting_changed`/`provider_changed`,
+even for curated-category or provider-selector keys (break-glass changes) — because raw
+writes are opaque, unmapped `{key,value}` pairs (REQ-078f, N-4); bus consumers watching
+provider/setting changes must ALSO subscribe to `admin.raw_env.written`.
 
 ## Health
 
