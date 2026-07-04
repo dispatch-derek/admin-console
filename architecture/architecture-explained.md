@@ -6,7 +6,7 @@
 > how the boundary rules are enforced). `architecture-explained.pdf` in this directory is a
 > generated artifact — regenerate it from this file after edits.
 >
-> Last updated: 2026-07-04 · Traces to `specs/admin-console.md` (rev 5),
+> Last updated: 2026-07-04 · Traces to `specs/admin-console.md` (rev 7),
 > `docs/governing-architecture.md`, and `docs/design/00–06`.
 
 ## 1. What this app is
@@ -62,8 +62,8 @@ Two packages plus the sealed engine and the customer's local model. The BFF is t
 5. **verify-after-write** — a generic runner: after any mutation, re-read engine state and
    confirm the intended outcome before reporting success (the engine has known
    write-consistency gaps).
-6. **Event emitter** — emits exactly one `admin.*` domain event **only after** a verified
-   write, via an abstract `EventBus`.
+6. **Event emitter** — emits one or more `admin.*` domain events (one per state delta), only
+   after a verified write, via an abstract `EventBus`.
 7. **Audit** — every mutation and auth event to stdout + an append-only store, secrets
    redacted.
 
@@ -71,8 +71,10 @@ Two packages plus the sealed engine and the customer's local model. The BFF is t
 The web app consumes product verbs (e.g. `POST /api/workspaces`,
 `PATCH /api/workspaces/:id/settings`, `POST /api/users`, `PATCH /api/settings`,
 `/api/settings/raw`, `/api/diagnostics/*`, `/api/models/ollama`). The engine `/api/v1` call
-each maps to is documented **inside the BFF only** (`docs/design/02-product-api.md`). No
-engine field-name appears in `web/` — a release-blocking rule enforced by a static scan.
+each maps to is documented **inside the BFF only** (`docs/design/02-product-api.md`). The
+`PATCH /api/settings` HTTP response carries the per-control-id verify result map, enabling the
+web app to render per-field verification state. No engine field-name appears in `web/` — a
+release-blocking rule enforced by a static scan.
 
 ### Domain events (`admin.*`, emitted after a write attempt succeeds)
 `workspace.created/updated/deleted/documents_changed/knowledge_pinned/knowledge_unpinned`,
@@ -81,10 +83,12 @@ engine field-name appears in `web/` — a release-blocking rule enforced by a st
 `raw_env.written`. A mutation emits **one or more** events — one per state delta (e.g. one
 `workspace_user.assigned` per added member; `setting_changed` plus one `provider_changed` per
 changed provider selector). Payloads carry actor (staff id), target ids, what changed (secrets
-redacted), timestamp, and a **`verified` flag**: writes whose outcome the engine's read surface
-can confirm are `verified:true`; unobservable secret-overwrites and write-only env keys are
-best-effort `verified:false` (they still emit, so the action is auditable). Full schemas:
-`docs/design/03-data-models.md` and spec §14.
+redacted), timestamp, and a **`verified` result**: for single-delta ops, a boolean (writes whose
+outcome the engine's read surface can confirm are `verified:true`); for the batched curated
+settings write (`PATCH /api/settings`), a per-control-id map (product-control id → boolean)
+so mixed batches are never all-or-nothing suppressed. Unobservable secret-overwrites and
+write-only keys are best-effort `verified:false` (they still emit, so the action is auditable).
+Full schemas: `docs/design/03-data-models.md` and spec §14.
 
 ## 3. Boundary-rule conformance (governing architecture)
 
@@ -114,7 +118,10 @@ suspended), `sessions`, `audit_log` (append-only), `identity_map` (product ↔ e
   otherwise and when Ollama is unreachable.
 - **Guarded raw-env editor** — writes arbitrary accepted engine env keys behind an
   advanced-mode gate, whitelist (exactly the engine's accepted keys), masked diff, typed
-  confirmation, and an audited `admin.raw_env.written` event.
+  confirmation, and an audited `admin.raw_env.written` event. Raw-editor writes emit ONLY
+  `admin.raw_env.written` (never `setting_changed`/`provider_changed`), so event bus consumers
+  watching curated/provider events must also subscribe to `raw_env.written` to catch break-glass
+  changes.
 - **Secrets** — `GET /v1/system` returns secrets as booleans; UI shows set/not-set and
   overwrites without revealing stored values.
 
@@ -144,6 +151,6 @@ at `:3001`, admin bff and web on their assigned dev ports.
 
 ## 7. Related docs
 - `docs/governing-architecture.md` — the binding four-boundary-rule strategy.
-- `specs/admin-console.md` (rev 4) — the requirements.
+- `specs/admin-console.md` (rev 7) — the requirements.
 - `docs/design/00–06` — module decomposition, product API, data models, cross-cutting, web, risks.
 - `docs/anythingllm-surface.md` — the real engine surface and API-key-vs-session-auth constraints.
