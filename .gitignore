@@ -1,1 +1,8 @@
 node_modules/
+dist/
+bff/.env
+web/.env
+*.env.local
+bff/data/
+.DS_Store
+*:Zone.Identifier

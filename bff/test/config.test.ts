@@ -1,0 +1,160 @@
+// config.ts — requireEnv + parsed config shape (design 04-cross-cutting.md §h, REQ-001,
+// REQ-019a, REQ-020, REQ-095). config.ts is a load-time const that throws on a missing
+// required var, so every case here mutates process.env directly and (re)imports the
+// module fresh via vi.resetModules() + a dynamic import().
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const REQUIRED_KEYS = [
+  'ANYTHINGLLM_BASE_URL',
+  'ANYTHINGLLM_API_KEY',
+  'ADMIN_BOOTSTRAP_USERNAME',
+  'ADMIN_BOOTSTRAP_TOKEN',
+  'SESSION_SECRET',
+  'SECRETS_ENC_KEY',
+] as const;
+
+const VALID_ENV: Record<string, string> = {
+  ANYTHINGLLM_BASE_URL: 'http://localhost:3001/',
+  ANYTHINGLLM_API_KEY: 'engine-key',
+  ADMIN_BOOTSTRAP_USERNAME: 'admin',
+  ADMIN_BOOTSTRAP_TOKEN: 'bootstrap-token',
+  SESSION_SECRET: 'session-secret',
+  SECRETS_ENC_KEY: 'secrets-key',
+};
+
+// Keys this suite pokes at, beyond the required six, that must be restored between tests.
+const OPTIONAL_KEYS = ['PORT', 'NODE_ENV', 'WEB_ORIGINS', 'EVENT_BUS_MODE', 'EVENT_BUS_URL', 'DB_PATH'];
+
+let snapshot: Record<string, string | undefined>;
+
+beforeEach(() => {
+  snapshot = {};
+  for (const key of [...REQUIRED_KEYS, ...OPTIONAL_KEYS]) snapshot[key] = process.env[key];
+  for (const [key, value] of Object.entries(VALID_ENV)) process.env[key] = value;
+  for (const key of OPTIONAL_KEYS) delete process.env[key];
+});
+
+afterEach(() => {
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  vi.resetModules();
+});
+
+async function loadConfig() {
+  vi.resetModules();
+  return import('../src/config.js');
+}
+
+describe('config.ts — requireEnv', () => {
+  it.each(REQUIRED_KEYS)('throws when %s is missing', async (missingKey) => {
+    delete process.env[missingKey];
+    await expect(loadConfig()).rejects.toThrow(
+      `Missing required environment variable: ${missingKey}`,
+    );
+  });
+
+  it.each(REQUIRED_KEYS)('throws when %s is an empty string (falsy, not just unset)', async (key) => {
+    process.env[key] = '';
+    await expect(loadConfig()).rejects.toThrow(`Missing required environment variable: ${key}`);
+  });
+
+  it('builds the config object when all required vars are present', async () => {
+    const { config } = await loadConfig();
+    expect(config.anythingLLMApiKey).toBe('engine-key');
+    expect(config.adminBootstrapUsername).toBe('admin');
+    expect(config.adminBootstrapToken).toBe('bootstrap-token');
+    expect(config.sessionSecret).toBe('session-secret');
+    expect(config.secretsKey).toBe('secrets-key');
+  });
+
+  it('strips a trailing slash from ANYTHINGLLM_BASE_URL', async () => {
+    process.env['ANYTHINGLLM_BASE_URL'] = 'http://engine.local:3001/';
+    const { config } = await loadConfig();
+    expect(config.anythingLLMBaseUrl).toBe('http://engine.local:3001');
+  });
+
+  it('leaves a base URL with no trailing slash unchanged', async () => {
+    process.env['ANYTHINGLLM_BASE_URL'] = 'http://engine.local:3001';
+    const { config } = await loadConfig();
+    expect(config.anythingLLMBaseUrl).toBe('http://engine.local:3001');
+  });
+});
+
+describe('config.ts — PORT (REQ-020)', () => {
+  it('defaults to 3002 when PORT is unset', async () => {
+    const { config } = await loadConfig();
+    expect(config.port).toBe(3002);
+  });
+
+  it('parses a numeric PORT from the environment', async () => {
+    process.env['PORT'] = '4100';
+    const { config } = await loadConfig();
+    expect(config.port).toBe(4100);
+  });
+});
+
+describe('config.ts — corsMode (REQ-095)', () => {
+  it('is "strict" when NODE_ENV=production', async () => {
+    process.env['NODE_ENV'] = 'production';
+    const { config } = await loadConfig();
+    expect(config.corsMode).toBe('strict');
+  });
+
+  it.each([undefined, 'development', 'test'])('is "permissive" when NODE_ENV=%s', async (env) => {
+    if (env === undefined) delete process.env['NODE_ENV'];
+    else process.env['NODE_ENV'] = env;
+    const { config } = await loadConfig();
+    expect(config.corsMode).toBe('permissive');
+  });
+});
+
+describe('config.ts — webOrigins (REQ-095 strict allowlist)', () => {
+  it('is an empty array when WEB_ORIGINS is unset', async () => {
+    const { config } = await loadConfig();
+    expect(config.webOrigins).toEqual([]);
+  });
+
+  it('splits a comma-separated WEB_ORIGINS into an array', async () => {
+    process.env['WEB_ORIGINS'] = 'https://a.example.com,https://b.example.com';
+    const { config } = await loadConfig();
+    expect(config.webOrigins).toEqual(['https://a.example.com', 'https://b.example.com']);
+  });
+
+  it('filters out empty entries (e.g. a trailing comma)', async () => {
+    process.env['WEB_ORIGINS'] = 'https://a.example.com,,https://b.example.com,';
+    const { config } = await loadConfig();
+    expect(config.webOrigins).toEqual(['https://a.example.com', 'https://b.example.com']);
+  });
+});
+
+describe('config.ts — event bus mode (04c)', () => {
+  it('defaults eventBusMode to "inproc"', async () => {
+    const { config } = await loadConfig();
+    expect(config.eventBusMode).toBe('inproc');
+    expect(config.eventBusUrl).toBeUndefined();
+  });
+
+  it('honors an explicit EVENT_BUS_MODE and EVENT_BUS_URL', async () => {
+    process.env['EVENT_BUS_MODE'] = 'bus';
+    process.env['EVENT_BUS_URL'] = 'redis://localhost:6379';
+    const { config } = await loadConfig();
+    expect(config.eventBusMode).toBe('bus');
+    expect(config.eventBusUrl).toBe('redis://localhost:6379');
+  });
+});
+
+describe('config.ts — dbPath', () => {
+  it('defaults to data/console.db when DB_PATH is unset', async () => {
+    const { config } = await loadConfig();
+    expect(config.dbPath).toBe('data/console.db');
+  });
+
+  it('honors an explicit DB_PATH', async () => {
+    process.env['DB_PATH'] = '/tmp/somewhere/console.db';
+    const { config } = await loadConfig();
+    expect(config.dbPath).toBe('/tmp/somewhere/console.db');
+  });
+});
