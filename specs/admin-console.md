@@ -1,6 +1,6 @@
 # AnythingLLM Administration Console — Specification v1
 
-Status: Draft rev 5 (rev-4 spec-review resolutions applied) — for implementation and QA
+Status: Draft rev 7 (rev-6 spec-review resolutions applied) — for implementation and QA
 Grounding reference: `docs/anythingllm-surface.md` (authoritative engine surface; captured from
 the live instance on 2026-07-03). Every functional requirement below cites the concrete
 engine endpoint(s)/field(s) it maps to.
@@ -12,7 +12,15 @@ rev 3 applied spec-review resolutions BL-1..NI-3 (§13); rev 4 aligned the archi
 governing white-label strategy — BFF as anti-corruption layer, product-verb API, engine shapes
 confined to the BFF, verify-after-write, and an `admin.*` domain-event catalog (§14); rev 5
 applied rev-4 spec-review resolutions BLK-1..NIT-2 — event cardinality, per-key-class verify
-contract, §7 product settings map, and event-payload `verified` flag (§13.2).
+contract, §7 product settings map, and event-payload `verified` flag (§13.2); rev 6 applied
+rev-5 spec-review resolutions N-1..N-7 — per-control-id verify map & mixed-batch settings
+emission, unverified-write UI semantics, `retrievalMode` relaxed to grounded free-text,
+raw-editor event scope, product-control-id contract of record, fresh-read scope correction, and
+secret-unset reachability (§13.3); rev 7 applied rev-6 spec-review resolutions R-1..R-5 (final
+editorial reconciliations to ACCEPT) — reconciled the scalar-vs-map `verified` language across
+REQ-028/029a/093, made `provider_changed` on a failed 2xx-batch re-read emit-with-`verified:false`,
+pinned the `PATCH /api/settings` HTTP response to carry the per-control-id verify map, and
+annotated the superseded §13.2 MIN-6 entry (§13.4).
 
 Section numbers (§1, §1.1, …) and requirement IDs (REQ-###) are **stable**. Downstream tests
 cite them. Never renumber or reuse an ID; append new sections/IDs or mark items **DEPRECATED**.
@@ -189,13 +197,21 @@ between our stable product API and the engine's current (unstable, hidden) shape
 - REQ-028 — **Verify-after-write (step 6; applies to every mutating route), per key/operation
   class (BLK-2, MAJ-3).** After a write, the BFF attempts to re-read the relevant state and
   confirm the intended outcome before reporting success; the engine has known write-consistency
-  gaps. Each mutation is marked with a `verified` boolean (carried on the emitted event and audit
-  entry, REQ-029c/093):
+  gaps. Each mutation is marked with a `verified` result — a boolean PER mutation/key (carried on
+  the emitted event and audit entry, REQ-029c/093) — EXCEPT the batched curated settings write,
+  whose `admin.instance.setting_changed` serializes `verified` as a per-control-id MAP
+  (product-control id → boolean) rather than a single scalar (R-1; REQ-029c/029f):
   - **Observable state change** (workspace/user/invite/membership content, non-secret settings,
-    secret set→unset or unset→set transitions observable via `GET /v1/system` booleans): the BFF
+    secret unset→set transitions observable via `GET /v1/system` booleans): the BFF
     re-reads and confirms the transition. Confirmed → `verified:true`. If the re-read shows the
     change absent → the route returns non-success (`{ message }`, "could not confirm the change
-    was saved") and NO success event is emitted (REQ-029b).
+    was saved") and NO success event is emitted (REQ-029b). **Note (N-7 — secret unset is not a
+    curated op):** the reverse secret **set→unset** transition has NO curated product trigger —
+    REQ-061 treats an empty secret field as "no change", so curated forms cannot clear an
+    already-set secret and v1 exposes no "clear secret" affordance. The set→unset direction is
+    listed only for completeness of the observability model; it is unreachable except by an
+    explicit clearing value written through the raw editor (REQ-078a), if the engine accepts one,
+    in which case the resulting unset boolean IS observable and verified in this class.
   - **Secret overwrite where the value is unobservable** (rotating an already-set secret;
     `GET /v1/system` returns `true` both before and after — REQ-060/061): a 2xx engine write is
     treated as **best-effort success** and the mutation is marked `verified:false` (unverified).
@@ -367,11 +383,15 @@ Product API (frontend consumes these; §4.4). Workspaces are addressed by an opa
   free-text with a surfaced warning (REQ-076). *Test:* with effective provider `ollama` and Ollama
   reachable, `llmModel` is a dropdown of pulled models; with a non-Ollama effective provider or
   Ollama unreachable, it is free-text.
-- REQ-036b — **`retrievalMode` value constraint (MIN-6).** `retrievalMode` (engine
-  `vectorSearchMode`, grounding §3, default `default`) is a selector constrained to the enumerated
-  allowed values `default` and `rerank`; an out-of-range fetched value is displayed read-only and
-  not re-written unless explicitly changed (mirrors REQ-034). *Test:* the `retrievalMode` selector
-  exposes exactly `default` and `rerank`; an unknown fetched value shows read-only.
+- REQ-036b — **`retrievalMode` value constraint (MIN-6; relaxed per N-3).** `retrievalMode` (engine
+  `vectorSearchMode`) is grounded in §3 ONLY as `string?` with default `default`; the authoritative
+  engine surface does **not** enumerate allowed values (the previously cited `rerank` enum was
+  ungrounded). Therefore the console MUST NOT hardcode a `default`/`rerank` enum: `retrievalMode` is
+  **validated free-text** (trimmed, non-empty, no whitespace-only) whose default is `default`, and
+  partial-write semantics apply (REQ-033) — an untouched field is omitted from the engine body. If a
+  future grounding revision enumerates the real values, this REQ may be tightened to a constrained
+  selector. *Test:* the `retrievalMode` field accepts free-text (e.g. `default`), rejects a
+  whitespace-only value client-side, and is absent from the engine body when unchanged.
 - REQ-036c — **`avatar` edit mechanism (MIN-5).** Workspace avatar editing (engine `pfpFilename`)
   is a filename-string reference set via `PATCH /api/workspaces/:id/settings` (the value must be an
   already-present engine profile-picture filename); **binary avatar UPLOAD is out of scope for v1**
@@ -558,7 +578,10 @@ emits one `admin.instance.setting_changed` (payload `categories[]`, MIN-3) plus 
   displayed or pre-filled. Submitting an empty secret field leaves the stored secret unchanged (no
   accidental clearing). Because `GET /v1/system` returns only a set/unset boolean, **overwriting an
   already-set secret is unobservable** and is treated as best-effort success marked `verified:false`
-  per REQ-028; a set→unset or unset→set transition IS observable and verified normally. *Test:*
+  per REQ-028; an unset→set transition IS observable and verified normally. **The reverse
+  set→unset (clearing a secret) is NOT a supported curated operation (N-7):** because an empty
+  secret field means "no change" (above), curated forms cannot clear an already-set secret and v1
+  exposes no dedicated "clear secret" affordance (see REQ-028 note). *Test:*
   saving with a blank secret field does not send that key; entering a value sends exactly that key;
   rotating an already-set secret emits its event with `verified:false`.
 - REQ-062 — Secret values transit only browser → BFF → engine `update-env`; they are never
@@ -601,6 +624,21 @@ emits one `admin.instance.setting_changed` (payload `categories[]`, MIN-3) plus 
   *Test:* `PATCH /api/settings` accepts product control ids and the BFF maps them to the correct
   engine keys; a static scan of `web/` (excluding the raw-editor path) contains no engine env-key
   names; every §7.1–§7.8 category has a product control group.
+- REQ-062b — **Product-control ids: the shared TS product-settings type is the contract of record
+  (N-5).** The exact spelling of EVERY product-control id — for all curated keys across §7.1–§7.8,
+  not only the representative ids listed in REQ-062a — is DEFINED by the shared TypeScript
+  product-settings type (REQ-025), which is the SINGLE normative contract of record. The
+  representative `llm.*`/`embedding.*`/… mappings in REQ-062a are illustrative examples of the
+  BFF-internal product↔engine map, NOT the id contract, and no field-suffix naming convention is
+  authoritative. All consumers bind to the ids declared in the shared type: the web app, the
+  `PATCH /api/settings` request body, and the `admin.instance.setting_changed` payload
+  (`verified` map keys and touched-control-id list, REQ-029c/029f). The BFF-internal map (REQ-062a)
+  MAY use engine-derived names on its ENGINE side; the PRODUCT side is governed solely by the shared
+  type, so an inconsistent engine-key rename (e.g. `OllamaLLMModelPref` vs `OllamaLLMBasePath`) has
+  no bearing on the stable product-control id. *Test:* every control id accepted by
+  `PATCH /api/settings` and every control id appearing in an `admin.instance.setting_changed`
+  payload is a member of the shared product-settings type; `web/` and event consumers reference only
+  ids from that type, never a suffix-derived guess.
 
 ### §7.1 LLM provider selection
 - REQ-063 — The console reads/writes `llm.provider` (`LLMProvider`) and `llm.router`
@@ -770,6 +808,18 @@ routes `GET /api/settings/raw` and `PUT /api/settings/raw` (BFF maps to `GET /v1
   for being unverifiable); observable-key writes emit with `verified:true` once confirmed. *Test:*
   a raw write to an observable key emits `admin.raw_env.written` with `verified:true`; a raw write
   to a write-only key emits it with `verified:false`; both audit entries redact secret values.
+- REQ-078f — **Raw-editor events are distinct and intentional (N-4).** By design a raw-editor
+  write (§7.11) emits ONLY `admin.raw_env.written` (REQ-078d); it does NOT also emit
+  `admin.instance.setting_changed` or `admin.instance.provider_changed`, **even when the keys it
+  touches are curated-category or provider-selector keys** (e.g. a break-glass `LLMProvider`
+  change). This is INTENTIONAL: raw writes are opaque `{ key, value }` pairs (REQ-078e) that are
+  NOT mapped to product-control ids or categories, and they are guarded, confirmed, and audited on
+  their own path (REQ-078a/b/c/d, REQ-088a). **Consequence for bus consumers:** any subscriber that
+  must observe break-glass provider/setting changes MUST subscribe to `admin.raw_env.written` in
+  ADDITION to `admin.instance.setting_changed` / `admin.instance.provider_changed`; watching only
+  the curated events will miss raw-editor changes. *Test:* a raw write to `LLMProvider` emits
+  exactly one `admin.raw_env.written` and zero `admin.instance.provider_changed` /
+  `admin.instance.setting_changed`.
 
 ---
 
@@ -838,8 +888,12 @@ Both this console and the customer-facing app operate against the **same** Anyth
 - REQ-092 — **Fresh-read before dangerous writes.** Before a dangerous instance-settings change
   (§8), the console re-reads `GET /v1/system` and shows the current value so the operator acts on
   live state. *Test:* opening the confirmation dialog triggers a fresh `GET /v1/system`.
-  **Scope note (NIT-2):** fresh-read-before-write targets *value-overwriting* edits where a stale
-  view could clobber a concurrent change (instance settings, workspace settings). Workspace and
+  **Scope note (NIT-2; corrected per N-6):** fresh-read-before-write targets *value-overwriting*
+  edits where a stale view could clobber a concurrent change. This REQ's trigger is a dangerous
+  **instance-settings** change (§8) and its mechanism is `GET /v1/system` (instance-scoped only);
+  it does NOT cover workspace-settings edits — those are instance-independent state read via
+  `GET /v1/workspace/{slug}` and are guarded instead by view-open re-fetch (REQ-031) plus
+  partial-write clobber-avoidance (REQ-091), not by this `GET /v1/system` pre-step. Workspace and
   user DELETE (REQ-038/044) intentionally do NOT require a fresh-read pre-step — deletion is not a
   value merge, and the typed-target confirmation (REQ-081/082) plus verify-after-write (a `404`
   re-read = confirmed success, REQ-028/MAJ-3) already guard it; a delete of an already-removed
@@ -861,8 +915,12 @@ Both this console and the customer-facing app operate against the **same** Anyth
 ### §10.1 Security
 - REQ-093 — The BFF maintains an **audit log** of all mutating operations (POST/PATCH/PUT/DELETE
   routes) recording actor (staff identity), method+route, target identifiers, timestamp, the
-  `verified` flag (REQ-028), and success/failure. *Test:* a successful `update-env` and a failed
-  one each produce an audit entry with outcome and `verified` state.
+  `verified` result (REQ-028), and success/failure. **`verified` shape (R-1):** for a single-delta
+  operation the audit entry stores a scalar boolean; for a batched curated `PATCH /api/settings`
+  write it stores the per-control-id `verified` MAP (product-control id → boolean), matching the
+  `admin.instance.setting_changed` payload (REQ-029c/029f). *Test:* a successful `update-env` and a
+  failed one each produce an audit entry with outcome and `verified` state; a batched settings write
+  stores a per-control-id `verified` map in its audit entry.
 - REQ-093a — **Audit-log persistence (resolves OQ-5).** Audit records are written to BOTH
   structured stdout logs AND a BFF-local append-only audit store (append-only: existing entries
   are never mutated or deleted by the app), designed to be shippable to a central logging system
@@ -906,8 +964,29 @@ Both this console and the customer-facing app operate against the **same** Anyth
   text per REQ-023/097). *Test:* a BFF `403 { message: "…" }` appears character-for-character in
   the UI.
 - REQ-098 — No partial-success ambiguity: if an `update-env` write returns non-OK, the UI states
-  that the change was NOT saved and does not show the new value as persisted. *Test:* forced
-  upstream failure leaves the field showing its prior state.
+  that the change was NOT saved and does not show the new value as persisted (2xx-but-unverified and
+  batched partial-verify cases are covered by REQ-098a/098b). *Test:* forced upstream failure leaves
+  the field showing its prior state.
+- REQ-098a — **Best-effort (2xx, `verified:false`) write UI semantics (N-2).** For a write that
+  returns 2xx but is marked `verified:false` (an unobservable secret-overwrite or a write-only key,
+  REQ-028/029a), the UI MUST surface a state DISTINCT from "confirmed saved": the field/row is shown
+  as **submitted but not verified** (the console could not confirm the value took effect). For
+  **secret rotation** specifically, the operator is told the new secret was submitted but its
+  persistence could not be confirmed and, if in doubt, to re-check via the provider or re-enter the
+  value. The UI MUST NOT display such a write as confirmed-persisted. *Test:* rotating an already-set
+  secret that returns 2xx renders an "unverified / could not confirm" state, not a green
+  "saved"/confirmed state.
+- REQ-098b — **Batched settings write with mixed per-control-id results (N-1).** For a batched
+  `PATCH /api/settings` (REQ-101) returning 2xx, the UI reads the per-control-id verify map from the
+  `PATCH /api/settings` HTTP RESPONSE body (REQ-101, R-3) — the web app cannot read the on-box bus
+  event (REQ-029d), though the same map shape appears on the `admin.instance.setting_changed` payload
+  for backend subscribers (REQ-029c/029f) — and surfaces status
+  PER CONTROL: observable keys confirmed (`true`) as saved; observable keys whose re-read showed the
+  change absent (`false`) as **not confirmed — may not have saved**; and secret-overwrite / write-only
+  keys (`false`) as **submitted but not verified** (REQ-098a). The UI MUST NOT report the whole batch
+  as uniformly saved when the map contains any `false`. *Test:* a 2xx batch whose verify map is
+  `{ a:true, b:false(observable), c:false(secret) }` renders `a` as saved, `b` as not-confirmed, and
+  `c` as submitted-but-unverified — never a single "all saved" banner.
 
 ### §10.3 Observability
 - REQ-099 — The BFF emits structured logs (mirrors Fastify logger in `bff/src/index.ts`) with a
@@ -923,10 +1002,24 @@ Both this console and the customer-facing app operate against the **same** Anyth
   an operator's edits into a single `PATCH /api/settings` submission; the BFF issues one engine
   `POST /v1/system/update-env` write plus the verify-after-write re-read (REQ-028). Per BLK-1 the
   batch emits **one** `admin.instance.setting_changed` (with `categories[]`, MIN-3) PLUS one
-  `admin.instance.provider_changed` per changed provider selector (REQ-063). *Test:* saving five
+  `admin.instance.provider_changed` per changed provider selector (REQ-063). **When the batch mixes
+  key classes (N-1):** that single `admin.instance.setting_changed` carries a per-control-id
+  `verified` MAP (REQ-029c/029f), not a single flag, and is emitted with per-key detail rather than
+  all-or-nothing suppressed when only some observable keys verify (REQ-029b exception, REQ-029f);
+  the UI surfaces per-control status per REQ-098b. **HTTP response contract (R-3):** the
+  `PATCH /api/settings` product RESPONSE body itself returns the per-control-id verify results to the
+  web app — a per-control-id map (product-control id → boolean) that is a member of the shared
+  product-settings type (REQ-062b), plus the touched `categories[]` — mirroring the
+  `admin.instance.setting_changed` payload (REQ-029c/029f) but delivered over HTTP. This response map,
+  NOT the on-box bus event (which `web/` cannot read, REQ-029d), is the source that REQ-098b/098a
+  render per-control status from. *Test:* saving five
   changed keys spanning two categories issues exactly one engine `update-env` call (followed by the
-  verification read) and emits one `admin.instance.setting_changed` carrying both categories; if a
-  provider selector was among them, one `admin.instance.provider_changed` is also emitted.
+  verification read) and emits one `admin.instance.setting_changed` carrying both categories and a
+  per-control-id `verified` map; if a provider selector was among them, one
+  `admin.instance.provider_changed` is also emitted; a mix where one observable key fails re-read
+  but a secret key persists still emits one `admin.instance.setting_changed`, not zero; and the
+  `PATCH /api/settings` HTTP response body carries the same per-control-id `verified` map to the web
+  app.
 
 ---
 
@@ -1119,10 +1212,89 @@ architecture-alignment decision is reopened. Each item:
 - **MIN-5** — avatar is a filename-string reference (REQ-036c); binary upload is non-goal REQ-121.
   → §5.2 REQ-036c, §11 REQ-121.
 - **MIN-6** — `retrievalMode` constrained to `default`/`rerank` (REQ-036b). → §5.2 REQ-036b.
+  *(SUPERSEDED by §13.3 N-3 — the `default`/`rerank` enum was ungrounded; REQ-036b now specifies
+  validated free-text, default `default`. This entry is retained as historical record; the
+  normative source is REQ-036b, not this line. R-4.)*
 - **NIT-1** — `ADMIN_BOOTSTRAP_*` required only at first boot; optional thereafter. → §3.2
   REQ-019a.
 - **NIT-2** — fresh-read-before-write scope note added; workspace/user delete intentionally
   exempt. → §9 REQ-092.
+
+---
+
+## §13.3 rev-6 spec-review resolutions
+
+Rev 6 applies the review at `docs/spec-review-rev5.md`. No OQ-1..OQ-6, BL-1..NI-3, rev-4
+architecture-alignment, or rev-5 (BLK-1..NIT-2) decision is reopened except where a rev-5 item is
+explicitly superseded below. Each finding:
+
+- **N-1** (MAJOR — mixed-batch settings write: undefined `verified` flag + unsafe all-or-nothing
+  suppression) — `admin.instance.setting_changed`'s `verified` is now a **per-control-id map**
+  (REQ-029c amended, new REQ-029f); the batched-settings write is emitted with per-control-id
+  detail and is EXEMPT from REQ-029b all-or-nothing suppression when the engine write is 2xx
+  (REQ-029b amended, REQ-029f); the 2xx-with-partial-verify-failure UI state is defined
+  (REQ-098b, referenced from REQ-098); REQ-101 and the §14.2 `setting_changed` / `provider_changed`
+  rows reconciled. → §4.2 REQ-028/029b, §14.1 REQ-029c/029f, §10.2 REQ-098/098b, §10.4 REQ-101,
+  §14.2 catalog.
+- **N-2** (MINOR — unverified 2xx write semantics unspecified) — new REQ-098a defines the
+  operator-facing "submitted but not verified" state for best-effort `verified:false` writes,
+  with explicit secret-rotation wording. → §10.2 REQ-098/098a.
+- **N-3** (MINOR — `retrievalMode` enum ungrounded) — grounding §3 verified: `vectorSearchMode` is
+  `string?` default `default` with NO enumerated values; the ungrounded `default`/`rerank` enum is
+  removed and REQ-036b relaxed to **validated free-text** (default `default`). Supersedes the rev-5
+  MIN-6 resolution. → §5.2 REQ-036b (supersedes §13.2 MIN-6).
+- **N-4** (MINOR — raw-editor writes bypass `setting_changed`/`provider_changed`) — stated as
+  INTENTIONAL and documented: new REQ-078f plus a §14.2 catalog note; bus consumers must also
+  subscribe to `admin.raw_env.written` to observe break-glass provider/setting changes. → §7.11
+  REQ-078f, §14.2 catalog.
+- **N-5** (MINOR, BLK-3 residual — per-field control-id spelling left to convention) — the shared
+  TypeScript product-settings type (REQ-025) is made the SINGLE contract of record for every
+  product-control id via new REQ-062b; REQ-062a mappings are illustrative, no suffix convention is
+  authoritative. → §7.0a REQ-062b (with REQ-025, REQ-062a).
+- **N-6** (NIT — REQ-092 scope note internal inconsistency) — the scope note corrected: this REQ
+  covers dangerous INSTANCE-settings changes via `GET /v1/system` only; workspace-settings edits
+  are handled by view-open re-fetch (REQ-031) + partial-write clobber-avoidance (REQ-091), not this
+  pre-step. → §9 REQ-092.
+- **N-7** (NIT — "secret set→unset" unreachable) — clarified: no curated product op can clear a set
+  secret (REQ-061 empty=no change); the set→unset transition is unreachable via curated forms and
+  v1 exposes no "clear secret" affordance. REQ-028 observable bullet and REQ-061 amended. → §4.2
+  REQ-028, §7.0 REQ-061.
+
+---
+
+## §13.4 rev-7 spec-review resolutions
+
+Rev 7 applies the review at `docs/spec-review-rev6.md` (the rev-6 verification pass; all rev-5
+findings N-1..N-7 CLOSED). These are the final editorial reconciliations to reach ACCEPT. No
+OQ-1..OQ-6, BL-1..NI-3, rev-4 architecture-alignment, rev-5 (BLK-1..NIT-2), or rev-6 (N-1..N-7)
+decision is reopened; each rev-7 item only tightens wording that the rev-6 edits left inconsistent.
+No IDs are renumbered or reused. Each finding:
+
+- **R-1** (MINOR — scalar-vs-map `verified` contradiction) — the blanket "boolean" language in the
+  REQs that pre-date the N-1 change is reconciled with the per-control-id map introduced for
+  `admin.instance.setting_changed`: REQ-028 now states `verified` is a boolean per mutation/key
+  EXCEPT the batched curated settings write, which serializes a per-control-id map; REQ-029a's
+  example/test is corrected (a curated secret rotation carries `{ <secretId>: false }` in the map,
+  while only a raw-editor rotation → `admin.raw_env.written` carries a scalar `verified:false`); and
+  REQ-093 states the audit entry stores the per-control-id map for a batched settings write. → §4.2
+  REQ-028, §14.1 REQ-029a, §10.1 REQ-093 (consistent with REQ-029c/029f).
+- **R-2** (MINOR — `provider_changed` emission on failed 2xx-batch re-read ambiguous) — resolved to
+  the emit-with-`verified:false` model (consistent with REQ-029f's per-control map): REQ-029b's batch
+  exception is extended to name `admin.instance.provider_changed`, and REQ-029f states that a
+  provider selector whose re-read shows no change STILL emits `admin.instance.provider_changed` with
+  `verified:false` rather than being suppressed; a non-OK engine write still suppresses both events.
+  The §14.2 `provider_changed` row is annotated to match. → §14.1 REQ-029b/029f, §14.2 catalog.
+- **R-3** (MINOR — `PATCH /api/settings` response contract gap) — the curated-settings-write HTTP
+  RESPONSE body is pinned to return the per-control-id verify map (a member of the shared
+  product-settings type, REQ-062b), distinct from the on-box bus event (REQ-029d) which `web/`
+  cannot read; this response map is the source REQ-098b/098a render per-control status from. → §10.4
+  REQ-101, §10.2 REQ-098b (with REQ-062b, REQ-029c/029f).
+- **R-4** (NIT — stale §13.2 MIN-6 changelog) — §13.2 MIN-6 is annotated with a superseded-by note
+  pointing to §13.3 N-3 (validated free-text `retrievalMode`); history is preserved, not rewritten.
+  → §13.2 MIN-6.
+- **R-5** (NIT — cosmetic id reading order: REQ-029e appears after REQ-029f in §14) — no change:
+  requirement IDs are STABLE and NON-POSITIONAL per the document header; document order carries no
+  meaning. Noted here for the record only.
 
 ---
 
@@ -1138,28 +1310,77 @@ All events use the `admin.*` namespace.
   event is published when the write completes with either (a) verify-after-write confirming the
   outcome (`verified:true`), or (b) a best-effort 2xx write for the unobservable cases —
   secret-overwrite and write-only keys — marked `verified:false`. In both cases the event IS
-  emitted; the `verified` flag distinguishes them. *Test:* a confirmed settings change emits its
-  event with `verified:true`; a secret rotation returning 2xx emits its event with
-  `verified:false`.
+  emitted; the `verified` flag distinguishes them. **Shape note (R-1):** for single-delta events
+  `verified` is a scalar boolean; for the batched curated `setting_changed` it is a per-control-id
+  map (REQ-029c/029f). A curated secret rotation goes through `PATCH /api/settings` →
+  `admin.instance.setting_changed`, so its result is carried in the map as `{ <secretId>: false }`
+  (NOT a scalar `event.verified === false`); only a raw-editor secret rotation →
+  `admin.raw_env.written` carries a scalar `verified:false` (REQ-078d/078f). *Test:* a confirmed
+  single-delta settings change (e.g. a workspace update) emits its event with scalar `verified:true`;
+  a curated secret rotation returning 2xx emits `admin.instance.setting_changed` whose `verified` map
+  entry for that secret id is `false`; a raw-editor secret rotation returning 2xx emits
+  `admin.raw_env.written` with scalar `verified:false`.
 - REQ-029b — **No success event on failure or contradicted verification.** If a mutating call
   fails upstream, is rejected by a guardrail, or the verify re-read affirmatively shows the change
   DID NOT take effect (for observable cases), NO success event is emitted (a failure audit entry is
   still recorded per REQ-093). Note: an unobservable secret-overwrite / write-only write is NOT a
-  "failed verification" — it emits with `verified:false` per REQ-029a. *Test:* a write that returns
+  "failed verification" — it emits with `verified:false` per REQ-029a. **Batched-settings exception
+  (N-1):** all-or-nothing suppression applies to SINGLE-delta operations (a workspace/user/invite/
+  membership write). It does NOT apply to a batched curated settings write (`PATCH /api/settings`,
+  REQ-101), which mixes key classes in one engine call: for a 2xx engine write, one observable key
+  failing its re-read MUST NOT suppress the whole `admin.instance.setting_changed` event and thereby
+  hide secret/write-only keys in the same call that DID persist. Such a batch instead emits with
+  per-control-id verify detail per REQ-029f. **This batch exception also covers
+  `admin.instance.provider_changed` (R-2):** a provider selector the operator changed in a 2xx batch
+  is emitted as its own `admin.instance.provider_changed` carrying `verified:false` when that
+  selector's re-read shows the provider did NOT actually change — it is NOT suppressed by the
+  general observable-contradicted rule above (consistent with REQ-029f's per-control emit-with-`false`
+  model). If the engine write itself returns non-OK (no key persisted), this REQ-029b suppression
+  applies to the batch as normal, suppressing both `admin.instance.setting_changed` and any
+  `admin.instance.provider_changed`. *Test:* a write that returns
   non-OK, or whose observable re-read shows the change absent, produces zero `admin.*` success
-  events and one failure audit entry.
+  events and one failure audit entry; a 2xx batch where one observable key fails re-read still emits
+  one `admin.instance.setting_changed` (REQ-029f), not zero.
 - REQ-029c — **Minimal payload, `verified` flag & redaction (BLK-2, MIN-3).** Every event carries
   at minimum: `event` (name), `actor` (staff user id, §3.2), `target` (opaque identifiers —
   workspace `id`, user `id`, invite `id`; for settings the touched product-control ids), `changes`
-  (what changed; secret values ALWAYS redacted per REQ-062/094), `verified` (boolean, REQ-028), and
-  `timestamp` (ISO-8601). For `admin.instance.setting_changed` the payload uses `categories` (an
+  (what changed; secret values ALWAYS redacted per REQ-062/094), `verified`, and
+  `timestamp` (ISO-8601). For single-delta events `verified` is a boolean (REQ-028). **For
+  `admin.instance.setting_changed` `verified` is a per-control-id MAP (product-control id →
+  boolean), NOT a single scalar (N-1, REQ-029f)** — a batched settings write can mix observable
+  (verified), secret-overwrite (`false`), and write-only (`false`) keys, so a single flag would be
+  undefined. For `admin.instance.setting_changed` the payload uses `categories` (an
   array of the §7.1–§7.8 categories touched, MIN-3) plus the touched product-control ids — never a
   single `category`. Payloads carry opaque handles/product ids, never parsed engine internals
   (§4.3). *Test:* a `admin.instance.setting_changed` for a secret key lists the product-control id
-  with value redacted, carries `categories[]`, `verified`, actor and timestamp.
+  with value redacted, carries `categories[]`, a per-control-id `verified` map, actor and timestamp.
 - REQ-029d — **Publication target.** Events publish to the shared on-box event bus so independent
   feature services may subscribe and react (event-sourced flow). *Test:* a subscriber on the bus
   receives the published event after a write.
+- REQ-029f — **Batched curated settings write: per-control-id verify map & mixed-batch emission
+  (N-1).** A curated `PATCH /api/settings` batch (REQ-101) is one engine `POST /v1/system/update-env`
+  call that MAY mix key classes: observable (verified by re-read), unobservable secret-overwrite,
+  and write-only (both best-effort `verified:false`, REQ-028). On a **2xx** engine write the BFF
+  emits exactly ONE `admin.instance.setting_changed` whose `verified` field is a **per-control-id
+  map** (product-control id → boolean): each observable key carries its re-read result (`true`
+  confirmed / `false` re-read shows the change absent); each secret-overwrite and each write-only
+  key carries `false` (best-effort, not re-read). There is **NO all-or-nothing suppression** for the
+  batch (REQ-029b exception): an observable key that fails its re-read is recorded as `false` in the
+  map but MUST NOT suppress the event, because secret/write-only keys in the same call may have
+  persisted and hiding them would blind the bus. `admin.instance.provider_changed` is emitted per
+  provider selector the operator changed in the batch (REQ-063), each carrying its OWN scalar
+  `verified` boolean from that selector's re-read. **Failed provider re-read (R-2):** if a selector's
+  re-read shows the provider did NOT actually change, its `admin.instance.provider_changed` is STILL
+  emitted with `verified:false` (emit-with-`false`, NOT suppressed) — mirroring the per-control model
+  for the map and keeping the two events consistent. If the engine write returns **non-OK** (no key
+  persisted), REQ-029b applies: no `setting_changed` / `provider_changed` success event, failure
+  audit only. *Test:* a 2xx batch of
+  one observable key (re-read confirms), one secret rotation, and one write-only key emits one
+  `admin.instance.setting_changed` whose `verified` map is
+  `{ <observableId>:true, <secretId>:false, <writeOnlyId>:false }`; a 2xx batch where one observable
+  key's re-read shows the change absent but a secret key persisted still emits one
+  `admin.instance.setting_changed` with the observable id mapped `false` and the secret id `false`
+  (not suppressed).
 
 ### §14.2 Catalog
 Each event below is emitted per REQ-029a (verified, or `verified:false` for the unobservable
@@ -1183,9 +1404,9 @@ the `verified` flag (REQ-029c).
 | `admin.user.deleted` | REQ-044 | user delete verified (`404` re-read) | user `id` |
 | `admin.invite.created` | REQ-046 | invite create verified | invite `id`, scoped workspace handles |
 | `admin.invite.revoked` | REQ-047 | invite revoke verified | invite `id` |
-| `admin.instance.setting_changed` | §7 intro / REQ-101 | curated settings write | `categories[]`, product-control ids touched (secrets redacted) |
-| `admin.instance.provider_changed` | REQ-063 | one per changed provider selector | which selector, new provider |
-| `admin.raw_env.written` | REQ-078d | raw editor write | key names touched (secrets redacted); `verified` often false |
+| `admin.instance.setting_changed` | §7 intro / REQ-101 / REQ-029f | curated settings write | `categories[]`, product-control ids touched (secrets redacted); `verified` is a per-control-id MAP (N-1) |
+| `admin.instance.provider_changed` | REQ-063 / REQ-029f | one per provider selector the operator changed (emitted even when the re-read shows no change, with `verified:false` — R-2) | which selector, new provider; own scalar `verified` boolean |
+| `admin.raw_env.written` | REQ-078d / REQ-078f | raw editor write | key names touched (secrets redacted); `verified` often false. **NOT accompanied by `setting_changed`/`provider_changed` even for curated/provider keys (N-4)** |
 
 - REQ-029e — **Coverage & cardinality.** Every mutating product route in §5–§7 maps to **one or
   more** catalog events (one per state delta, REQ-029); read-only routes (e.g.
