@@ -16,10 +16,12 @@ declare module 'fastify' {
 }
 
 export async function registerPlugins(app: FastifyInstance): Promise<void> {
-  // CORS: strict origin allowlist in production, permissive in dev (REQ-095). Credentials
-  // are enabled so the httpOnly session cookie flows on cross-origin dev requests.
+  // CORS: an explicit origin allowlist in EVERY environment (REQ-095, sec review M-1).
+  // Credentials are enabled so the httpOnly session cookie flows cross-origin — which is
+  // exactly why we must never pair them with a reflect-any origin. config.corsOrigins is
+  // always a concrete list (empty = no cross-origin allowed; fail closed in production).
   await app.register(cors, {
-    origin: config.corsMode === 'strict' ? config.webOrigins : true,
+    origin: config.corsOrigins,
     credentials: true,
   });
 

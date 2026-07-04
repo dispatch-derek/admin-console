@@ -22,12 +22,20 @@ const VALID_ENV: Record<string, string> = {
   ANYTHINGLLM_API_KEY: 'engine-key',
   ADMIN_BOOTSTRAP_USERNAME: 'admin',
   ADMIN_BOOTSTRAP_TOKEN: 'bootstrap-token',
-  SESSION_SECRET: 'session-secret',
-  SECRETS_ENC_KEY: 'secrets-key',
+  SESSION_SECRET: 'session-secret-0123456789abcdef01', // >= 32 chars (sec review L-5)
+  SECRETS_ENC_KEY: 'secrets-key-0123456789abcdef012345', // >= 32 chars (sec review L-5)
 };
 
 // Keys this suite pokes at, beyond the required six, that must be restored between tests.
-const OPTIONAL_KEYS = ['PORT', 'NODE_ENV', 'WEB_ORIGINS', 'EVENT_BUS_MODE', 'EVENT_BUS_URL', 'DB_PATH'];
+const OPTIONAL_KEYS = [
+  'PORT',
+  'NODE_ENV',
+  'WEB_ORIGINS',
+  'EVENT_BUS_MODE',
+  'EVENT_BUS_URL',
+  'DB_PATH',
+  'COOKIE_INSECURE',
+];
 
 let snapshot: Record<string, string | undefined>;
 
@@ -69,8 +77,8 @@ describe('config.ts — requireEnv', () => {
     expect(config.anythingLLMApiKey).toBe('engine-key');
     expect(config.adminBootstrapUsername).toBe('admin');
     expect(config.adminBootstrapToken).toBe('bootstrap-token');
-    expect(config.sessionSecret).toBe('session-secret');
-    expect(config.secretsKey).toBe('secrets-key');
+    expect(config.sessionSecret).toBe('session-secret-0123456789abcdef01');
+    expect(config.secretsKey).toBe('secrets-key-0123456789abcdef012345');
   });
 
   it.each(BOOTSTRAP_KEYS)('loads WITHOUT %s — bootstrap vars are optional at load (REQ-019a)', async (key) => {
@@ -175,5 +183,110 @@ describe('config.ts — dbPath', () => {
     process.env['DB_PATH'] = '/tmp/somewhere/console.db';
     const { config } = await loadConfig();
     expect(config.dbPath).toBe('/tmp/somewhere/console.db');
+  });
+});
+
+describe('config.ts — secret minimum length (sec review L-5)', () => {
+  it.each(['SESSION_SECRET', 'SECRETS_ENC_KEY'] as const)(
+    'throws when %s is shorter than 32 characters',
+    async (key) => {
+      process.env[key] = 'a-short-secret'; // 14 chars, well under the 32-char minimum
+      await expect(loadConfig()).rejects.toThrow(
+        `Environment variable ${key} must be at least 32 characters`,
+      );
+    },
+  );
+
+  it('throws when a secret is exactly 31 characters (one short of the minimum)', async () => {
+    process.env['SESSION_SECRET'] = 'a'.repeat(31);
+    await expect(loadConfig()).rejects.toThrow(
+      'Environment variable SESSION_SECRET must be at least 32 characters',
+    );
+  });
+
+  it('accepts a secret that is exactly 32 characters long (boundary)', async () => {
+    process.env['SESSION_SECRET'] = 'a'.repeat(32);
+    process.env['SECRETS_ENC_KEY'] = 'b'.repeat(32);
+    const { config } = await loadConfig();
+    expect(config.sessionSecret).toBe('a'.repeat(32));
+    expect(config.secretsKey).toBe('b'.repeat(32));
+  });
+
+  it('a too-short secret is caught before an empty-string check would fire (distinct error message)', async () => {
+    process.env['SESSION_SECRET'] = 'not-empty-but-too-short';
+    await expect(loadConfig()).rejects.toThrow(/must be at least 32 characters/);
+    await expect(loadConfig()).rejects.not.toThrow(/Missing required environment variable/);
+  });
+});
+
+describe('config.ts — cookieSecure (sec review M-1)', () => {
+  it('defaults to true in dev when COOKIE_INSECURE is unset', async () => {
+    delete process.env['NODE_ENV'];
+    delete process.env['COOKIE_INSECURE'];
+    const { config } = await loadConfig();
+    expect(config.cookieSecure).toBe(true);
+  });
+
+  it('is false in dev when COOKIE_INSECURE=1 (explicit opt-out)', async () => {
+    delete process.env['NODE_ENV'];
+    process.env['COOKIE_INSECURE'] = '1';
+    const { config } = await loadConfig();
+    expect(config.cookieSecure).toBe(false);
+  });
+
+  it('is true in production EVEN with COOKIE_INSECURE=1 (fail closed, cannot be overridden)', async () => {
+    process.env['NODE_ENV'] = 'production';
+    process.env['COOKIE_INSECURE'] = '1';
+    const { config } = await loadConfig();
+    expect(config.cookieSecure).toBe(true);
+  });
+
+  it('is true in production when COOKIE_INSECURE is unset', async () => {
+    process.env['NODE_ENV'] = 'production';
+    delete process.env['COOKIE_INSECURE'];
+    const { config } = await loadConfig();
+    expect(config.cookieSecure).toBe(true);
+  });
+});
+
+describe('config.ts — corsOrigins (REQ-095, sec review M-1: never a bare `true`)', () => {
+  it('equals the parsed WEB_ORIGINS allowlist when set', async () => {
+    process.env['WEB_ORIGINS'] = 'https://a.example.com,https://b.example.com';
+    const { config } = await loadConfig();
+    expect(config.corsOrigins).toEqual(['https://a.example.com', 'https://b.example.com']);
+  });
+
+  it('is [] in production when WEB_ORIGINS is unset (fail closed)', async () => {
+    process.env['NODE_ENV'] = 'production';
+    delete process.env['WEB_ORIGINS'];
+    const { config } = await loadConfig();
+    expect(config.corsOrigins).toEqual([]);
+  });
+
+  it('defaults to the localhost dev origins in dev when WEB_ORIGINS is unset', async () => {
+    delete process.env['NODE_ENV'];
+    delete process.env['WEB_ORIGINS'];
+    const { config } = await loadConfig();
+    expect(config.corsOrigins).toEqual(['http://localhost:5173', 'http://localhost:3000']);
+  });
+
+  it('honors an explicit WEB_ORIGINS allowlist even in production', async () => {
+    process.env['NODE_ENV'] = 'production';
+    process.env['WEB_ORIGINS'] = 'https://console.example.com';
+    const { config } = await loadConfig();
+    expect(config.corsOrigins).toEqual(['https://console.example.com']);
+  });
+
+  it('is never the boolean `true`, in dev or production', async () => {
+    delete process.env['NODE_ENV'];
+    delete process.env['WEB_ORIGINS'];
+    const dev = await loadConfig();
+    expect(dev.config.corsOrigins).not.toBe(true);
+    expect(Array.isArray(dev.config.corsOrigins)).toBe(true);
+
+    process.env['NODE_ENV'] = 'production';
+    const prod = await loadConfig();
+    expect(prod.config.corsOrigins).not.toBe(true);
+    expect(Array.isArray(prod.config.corsOrigins)).toBe(true);
   });
 });

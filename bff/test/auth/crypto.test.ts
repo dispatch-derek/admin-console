@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   hashPassword,
   verifyPassword,
+  verifyDummyPassword,
   normalizeRecoveryCode,
   hashRecoveryCode,
   encryptSecret,
@@ -36,6 +37,14 @@ describe('hashPassword / verifyPassword (argon2id, REQ-015)', () => {
   it('two hashes of the same password differ (random salt per call)', async () => {
     const [a, b] = await Promise.all([hashPassword('same-password'), hashPassword('same-password')]);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('verifyDummyPassword (timing equalization, sec review M-2)', () => {
+  it('always resolves to false and never throws, regardless of input', async () => {
+    await expect(verifyDummyPassword('anything')).resolves.toBe(false);
+    await expect(verifyDummyPassword('')).resolves.toBe(false);
+    await expect(verifyDummyPassword('!@#$ unicode 你好')).resolves.toBe(false);
   });
 });
 

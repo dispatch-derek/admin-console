@@ -536,6 +536,321 @@ describe('POST /api/auth/recovery — single-use recovery code in place of TOTP'
   });
 });
 
+describe('POST /api/auth/login — brute-force lockout (sec review H-1)', () => {
+  it('5 failed password attempts lock the account; the 6th attempt is 429 EVEN with the correct password', async () => {
+    const c = ctx!;
+    await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+
+    for (let i = 0; i < 5; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'operator', password: 'wrong-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    const sixth = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    expect(sixth.statusCode).toBe(429);
+    expect(extractSessionCookie(sixth)).toBeUndefined();
+  });
+
+  it('a locked account is refused at /api/auth/mfa (429), even with a valid TOTP code', async () => {
+    const c = ctx!;
+    const { id, secret } = await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const { challengeId } = loginRes.json();
+
+    // Simulate the account becoming locked (e.g. via concurrent failed attempts elsewhere)
+    // between issuing the challenge and submitting the second factor.
+    c.staffRepo.lock(id, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa',
+      payload: { challengeId, code: authenticator.generate(secret) },
+    });
+    expect(res.statusCode).toBe(429);
+    expect(extractSessionCookie(res)).toBeUndefined();
+  });
+
+  it('a locked account is refused at /api/auth/recovery (429), even with correct password + recovery code', async () => {
+    const c = ctx!;
+    const { id } = await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+    const [code] = c.generateRecoveryCodes(id);
+    c.staffRepo.lock(id, new Date(Date.now() + 15 * 60 * 1000).toISOString());
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/recovery',
+      payload: { username: 'operator', password: 'Sup3rSecret!', recoveryCode: code },
+    });
+    expect(res.statusCode).toBe(429);
+    expect(extractSessionCookie(res)).toBeUndefined();
+  });
+
+  it('a fully-successful login (password + TOTP) resets the failure counter', async () => {
+    const c = ctx!;
+    const { secret } = await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+
+    // 4 failures — one short of the 5-attempt lock threshold.
+    for (let i = 0; i < 4; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'operator', password: 'wrong-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    // A full successful login clears the counter.
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const { challengeId } = loginRes.json();
+    const mfaRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa',
+      payload: { challengeId, code: authenticator.generate(secret) },
+    });
+    expect(mfaRes.statusCode).toBe(200);
+
+    const row = c.staffRepo.findByUsername('operator')!;
+    expect(row.failed_attempts).toBe(0);
+    expect(row.locked_until).toBeNull();
+
+    // 4 more failures after the reset must NOT lock the account (proves the counter was
+    // actually cleared, not merely left below threshold).
+    for (let i = 0; i < 4; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'operator', password: 'wrong-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+    const stillOk = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    expect(stillOk.statusCode).toBe(200); // not 429 — the earlier reset held
+  });
+
+  it('failed TOTP codes at /api/auth/mfa count toward the SAME account lockout', async () => {
+    const c = ctx!;
+    await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const { challengeId } = loginRes.json();
+
+    for (let i = 0; i < 5; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/mfa',
+        payload: { challengeId, code: '000000' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    // The account itself (not just the challenge) is now locked: even a brand-new login
+    // attempt with the correct password is refused.
+    const loginAfter = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    expect(loginAfter.statusCode).toBe(429);
+  });
+
+  it('lockout expiry: once locked_until is in the past, a correct login succeeds again', async () => {
+    const c = ctx!;
+    await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+
+    for (let i = 0; i < 5; i++) {
+      await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'operator', password: 'wrong-password' },
+      });
+    }
+    const locked = c.staffRepo.findByUsername('operator')!;
+    expect(locked.locked_until).not.toBeNull();
+
+    // Directly rewrite locked_until into the past, simulating the 15-minute window having
+    // elapsed (no wall-clock sleep needed).
+    c.db
+      .prepare(`UPDATE staff SET locked_until = ? WHERE id = ?`)
+      .run(new Date(Date.now() - 1000).toISOString(), locked.id);
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().stage).toBe('mfa');
+  });
+
+  it('an unknown username never records/triggers lockout — repeated bad logins stay 401, never 429', async () => {
+    const c = ctx!;
+    for (let i = 0; i < 8; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'no-such-user', password: 'whatever' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+    // No staff row was ever created/locked for the unknown username.
+    expect(c.staffRepo.findByUsername('no-such-user')).toBeUndefined();
+  });
+});
+
+describe('POST /api/auth/mfa — per-challenge TOTP attempt cap (sec review H-1)', () => {
+  it('after 5 bad codes the challenge is retired; a 6th submit gets 401 "Login challenge expired or invalid"', async () => {
+    const c = ctx!;
+    await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const { challengeId } = loginRes.json();
+
+    for (let i = 0; i < 5; i++) {
+      const res = await c.app.inject({
+        method: 'POST',
+        url: '/api/auth/mfa',
+        payload: { challengeId, code: '000000' },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().message).toBe('Invalid authenticator code');
+    }
+
+    // The challenge row itself was deleted once the per-challenge cap was hit, so the 6th
+    // submit against the SAME challengeId reports it as gone, not another bad-code failure.
+    const sixth = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa',
+      payload: { challengeId, code: '000000' },
+    });
+    expect(sixth.statusCode).toBe(401);
+    expect(sixth.json().message).toBe('Login challenge expired or invalid');
+  });
+});
+
+describe('POST /api/auth/mfa — TOTP replay prevention (sec review H-1)', () => {
+  it('a valid TOTP code that already logged in successfully cannot be replayed on a new login', async () => {
+    const c = ctx!;
+    const { secret } = await seedEnrolledStaff(c, { username: 'operator', password: 'Sup3rSecret!' });
+
+    const firstLogin = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const code = authenticator.generate(secret);
+    const firstMfa = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa',
+      payload: { challengeId: firstLogin.json().challengeId, code },
+    });
+    expect(firstMfa.statusCode).toBe(200);
+    expect(extractSessionCookie(firstMfa)).toBeDefined();
+
+    // Start a brand-new login (new challenge) and replay the SAME code.
+    const secondLogin = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'operator', password: 'Sup3rSecret!' },
+    });
+    const replay = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa',
+      payload: { challengeId: secondLogin.json().challengeId, code },
+    });
+    expect(replay.statusCode).toBe(401);
+    expect(extractSessionCookie(replay)).toBeUndefined();
+  });
+});
+
+describe('POST /api/auth/set-password — password policy (sec review M-3)', () => {
+  it('rejects a newPassword shorter than 12 characters with 400 and does not advance the challenge', async () => {
+    const c = ctx!;
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: BOOTSTRAP_USERNAME, password: BOOTSTRAP_TOKEN },
+    });
+    const { challengeId } = loginRes.json();
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/set-password',
+      payload: { challengeId, newPassword: 'short1234' }, // 9 chars
+    });
+    expect(res.statusCode).toBe(400);
+
+    // The challenge is still usable at 'setPassword' — a subsequent valid password succeeds.
+    const retry = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/set-password',
+      payload: { challengeId, newPassword: 'ValidPassw0rd!' },
+    });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().stage).toBe('enroll');
+  });
+
+  it('rejects a whitespace-only newPassword (trims to under the minimum) with 400', async () => {
+    const c = ctx!;
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: BOOTSTRAP_USERNAME, password: BOOTSTRAP_TOKEN },
+    });
+    const { challengeId } = loginRes.json();
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/set-password',
+      payload: { challengeId, newPassword: '            ' }, // 12 spaces, trims to empty
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('accepts a newPassword that is exactly 12 characters long (boundary)', async () => {
+    const c = ctx!;
+    const loginRes = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: BOOTSTRAP_USERNAME, password: BOOTSTRAP_TOKEN },
+    });
+    const { challengeId } = loginRes.json();
+
+    const res = await c.app.inject({
+      method: 'POST',
+      url: '/api/auth/set-password',
+      payload: { challengeId, newPassword: 'Twelve12char' }, // exactly 12 chars
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().stage).toBe('enroll');
+  });
+});
+
 describe('REQ-016 — no session cookie is ever issued at a pre-MFA stage', () => {
   it('login and set-password never set a cookie across the full bootstrap flow', async () => {
     const c = ctx!;

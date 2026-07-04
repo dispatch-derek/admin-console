@@ -18,6 +18,7 @@ import {
 import { staffRepo, type StaffRow } from '../../src/store/repositories/staff.repo.js';
 import { sessionsRepo } from '../../src/store/repositories/sessions.repo.js';
 import { recoveryCodesRepo } from '../../src/store/repositories/recovery-codes.repo.js';
+import { loginChallengesRepo } from '../../src/store/repositories/login-challenges.repo.js';
 import { createSession } from '../../src/auth/session.service.js';
 import { AppError } from '../../src/server/errors.js';
 import { db } from '../../src/store/db.js';
@@ -250,6 +251,25 @@ describe('resetMfa — deliberately NOT guardrailed (REQ-019)', () => {
     const err = asAppError(() => resetMfa('no-such-id'));
     expect(err.status).toBe(404);
   });
+
+  it('deletes any in-flight login challenge and lifts a lockout (sec review L-4)', () => {
+    const staff = insertStaff({ totp_secret: 'enc-secret', mfa_enrolled: 1 });
+    loginChallengesRepo.insert({
+      id: 'chal-mfa-reset',
+      staff_id: staff.id,
+      stage: 'mfa',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    staffRepo.incrementFailedAttempts(staff.id);
+    staffRepo.lock(staff.id, new Date(Date.now() + 900_000).toISOString());
+
+    resetMfa(staff.id);
+
+    expect(loginChallengesRepo.findById('chal-mfa-reset')).toBeUndefined();
+    const row = staffRepo.findById(staff.id) as StaffRow;
+    expect(row.locked_until).toBeNull();
+    expect(row.failed_attempts).toBe(0);
+  });
 });
 
 describe('resetPassword', () => {
@@ -270,6 +290,25 @@ describe('resetPassword', () => {
 
   it('throws 404 for an unknown target id', async () => {
     await expect(resetPassword('no-such-id')).rejects.toThrow(AppError);
+  });
+
+  it('deletes any in-flight login challenge and lifts a lockout (sec review L-4)', async () => {
+    const staff = insertStaff();
+    loginChallengesRepo.insert({
+      id: 'chal-pw-reset',
+      staff_id: staff.id,
+      stage: 'mfa',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    staffRepo.incrementFailedAttempts(staff.id);
+    staffRepo.lock(staff.id, new Date(Date.now() + 900_000).toISOString());
+
+    await resetPassword(staff.id);
+
+    expect(loginChallengesRepo.findById('chal-pw-reset')).toBeUndefined();
+    const row = staffRepo.findById(staff.id) as StaffRow;
+    expect(row.locked_until).toBeNull();
+    expect(row.failed_attempts).toBe(0);
   });
 });
 

@@ -11,6 +11,9 @@ export interface StaffRow {
   mfa_enrolled: number;
   disabled: number;
   must_set_password: number;
+  failed_attempts: number;
+  locked_until: string | null;
+  last_totp_step: number | null;
   created_at: string;
 }
 
@@ -36,10 +39,20 @@ const resetPasswordStmt = db.prepare(
 const setMfaStmt = db.prepare(
   `UPDATE staff SET totp_secret = ?, mfa_enrolled = ? WHERE id = ?`,
 );
+const incrementFailedStmt = db.prepare(
+  `UPDATE staff SET failed_attempts = failed_attempts + 1 WHERE id = ?`,
+);
+const getFailedStmt = db.prepare(`SELECT failed_attempts AS n FROM staff WHERE id = ?`);
+const lockStmt = db.prepare(`UPDATE staff SET locked_until = ?, failed_attempts = 0 WHERE id = ?`);
+const clearLockoutStmt = db.prepare(
+  `UPDATE staff SET failed_attempts = 0, locked_until = NULL WHERE id = ?`,
+);
+const setLastTotpStepStmt = db.prepare(`UPDATE staff SET last_totp_step = ? WHERE id = ?`);
 const deleteStmt = db.prepare(`DELETE FROM staff WHERE id = ?`);
 
 export const staffRepo = {
-  insert(row: StaffRow): void {
+  // failed_attempts/locked_until/last_totp_step default in the schema; callers never set them.
+  insert(row: Omit<StaffRow, 'failed_attempts' | 'locked_until' | 'last_totp_step'>): void {
     insertStmt.run(row);
   },
   findById(id: string): StaffRow | undefined {
@@ -74,6 +87,23 @@ export const staffRepo = {
   },
   setMfa(id: string, totpSecret: string | null, enrolled: boolean): void {
     setMfaStmt.run(totpSecret, enrolled ? 1 : 0, id);
+  },
+  // Brute-force lockout (sec review H-1). Returns the new failed count so the caller can
+  // decide whether the threshold is reached.
+  incrementFailedAttempts(id: string): number {
+    incrementFailedStmt.run(id);
+    return (getFailedStmt.get(id) as { n: number }).n;
+  },
+  lock(id: string, until: string): void {
+    lockStmt.run(until, id);
+  },
+  clearLockout(id: string): void {
+    clearLockoutStmt.run(id);
+  },
+  // Highest TOTP time-step already accepted for this account — used to reject replay of a
+  // code within its validity window (sec review H-1).
+  setLastTotpStep(id: string, step: number): void {
+    setLastTotpStepStmt.run(step, id);
   },
   delete(id: string): void {
     deleteStmt.run(id);

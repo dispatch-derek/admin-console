@@ -25,6 +25,10 @@ export function migrate(): void {
       mfa_enrolled      INTEGER NOT NULL DEFAULT 0,
       disabled          INTEGER NOT NULL DEFAULT 0,
       must_set_password INTEGER NOT NULL DEFAULT 0,
+      -- Brute-force lockout + TOTP replay guard (sec review H-1).
+      failed_attempts   INTEGER NOT NULL DEFAULT 0,
+      locked_until      TEXT,
+      last_totp_step    INTEGER,
       created_at        TEXT NOT NULL
     );
 
@@ -48,6 +52,7 @@ export function migrate(): void {
       id         TEXT PRIMARY KEY,
       staff_id   TEXT NOT NULL,
       stage      TEXT NOT NULL,
+      attempts   INTEGER NOT NULL DEFAULT 0,
       expires_at TEXT NOT NULL,
       FOREIGN KEY (staff_id) REFERENCES staff(id)
     );
@@ -77,6 +82,22 @@ export function migrate(): void {
       published_at TEXT
     );
   `);
+
+  // Additive column migrations for databases created before these columns existed. SQLite
+  // has no "ADD COLUMN IF NOT EXISTS", so guard on PRAGMA table_info. Fresh DBs already have
+  // them from the CREATE TABLE above, so this is a no-op there. (sec review H-1)
+  const additive: Array<[string, string, string]> = [
+    ['staff', 'failed_attempts', 'INTEGER NOT NULL DEFAULT 0'],
+    ['staff', 'locked_until', 'TEXT'],
+    ['staff', 'last_totp_step', 'INTEGER'],
+    ['login_challenges', 'attempts', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [table, column, definition] of additive) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
 
   // Append-only runtime guard for audit_log (REQ-093a): triggers raise on any
   // UPDATE/DELETE so no code path — accidental or otherwise — can mutate history.

@@ -101,6 +101,11 @@ export async function resetPassword(targetId: string): Promise<string> {
   const hash = await hashPassword(tempToken);
   staffRepo.resetPasswordHash(targetId, hash);
   sessionsRepo.deleteForStaff(targetId);
+  // Invalidate any in-flight login challenge so an attacker mid-flow can't complete factor 2
+  // against the just-reset account, and lift any lockout so the operator can log in with the
+  // temp token (sec review L-4).
+  loginChallengesRepo.deleteForStaff(targetId);
+  staffRepo.clearLockout(targetId);
   return tempToken;
 }
 
@@ -112,4 +117,7 @@ export function resetMfa(targetId: string): void {
   staffRepo.setMfa(targetId, null, false);
   recoveryCodesRepo.deleteForStaff(targetId);
   sessionsRepo.deleteForStaff(targetId);
+  // Drop in-flight challenges and lift any lockout so re-enrollment can proceed (sec review L-4).
+  loginChallengesRepo.deleteForStaff(targetId);
+  staffRepo.clearLockout(targetId);
 }

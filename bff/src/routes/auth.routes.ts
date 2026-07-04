@@ -14,7 +14,7 @@ import {
   type ChallengeStage,
   type LoginChallengeRow,
 } from '../store/repositories/login-challenges.repo.js';
-import { hashPassword, verifyPassword } from '../auth/crypto.js';
+import { hashPassword, verifyPassword, verifyDummyPassword } from '../auth/crypto.js';
 import {
   beginEnrollment,
   completeEnrollment,
@@ -22,6 +22,7 @@ import {
   generateRecoveryCodes,
   consumeRecoveryCode,
 } from '../auth/mfa.service.js';
+import { assertNotLocked, recordFailedAttempt, clearFailedAttempts } from '../auth/lockout.service.js';
 import { createSession, destroySession } from '../auth/session.service.js';
 import {
   toStaff,
@@ -35,11 +36,21 @@ import {
 import { SESSION_COOKIE, sessionCookieOptions } from '../server/session-guard.js';
 
 const CHALLENGE_TTL_MS = 10 * 60 * 1000; // 10 min
+const MIN_PASSWORD_LENGTH = 12; // sec review M-3
+const MAX_CHALLENGE_ATTEMPTS = 5; // per-challenge factor-2 code cap (sec review H-1)
 
 // --- helpers ---
 
 function body<T>(req: FastifyRequest): T {
   return (req.body ?? {}) as T;
+}
+
+// Reject weak operator-chosen passwords (sec review M-3). A 400 is a client error, not an
+// auth failure, so it does not count toward lockout.
+function assertPasswordPolicy(password: string): void {
+  if (password.trim().length < MIN_PASSWORD_LENGTH) {
+    throw new AppError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
 }
 
 function requireStaff(req: FastifyRequest): { id: string; username: string } {
@@ -65,6 +76,15 @@ function createChallenge(staffId: string, stage: ChallengeStage): string {
     expires_at: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   });
   return id;
+}
+
+// Record a bad factor-2 code (sec review H-1): count it against the account (drives lockout)
+// and against this challenge, retiring the challenge once its per-challenge cap is reached so
+// the attacker must pass factor 1 again to get a fresh one.
+function failChallenge(staffId: string, challengeId: string): void {
+  recordFailedAttempt(staffId);
+  const attempts = loginChallengesRepo.incrementAttempts(challengeId);
+  if (attempts >= MAX_CHALLENGE_ATTEMPTS) loginChallengesRepo.delete(challengeId);
 }
 
 function loadChallenge(challengeId: string, stage: ChallengeStage): LoginChallengeRow {
@@ -112,10 +132,15 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     const staff = staffRepo.findByUsername(username);
     if (!staff || staff.disabled === 1 || !staff.password_hash) {
+      // Burn equivalent argon2 work so an unknown/credential-less account is indistinguishable
+      // from a wrong password by timing (sec review M-2).
+      await verifyDummyPassword(password);
       recordLoginFailure(staff?.id ?? null, username);
       throw new AppError(401, 'Invalid credentials');
     }
+    assertNotLocked(staff); // sec review H-1
     if (!(await verifyPassword(staff.password_hash, password))) {
+      recordFailedAttempt(staff.id);
       recordLoginFailure(staff.id, username);
       throw new AppError(401, 'Invalid credentials');
     }
@@ -133,6 +158,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!challengeId || !newPassword) {
       throw new AppError(400, 'challengeId and newPassword are required');
     }
+    assertPasswordPolicy(newPassword); // sec review M-3
     const challenge = loadChallenge(challengeId, 'setPassword');
     const staff = staffRepo.findById(challenge.staff_id);
     if (!staff || staff.disabled === 1) throw new AppError(401, 'Account is not available');
@@ -154,13 +180,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const challenge = loadChallenge(challengeId, 'enroll');
     const staff = staffRepo.findById(challenge.staff_id);
     if (!staff || staff.disabled === 1) throw new AppError(401, 'Account is not available');
+    assertNotLocked(staff); // sec review H-1
 
     if (!completeEnrollment(staff, code)) {
+      failChallenge(staff.id, challengeId); // sec review H-1
       recordAudit({ actor: staff.id, action: 'auth.enroll', outcome: 'failure' });
       throw new AppError(401, 'Invalid authenticator code');
     }
     const recoveryCodes = generateRecoveryCodes(staff.id);
     loginChallengesRepo.delete(challengeId);
+    clearFailedAttempts(staff.id); // sec review H-1
     setSessionCookie(reply, staff.id);
     recordAudit({ actor: staff.id, action: 'auth.enroll', outcome: 'success' });
     const refreshed = staffRepo.findById(staff.id) as StaffRow;
@@ -174,12 +203,15 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const challenge = loadChallenge(challengeId, 'mfa');
     const staff = staffRepo.findById(challenge.staff_id);
     if (!staff || staff.disabled === 1) throw new AppError(401, 'Account is not available');
+    assertNotLocked(staff); // sec review H-1
 
     if (!verifyCodeForStaff(staff, code)) {
+      failChallenge(staff.id, challengeId); // sec review H-1
       recordAudit({ actor: staff.id, action: 'auth.mfa', outcome: 'failure' });
       throw new AppError(401, 'Invalid authenticator code');
     }
     loginChallengesRepo.delete(challengeId);
+    clearFailedAttempts(staff.id); // sec review H-1
     setSessionCookie(reply, staff.id);
     recordAudit({ actor: staff.id, action: 'auth.mfa', outcome: 'success' });
     return reply.send({ staff: toStaff(staff) });
@@ -198,17 +230,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const staff = staffRepo.findByUsername(username);
     if (!staff || staff.disabled === 1 || !staff.password_hash) {
+      await verifyDummyPassword(password); // sec review M-2 (timing)
       recordLoginFailure(staff?.id ?? null, username);
       throw new AppError(401, 'Invalid credentials');
     }
+    assertNotLocked(staff); // sec review H-1
     if (!(await verifyPassword(staff.password_hash, password))) {
+      recordFailedAttempt(staff.id);
       recordLoginFailure(staff.id, username);
       throw new AppError(401, 'Invalid credentials');
     }
     if (!consumeRecoveryCode(staff.id, recoveryCode)) {
+      recordFailedAttempt(staff.id); // sec review H-1
       recordAudit({ actor: staff.id, action: 'auth.recovery', outcome: 'failure' });
       throw new AppError(401, 'Invalid recovery code');
     }
+    clearFailedAttempts(staff.id); // sec review H-1
     recordAudit({ actor: staff.id, action: 'auth.recovery', outcome: 'success' });
 
     // Recovery replaces the TOTP factor. If the account still owes set-password/enroll,

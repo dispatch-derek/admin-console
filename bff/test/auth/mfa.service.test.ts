@@ -86,6 +86,58 @@ describe('verifyCodeForStaff', () => {
   });
 });
 
+describe('verifyCodeForStaff — replay prevention (sec review H-1)', () => {
+  it('rejects reusing the SAME valid code a second time', async () => {
+    const staff = insertStaff();
+    const material = await beginEnrollment(staff);
+    const code = authenticator.generate(material.secret);
+
+    const firstAttempt = staffRepo.findById(staff.id) as StaffRow;
+    expect(verifyCodeForStaff(firstAttempt, code)).toBe(true);
+
+    // Re-read: verifyCodeForStaff persisted last_totp_step on the first (accepted) call.
+    const afterFirst = staffRepo.findById(staff.id) as StaffRow;
+    expect(afterFirst.last_totp_step).not.toBeNull();
+    expect(verifyCodeForStaff(afterFirst, code)).toBe(false);
+  });
+
+  it('persists last_totp_step so replay is rejected even against a freshly re-fetched row', async () => {
+    const staff = insertStaff();
+    const material = await beginEnrollment(staff);
+    const code = authenticator.generate(material.secret);
+    const before = staffRepo.findById(staff.id) as StaffRow;
+
+    verifyCodeForStaff(before, code);
+
+    // Simulate a brand-new request re-loading the staff row from the DB.
+    const reloaded = staffRepo.findById(staff.id) as StaffRow;
+    expect(verifyCodeForStaff(reloaded, code)).toBe(false);
+  });
+
+  it('a code at or before the last accepted step is rejected even if otherwise valid', async () => {
+    const staff = insertStaff();
+    const material = await beginEnrollment(staff);
+    const refreshed = staffRepo.findById(staff.id) as StaffRow;
+
+    // Fast-forward last_totp_step far into the future to simulate a later, already-accepted
+    // step, then confirm a code for the CURRENT step (now <= last_totp_step) is refused.
+    const farFutureStep = Math.floor(Date.now() / 1000 / 30) + 1000;
+    staffRepo.setLastTotpStep(staff.id, farFutureStep);
+    const advanced = staffRepo.findById(staff.id) as StaffRow;
+
+    const code = authenticator.generate(material.secret);
+    expect(verifyCodeForStaff(advanced, code)).toBe(false);
+  });
+
+  it('the first-ever code (last_totp_step starts null) is accepted', async () => {
+    const staff = insertStaff();
+    const material = await beginEnrollment(staff);
+    const refreshed = staffRepo.findById(staff.id) as StaffRow;
+    expect(refreshed.last_totp_step).toBeNull();
+    expect(verifyCodeForStaff(refreshed, authenticator.generate(material.secret))).toBe(true);
+  });
+});
+
 describe('completeEnrollment', () => {
   it('marks the account enrolled when the code matches the pending secret', async () => {
     const staff = insertStaff();

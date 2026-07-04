@@ -22,6 +22,30 @@ export async function verifyPassword(hash: string, plain: string): Promise<boole
   }
 }
 
+// A fixed dummy hash used only to equalize response timing when no real hash exists (unknown
+// username, or an account with no password set). Verifying against it burns the same argon2
+// work as a real check, closing the user-enumeration timing side-channel (sec review M-2).
+let dummyHashPromise: Promise<string> | null = null;
+function dummyHash(): Promise<string> {
+  if (!dummyHashPromise) {
+    dummyHashPromise = argon2.hash(`unset-${randomBytes(16).toString('hex')}`, {
+      type: argon2.argon2id,
+    });
+  }
+  return dummyHashPromise;
+}
+
+// Always returns false; run on the no-real-hash branch of login so it costs the same as a
+// genuine password verify. The result is intentionally unused beyond timing.
+export async function verifyDummyPassword(plain: string): Promise<false> {
+  try {
+    await argon2.verify(await dummyHash(), plain);
+  } catch {
+    /* ignore — timing equalization only */
+  }
+  return false;
+}
+
 // --- Recovery codes (sha256; single-use, looked up by hash) ---
 
 // Normalize operator input so a code entered with stray spacing/casing/dashes still

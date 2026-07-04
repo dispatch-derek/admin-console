@@ -6,6 +6,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AppError } from './errors.js';
+import { config } from '../config.js';
 import { resolveSession, type SessionStaff } from '../auth/session.service.js';
 
 export const SESSION_COOKIE = 'admin_session';
@@ -28,8 +29,9 @@ declare module 'fastify' {
   }
 }
 
-// Cookie options for the session cookie (REQ-011): signed httpOnly lax cookie, secure in
-// production, scoped to the whole app.
+// Cookie options for the session cookie (REQ-011): signed httpOnly lax cookie, scoped to the
+// whole app. Secure is driven by validated config (defaults true; fail closed) rather than a
+// bare NODE_ENV check, so a forgotten NODE_ENV can't silently drop the flag (sec review M-1).
 export function sessionCookieOptions(): {
   httpOnly: true;
   signed: true;
@@ -41,7 +43,7 @@ export function sessionCookieOptions(): {
     httpOnly: true,
     signed: true,
     sameSite: 'lax',
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: config.cookieSecure,
     path: '/',
   };
 }

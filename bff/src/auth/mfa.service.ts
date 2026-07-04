@@ -30,11 +30,24 @@ export async function beginEnrollment(staff: StaffRow): Promise<EnrollmentMateri
   return { secret, otpauthUri, qr };
 }
 
-// Verify a submitted code against a staff account's stored (encrypted) TOTP secret.
+const TOTP_STEP_SECONDS = 30; // RFC 6238 window (REQ-016)
+
+// Verify a submitted code against a staff account's stored (encrypted) TOTP secret, rejecting
+// replay of a code within its validity window (sec review H-1). checkDelta returns the window
+// offset that matched (or null); combined with the current time that yields the absolute time
+// step, which we require to be strictly newer than the last step already accepted for this
+// account. A correct-but-reused code (same step) is therefore refused.
 export function verifyCodeForStaff(staff: StaffRow, code: string): boolean {
   if (!staff.totp_secret) return false;
   const secret = decryptSecret(staff.totp_secret);
-  return authenticator.verify({ token: code, secret });
+  const delta = authenticator.checkDelta(code, secret);
+  if (delta === null) return false;
+  const step = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS) + delta;
+  if (staff.last_totp_step !== null && step <= staff.last_totp_step) {
+    return false; // replay of an already-used (or older) time step
+  }
+  staffRepo.setLastTotpStep(staff.id, step);
+  return true;
 }
 
 // Confirm enrollment: verify the code against the pending secret, then mark enrolled
@@ -51,7 +64,7 @@ export function generateRecoveryCodes(staffId: string): string[] {
   recoveryCodesRepo.deleteForStaff(staffId);
   const codes: string[] = [];
   for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
-    const code = randomBytes(5).toString('hex'); // 10 lowercase hex chars
+    const code = randomBytes(10).toString('hex'); // 20 hex chars = 80-bit (sec review L-2)
     codes.push(code);
     recoveryCodesRepo.insert({
       id: randomUUID(),
@@ -63,14 +76,9 @@ export function generateRecoveryCodes(staffId: string): string[] {
   return codes;
 }
 
-// Consume one unused recovery code for a staff account. Returns true and marks it used on a
-// match; false (no state change) otherwise. Single-use: a used code never matches again.
+// Consume one unused recovery code for a staff account. Returns true iff an unused code
+// matched and was marked used in the same atomic statement (sec review L-3/L-4); single-use:
+// a used code never matches again, and concurrent submissions of the same code cannot both win.
 export function consumeRecoveryCode(staffId: string, submitted: string): boolean {
-  const target = hashRecoveryCode(submitted);
-  const match = recoveryCodesRepo
-    .listUnusedForStaff(staffId)
-    .find((row) => row.code_hash === target);
-  if (!match) return false;
-  recoveryCodesRepo.markUsed(match.id, new Date().toISOString());
-  return true;
+  return recoveryCodesRepo.consume(staffId, hashRecoveryCode(submitted), new Date().toISOString());
 }
