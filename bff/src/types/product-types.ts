@@ -2,6 +2,17 @@
 // ONLY — no engine field names cross this boundary (REQ-021a). This is the stable
 // contract web/ consumes; see 02-product-api.md §"Shared product types".
 
+// A staff operator account (§3.2). The BFF-owned auth identity, independent of the engine
+// user store (REQ-010). Never carries password_hash/totp_secret across the API boundary.
+export interface Staff {
+  id: string;
+  username: string;
+  mfaEnrolled: boolean;
+  disabled: boolean;
+  mustSetPassword: boolean;
+  createdAt: string;
+}
+
 export interface Workspace {
   id: string; // opaque product handle (REQ-021b)
   displayName: string;

@@ -7,14 +7,20 @@ import { pathToFileURL } from 'node:url';
 import { config } from './config.js';
 import { migrate } from './store/db.js';
 import { registerPlugins } from './server/plugins.js';
+import { registerSessionGuard } from './server/session-guard.js';
+import { seedFirstAccount } from './auth/bootstrap.js';
 import { healthRoutes } from './routes/health.routes.js';
+import { authRoutes } from './routes/auth.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 
   await registerPlugins(app);
   migrate(); // idempotent; ensures the BFF-owned schema exists (03-data-models.md)
+  await seedFirstAccount(); // REQ-019a: seed one account only when the staff store is empty
+  registerSessionGuard(app); // REQ-012: session required on /api/* except login-flow steps
   await app.register(healthRoutes);
+  await app.register(authRoutes);
 
   return app;
 }

@@ -11,8 +11,11 @@ export const config = {
   anythingLLMBaseUrl: requireEnv('ANYTHINGLLM_BASE_URL').replace(/\/$/, ''), // REQ-001
   anythingLLMApiKey: requireEnv('ANYTHINGLLM_API_KEY'), // REQ-001, REQ-013
   port: parseInt(process.env['PORT'] ?? '3002', 10), // REQ-020
-  adminBootstrapUsername: requireEnv('ADMIN_BOOTSTRAP_USERNAME'), // REQ-019a
-  adminBootstrapToken: requireEnv('ADMIN_BOOTSTRAP_TOKEN'), // REQ-019a
+  // REQ-019a: required ONLY at first boot (empty staff store). Once an account exists they
+  // are optional and their absence MUST NOT block startup — so read (not requireEnv) here;
+  // bootstrap.ts enforces their presence conditionally when it actually needs to seed.
+  adminBootstrapUsername: process.env['ADMIN_BOOTSTRAP_USERNAME'],
+  adminBootstrapToken: process.env['ADMIN_BOOTSTRAP_TOKEN'],
   sessionSecret: requireEnv('SESSION_SECRET'), // cookie signing
   secretsKey: requireEnv('SECRETS_ENC_KEY'), // encrypt totp secrets at rest
   dbPath: process.env['DB_PATH'] ?? 'data/console.db',

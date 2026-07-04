@@ -5,14 +5,17 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Unconditionally required at load (REQ-001, REQ-013). Missing → process exits at startup.
 const REQUIRED_KEYS = [
   'ANYTHINGLLM_BASE_URL',
   'ANYTHINGLLM_API_KEY',
-  'ADMIN_BOOTSTRAP_USERNAME',
-  'ADMIN_BOOTSTRAP_TOKEN',
   'SESSION_SECRET',
   'SECRETS_ENC_KEY',
 ] as const;
+
+// REQ-019a: required ONLY at first boot (empty staff store), enforced in bootstrap.ts —
+// NOT via requireEnv. Their absence must NOT block config load / startup.
+const BOOTSTRAP_KEYS = ['ADMIN_BOOTSTRAP_USERNAME', 'ADMIN_BOOTSTRAP_TOKEN'] as const;
 
 const VALID_ENV: Record<string, string> = {
   ANYTHINGLLM_BASE_URL: 'http://localhost:3001/',
@@ -30,7 +33,7 @@ let snapshot: Record<string, string | undefined>;
 
 beforeEach(() => {
   snapshot = {};
-  for (const key of [...REQUIRED_KEYS, ...OPTIONAL_KEYS]) snapshot[key] = process.env[key];
+  for (const key of [...REQUIRED_KEYS, ...BOOTSTRAP_KEYS, ...OPTIONAL_KEYS]) snapshot[key] = process.env[key];
   for (const [key, value] of Object.entries(VALID_ENV)) process.env[key] = value;
   for (const key of OPTIONAL_KEYS) delete process.env[key];
 });
@@ -68,6 +71,22 @@ describe('config.ts — requireEnv', () => {
     expect(config.adminBootstrapToken).toBe('bootstrap-token');
     expect(config.sessionSecret).toBe('session-secret');
     expect(config.secretsKey).toBe('secrets-key');
+  });
+
+  it.each(BOOTSTRAP_KEYS)('loads WITHOUT %s — bootstrap vars are optional at load (REQ-019a)', async (key) => {
+    delete process.env[key];
+    const { config } = await loadConfig();
+    // Config load must not throw; the missing var surfaces as undefined and is enforced
+    // conditionally in bootstrap.ts only when the staff store is empty.
+    expect(config[key === 'ADMIN_BOOTSTRAP_USERNAME' ? 'adminBootstrapUsername' : 'adminBootstrapToken']).toBeUndefined();
+  });
+
+  it('loads with BOTH bootstrap vars unset (non-first-boot startup, REQ-019a)', async () => {
+    delete process.env['ADMIN_BOOTSTRAP_USERNAME'];
+    delete process.env['ADMIN_BOOTSTRAP_TOKEN'];
+    const { config } = await loadConfig();
+    expect(config.adminBootstrapUsername).toBeUndefined();
+    expect(config.adminBootstrapToken).toBeUndefined();
   });
 
   it('strips a trailing slash from ANYTHINGLLM_BASE_URL', async () => {

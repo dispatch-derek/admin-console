@@ -25,9 +25,13 @@ const countStmt = db.prepare(`SELECT COUNT(*) AS n FROM staff`);
 const countEnabledStmt = db.prepare(
   `SELECT COUNT(*) AS n FROM staff WHERE disabled = 0 AND mfa_enrolled = 1`,
 );
+const countEnabledOnlyStmt = db.prepare(`SELECT COUNT(*) AS n FROM staff WHERE disabled = 0`);
 const setDisabledStmt = db.prepare(`UPDATE staff SET disabled = ? WHERE id = ?`);
 const setPasswordStmt = db.prepare(
   `UPDATE staff SET password_hash = ?, must_set_password = 0 WHERE id = ?`,
+);
+const resetPasswordStmt = db.prepare(
+  `UPDATE staff SET password_hash = ?, must_set_password = 1 WHERE id = ?`,
 );
 const setMfaStmt = db.prepare(
   `UPDATE staff SET totp_secret = ?, mfa_enrolled = ? WHERE id = ?`,
@@ -53,11 +57,20 @@ export const staffRepo = {
   countEnabledEnrolled(): number {
     return (countEnabledStmt.get() as { n: number }).n;
   },
+  // Count of accounts that can still be logged into (disabled = 0), regardless of
+  // enrollment. Used by the last-enabled-account guardrail (REQ-018a).
+  countEnabled(): number {
+    return (countEnabledOnlyStmt.get() as { n: number }).n;
+  },
   setDisabled(id: string, disabled: boolean): void {
     setDisabledStmt.run(disabled ? 1 : 0, id);
   },
   setPasswordHash(id: string, hash: string): void {
     setPasswordStmt.run(hash, id);
+  },
+  // Set a (temp) password AND force set-password on next login (REQ-018 password reset).
+  resetPasswordHash(id: string, hash: string): void {
+    resetPasswordStmt.run(hash, id);
   },
   setMfa(id: string, totpSecret: string | null, enrolled: boolean): void {
     setMfaStmt.run(totpSecret, enrolled ? 1 : 0, id);
