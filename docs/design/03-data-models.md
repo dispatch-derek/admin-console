@@ -108,6 +108,8 @@ Per-event payloads (all also carry actor + timestamp):
 | `admin.workspace.updated` | `{workspaceId}` | `{fields: string[]}` (product field names, values non-secret) | REQ-032 |
 | `admin.workspace.deleted` | `{workspaceId}` | — | REQ-038 |
 | `admin.workspace.documents_changed` | `{workspaceId}` | `{added:string[], removed:string[]}` (doc refs) | REQ-039 |
+| `admin.workspace.knowledge_pinned` | `{workspaceId}` | `{docPath, pinned:true}` | REQ-039 |
+| `admin.workspace.knowledge_unpinned` | `{workspaceId}` | `{docPath, pinned:false}` | REQ-039 |
 | `admin.workspace_user.assigned` | `{workspaceId, userId}` | — | REQ-049 |
 | `admin.workspace_user.unassigned` | `{workspaceId, userId}` | — | REQ-049 |
 | `admin.user.created` | `{userId}` | `{username, role}` | REQ-042 |
@@ -153,6 +155,7 @@ to the curated events; watching only the curated events misses raw-editor change
 export type AdminEventName =
   | 'admin.workspace.created' | 'admin.workspace.updated' | 'admin.workspace.deleted'
   | 'admin.workspace.documents_changed'
+  | 'admin.workspace.knowledge_pinned' | 'admin.workspace.knowledge_unpinned'
   | 'admin.workspace_user.assigned' | 'admin.workspace_user.unassigned'
   | 'admin.user.created' | 'admin.user.updated' | 'admin.user.suspended'
   | 'admin.user.reactivated' | 'admin.user.deleted'

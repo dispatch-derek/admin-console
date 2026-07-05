@@ -94,17 +94,24 @@ export async function createWorkspace(
   }
 
   const target = { id: productId };
-  const reread = await runVerified<Awaited<ReturnType<typeof adapter.getWorkspace>>>(
-    'workspace.create',
-    actorId,
-    target,
-    {
-      write: async () => {}, // the create above IS the write; verify by re-reading
-      reread: () => adapter.getWorkspace(created.slug),
-      confirm: (ws) => ws !== null && ws.name === displayName,
-      onUnconfirmed: 'Workspace creation could not be confirmed',
-    },
-  );
+  let reread: Awaited<ReturnType<typeof adapter.getWorkspace>>;
+  try {
+    reread = await runVerified<Awaited<ReturnType<typeof adapter.getWorkspace>>>(
+      'workspace.create',
+      actorId,
+      target,
+      {
+        write: async () => {}, // the create above IS the write; verify by re-reading
+        reread: () => adapter.getWorkspace(created.slug),
+        confirm: (ws) => ws !== null && ws.name === displayName,
+        onUnconfirmed: 'Workspace creation could not be confirmed',
+      },
+    );
+  } catch (err) {
+    // Roll back the just-minted handle so an unconfirmed create leaves no orphan mapping row.
+    forget(productId);
+    throw err;
+  }
 
   await emitAdminEvent('admin.workspace.created', actorId, target, true, { displayName });
   recordAudit({

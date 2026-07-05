@@ -32,6 +32,7 @@ export interface WorkspaceSettings extends Workspace {
   noResultsMessage: string | null;
   retrievalMode: string | null; // validated free-text, default 'default' (REQ-036b)
   avatar: string | null; // existing filename ref only; binary upload out of scope (REQ-036c)
+  documents: WorkspaceDocument[]; // currently-attached docs + pin state (REQ-039)
 }
 
 export interface User {
@@ -53,6 +54,10 @@ export interface Invite {
 export interface DocumentRef {
   id: string;
   title: string;
+}
+
+export interface WorkspaceDocument extends DocumentRef {
+  pinned: boolean;
 }
 
 export interface OversightChatPage {
@@ -79,6 +84,8 @@ export interface SettingControl {
   value?: string | number | boolean | null; // present for non-secret controls
   set?: boolean; // present only for secret controls
   readOnly?: boolean; // §7.8 read-only system flags (REQ-072)
+  dangerous?: boolean; // §8 dangerous change (server-authoritative gate, REQ-083/084/086)
+  options?: { value: string; label: string }[]; // when present, a 'select' renders a dropdown
 }
 
 export interface SettingCategory {

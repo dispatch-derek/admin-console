@@ -32,6 +32,7 @@ export interface WorkspaceSettings extends Workspace {
   noResultsMessage: string | null; // queryRefusalResponse
   retrievalMode: string | null; // vectorSearchMode; validated free-text (trimmed, non-empty), default 'default', NO enforced enum (REQ-036b)
   avatar: string | null; // pfpFilename; existing filename-string ref only, binary upload out of scope (REQ-036c, REQ-121)
+  documents: WorkspaceDocument[]; // currently-attached docs + pin state (REQ-039); read-only here, managed via the knowledge routes
 }
 // PATCH body: Partial<WorkspaceSettings> minus id; null = inherit, omitted = no change (REQ-033/036)
 
@@ -54,6 +55,12 @@ export interface Invite {
 export interface DocumentRef {
   id: string;
   title: string;
+}
+
+// A document currently attached to a workspace (REQ-039), with its pin state — so the
+// knowledge panel can show current attach/pin status, not just the global document picker.
+export interface WorkspaceDocument extends DocumentRef {
+  pinned: boolean;
 }
 
 // EngineChatPage-shaped read-only oversight page (REQ-051, design 02); chats are opaque
@@ -90,6 +97,14 @@ export interface SettingControl {
   value?: string | number | boolean | null; // present for non-secret controls
   set?: boolean; // present only for secret controls: is a value currently set?
   readOnly?: boolean; // true for the §7.8 read-only system flags (REQ-072)
+  // true for §8 dangerous settings (provider/embedding-model/vector-db/auth-token/jwt changes,
+  // REQ-083/084/086) — server-authoritative so the web gates confirmation on this flag.
+  dangerous?: boolean;
+  // Optional constrained value set for a 'select' control (product-named values + labels). When
+  // present the web renders a dropdown; when absent a select degrades to validated free-text. The
+  // BFF leaves this UNSET today (the accepted provider enum values are not grounded, REQ-036b/064a);
+  // this is the forward hook for a future grounded discovery source.
+  options?: { value: string; label: string }[];
 }
 
 export interface SettingCategory {

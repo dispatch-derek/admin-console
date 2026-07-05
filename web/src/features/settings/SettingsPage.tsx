@@ -21,13 +21,12 @@ import type {
 
 type DraftValue = string | number | boolean | null;
 
-// Classify a changed control as a §8 dangerous op WITHOUT referencing any engine key or control-id
-// literal: provider-style selectors (type 'select', REQ-083/084) and security-category secrets
-// (auth token / JWT secret, REQ-086). Category id is a structural product field, not an engine key.
-function isDangerousControl(control: SettingControl, categoryId: string): boolean {
-  if (control.type === 'select') return true;
-  if (categoryId === 'security' && control.secret) return true;
-  return false;
+// A changed control is a §8 dangerous op iff the BFF flagged it so (server-authoritative:
+// exactly the LLM-provider/embedding-engine/embedding-model/vector-db/auth-token/jwt-secret
+// controls, REQ-083/084/086). The web gates confirmation on this flag rather than a client-side
+// heuristic, so tts/stt selectors (not §8 ops) are correctly NOT gated.
+function isDangerousControl(control: SettingControl): boolean {
+  return control.dangerous === true;
 }
 
 export function SettingsPage() {
@@ -87,7 +86,7 @@ export function SettingsPage() {
   const changedIds = Object.keys(patch);
   const dangerousIds = changedIds.filter((id) => {
     const entry = controlIndex.get(id);
-    return entry ? isDangerousControl(entry.control, entry.categoryId) : false;
+    return entry ? isDangerousControl(entry.control) : false;
   });
 
   async function write() {
@@ -162,26 +161,48 @@ export function SettingsPage() {
         : control.value === null || control.value === undefined
           ? ''
           : String(control.value);
+      // A 'select' control renders a real dropdown ONLY when the BFF supplies an option set;
+      // otherwise it degrades to validated free-text (the accepted provider enum values are not
+      // grounded today, REQ-036b/064a — the dropdown is a forward hook).
+      const asDropdown = control.type === 'select' && (control.options?.length ?? 0) > 0;
       field = (
         <label className="field">
           <span>
             {control.label}
             {control.type === 'select' && <em className="hint"> (provider selector)</em>}
           </span>
-          <input
-            id={control.id}
-            type={control.type === 'number' ? 'number' : 'text'}
-            value={current}
-            readOnly={control.readOnly}
-            onChange={(e) =>
-              setValue(
-                control.id,
-                control.type === 'number' && e.target.value !== ''
-                  ? Number(e.target.value)
-                  : e.target.value,
-              )
-            }
-          />
+          {asDropdown ? (
+            <select
+              id={control.id}
+              value={current}
+              disabled={control.readOnly}
+              onChange={(e) => setValue(control.id, e.target.value)}
+            >
+              {!control.options!.some((o) => o.value === current) && (
+                <option value={current}>{current || '— select —'}</option>
+              )}
+              {control.options!.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id={control.id}
+              type={control.type === 'number' ? 'number' : 'text'}
+              value={current}
+              readOnly={control.readOnly}
+              onChange={(e) =>
+                setValue(
+                  control.id,
+                  control.type === 'number' && e.target.value !== ''
+                    ? Number(e.target.value)
+                    : e.target.value,
+                )
+              }
+            />
+          )}
         </label>
       );
     }

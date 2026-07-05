@@ -58,6 +58,19 @@ const CATALOG_BY_ID = new Map<string, (typeof SETTINGS_CATALOG)[number]>(
   SETTINGS_CATALOG.map((c) => [c.id, c]),
 );
 
+// The §8 dangerous curated settings (server-authoritative so the web gates confirmation on a
+// flag, not a client-side heuristic): the LLM provider selector (REQ-083); the embedding engine,
+// embedding model, and vector-db selectors (REQ-084); and the auth-token / JWT-secret rotations
+// (REQ-086). Product-control ids per REQ-062b. Note tts/stt provider selectors are NOT §8 ops.
+const DANGEROUS_CONTROL_IDS: ReadonlySet<ProductControlId> = new Set<ProductControlId>([
+  'llm.provider',
+  'embedding.engine',
+  'embedding.model',
+  'vectorDb.provider',
+  'security.authToken',
+  'security.jwtSecret',
+]);
+
 // Build one product control from a catalog entry + live engine settings (REQ-060/062a).
 // Secret controls expose only set/notSet (never a value); non-secret controls carry the
 // current value (and readOnly for the §7.8 flags, REQ-072).
@@ -66,6 +79,7 @@ function toControl(
   settings: EngineSettings,
 ): SettingControl {
   const engineKey = CONTROL_TO_ENGINE_KEY[entry.id];
+  const dangerous = DANGEROUS_CONTROL_IDS.has(entry.id) ? true : undefined;
   if (entry.secret) {
     return {
       id: entry.id,
@@ -73,6 +87,7 @@ function toControl(
       type: entry.type,
       secret: true,
       set: settings[engineKey] === true,
+      dangerous,
     };
   }
   return {
@@ -82,6 +97,7 @@ function toControl(
     secret: false,
     value: settings[engineKey] ?? null,
     readOnly: 'readOnly' in entry ? entry.readOnly : undefined,
+    dangerous,
   };
 }
 

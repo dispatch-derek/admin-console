@@ -318,6 +318,35 @@ describe('GET /api/settings (REQ-060/062a)', () => {
       expect(ACCEPTED_ENV_KEYS.has(control['id'] as string)).toBe(false);
     }
   });
+
+  it('flags exactly the §8 dangerous controls (REQ-083/084/086, slice-5 follow-up b)', async () => {
+    const c = ctx!;
+    const res = await c.app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      cookies: { [SESSION_COOKIE]: c.cookie },
+    });
+    const body = res.json() as { categories: Array<{ controls: Array<Record<string, unknown>> }> };
+    const all = body.categories.flatMap((cat) => cat.controls);
+    const flagged = new Set(
+      all.filter((ctrl) => ctrl['dangerous'] === true).map((ctrl) => ctrl['id'] as string),
+    );
+    // Exactly the LLM provider (083), embedding engine/model + vector-db (084), and auth-token /
+    // jwt-secret (086) controls — tts/stt provider selectors are NOT §8 ops.
+    expect(flagged).toEqual(
+      new Set([
+        'llm.provider',
+        'embedding.engine',
+        'embedding.model',
+        'vectorDb.provider',
+        'security.authToken',
+        'security.jwtSecret',
+      ]),
+    );
+    // A plain provider selector like tts.provider is NOT flagged dangerous.
+    const ttsProvider = all.find((ctrl) => ctrl['id'] === 'tts.provider')!;
+    expect(ttsProvider['dangerous']).toBeFalsy();
+  });
 });
 
 describe('PATCH /api/settings — product→engine mapping (REQ-062a)', () => {

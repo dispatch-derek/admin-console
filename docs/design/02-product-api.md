@@ -135,12 +135,12 @@ verified membership against the prior set to emit one assigned/unassigned event 
 | Method / path | Req | Resp | Engine call | Mutates → event |
 |---|---|---|---|---|
 | `GET /api/settings` | — | `SettingsView` | `GET /v1/system` | no (REQ-060) |
-| `PATCH /api/settings` | `{changes: Record<controlId,value>}` (product-control ids, REQ-062b) | `SettingsWriteResult` (view + per-control-id `verified` map, REQ-101/R-3) | `POST /v1/system/update-env` | yes → one `admin.instance.setting_changed` (+ one `provider_changed` per changed selector) (REQ-101, REQ-063, REQ-029f) |
-| `GET /api/settings/raw` | — | `RawEnvEntry[]` | `GET /v1/system` (+ key set from `env-keys.ts`) | no (REQ-078a) |
-| `PUT /api/settings/raw` | `{entries:{key,value}[]}` | `RawEnvEntry[]` | `POST /v1/system/update-env` | yes → `admin.raw_env.written` (REQ-078d, §8 REQ-088a) |
-| `GET /api/diagnostics/vectors` | — | `{count:number}` | `GET /v1/system/vector-count` | no (REQ-074) |
-| `GET /api/diagnostics/env` | — | masked `Record<string,string>` | `GET /v1/system/env-dump` | no (REQ-074) |
-| `GET /api/models/ollama` | `?basePath?` | `{models:OllamaModel[]}` or `{unavailable:true,message}` | Ollama `GET /api/tags` | no (REQ-075/076) |
+| `PATCH /api/settings` | `SettingsPatch` = `Partial<Record<controlId,value>>` — the body IS the product-control-id→value map (product-control ids, REQ-062b) | `SettingsWriteResult` (view + per-control-id `verified` map, REQ-101/R-3) | `POST /v1/system/update-env` | yes → one `admin.instance.setting_changed` (+ one `provider_changed` per changed selector) (REQ-101, REQ-063, REQ-029f) |
+| `GET /api/settings/raw` | — | `RawEnvEntry[]` (all 186 accepted keys) | `GET /v1/system` (+ key set from `env-keys.ts`) | no (REQ-078a) |
+| `PUT /api/settings/raw` | `{writes:{key,value}[]}` | `{verified:boolean, keys:string[]}` | `POST /v1/system/update-env` | yes → `admin.raw_env.written` (REQ-078d, §8 REQ-088a) |
+| `GET /api/diagnostics/vectors` | — | `{vectorCount:number}` | `GET /v1/system/vector-count` | no (REQ-074) |
+| `GET /api/diagnostics/env` | — | masked `Record<string,unknown>` | `GET /v1/system/env-dump` | no (REQ-074) |
+| `GET /api/models/ollama` | — | `OllamaModelsResult` = `{available:boolean, models:OllamaModel[]}` (graceful degradation: `available:false` = fall back to free-text, REQ-076) | Ollama `GET /api/tags` (base path read server-side from `OllamaLLMBasePath`) | no (REQ-075/076) |
 
 Curated `PATCH /api/settings` maps product-control ids (spelled by the shared
 product-settings type, the contract of record — REQ-062b) to engine env keys inside the

@@ -381,7 +381,11 @@ export function WorkspaceSettings({ workspaceId }: WorkspaceSettingsProps) {
         </button>
       </form>
 
-      <KnowledgePanel workspaceId={workspaceId} />
+      <KnowledgePanel
+        workspaceId={workspaceId}
+        attached={original.documents}
+        onChanged={(documents) => setOriginal((ws) => (ws ? { ...ws, documents } : ws))}
+      />
     </div>
   );
 }

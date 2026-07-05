@@ -28,6 +28,7 @@ const BASE_WS: WS = {
   noResultsMessage: null,
   retrievalMode: 'default',
   avatar: null,
+  documents: [],
 };
 
 describe('WorkspaceSettings (REQ-035 blocks submit on invalid input)', () => {

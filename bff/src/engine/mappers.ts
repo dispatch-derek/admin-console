@@ -22,6 +22,7 @@ import type {
   OversightChatPage,
   User,
   Workspace,
+  WorkspaceDocument,
   WorkspaceSettings,
 } from '../types/product-types.js';
 
@@ -61,7 +62,7 @@ export function redactSecrets(value: unknown): unknown {
 // single source of truth for the partial-write translator (REQ-033/036). `id` is never a
 // member, so it can never be written to the engine.
 const WORKSPACE_FIELD_MAP: Record<
-  keyof Omit<WorkspaceSettings, 'id'>,
+  keyof Omit<WorkspaceSettings, 'id' | 'documents'>,
   keyof EngineWorkspaceUpdate
 > = {
   displayName: 'name',
@@ -108,7 +109,21 @@ export function toWorkspaceSettings(
     noResultsMessage: engine.queryRefusalResponse,
     retrievalMode: engine.vectorSearchMode,
     avatar: engine.pfpFilename,
+    documents: toWorkspaceDocuments(engine),
   };
+}
+
+// Map the workspace's attached engine documents to the product shape with pin state (REQ-039).
+// Uses docpath ?? name as the stable id (matching documentPaths / the knowledge verify predicates).
+export function toWorkspaceDocuments(engine: EngineWorkspace): WorkspaceDocument[] {
+  const docs = engine.documents ?? [];
+  const out: WorkspaceDocument[] = [];
+  for (const doc of docs) {
+    const path = doc.docpath ?? doc.name;
+    if (!path) continue;
+    out.push({ id: path, title: doc.title ?? doc.name, pinned: doc.pinned === true });
+  }
+  return out;
 }
 
 // Partial-write translator (REQ-033/036): iterate ONLY over product keys PRESENT in the
@@ -119,7 +134,7 @@ export function toWorkspaceUpdate(
 ): Partial<EngineWorkspaceUpdate> {
   const out: Partial<EngineWorkspaceUpdate> = {};
   for (const productKey of Object.keys(WORKSPACE_FIELD_MAP) as Array<
-    keyof Omit<WorkspaceSettings, 'id'>
+    keyof Omit<WorkspaceSettings, 'id' | 'documents'>
   >) {
     if (!Object.prototype.hasOwnProperty.call(patch, productKey)) continue;
     const engineKey = WORKSPACE_FIELD_MAP[productKey];

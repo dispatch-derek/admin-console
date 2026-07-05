@@ -345,6 +345,31 @@ describe('GET /api/workspaces/:id (REQ-031)', () => {
     });
     expect(res.json().responseMode).toBe('automatic');
   });
+
+  it('REQ-039: exposes attached documents with product shape + pin state (slice-3 follow-up c)', async () => {
+    const c = ctx!;
+    const engineWs = baseEngineWorkspace({
+      id: 1,
+      slug: 'ws-a',
+      name: 'Alpha',
+      documents: [
+        { id: 'd1', name: 'a.txt', title: 'Doc A', docpath: 'custom-documents/a.txt', pinned: true },
+        { name: 'b.txt' },
+      ],
+    });
+    const id = await seedWorkspace(c, engineWs);
+    getWorkspace.mockResolvedValue(engineWs);
+
+    const res = await c.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${id}`,
+      cookies: { [SESSION_COOKIE]: c.cookie },
+    });
+    expect(res.json().documents).toEqual([
+      { id: 'custom-documents/a.txt', title: 'Doc A', pinned: true },
+      { id: 'b.txt', title: 'b.txt', pinned: false },
+    ]);
+  });
 });
 
 describe('REQ-021a/022 — no engine field names ever reach the response JSON', () => {
@@ -630,6 +655,9 @@ describe('POST /api/workspaces (REQ-037)', () => {
 
     expect(res.statusCode).toBe(409);
     expect(eventsNamed(c, 'admin.workspace.created')).toHaveLength(0);
+    // The just-minted handle is rolled back — no orphan mapping row survives (slice-3 follow-up f).
+    expect(c.workspaceMapRepo.findBySlug('support-kb')).toBeUndefined();
+    expect(c.workspaceMapRepo.list()).toHaveLength(0);
   });
 
   it('missing displayName → 400, no engine call', async () => {

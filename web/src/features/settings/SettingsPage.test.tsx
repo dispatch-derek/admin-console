@@ -1,7 +1,9 @@
 // SPEC §7 / §8 / §10 — the instance settings screen (data-driven off GET /api/settings):
-//   - REQ-083/084/086/092: changing a `type:'select'` provider control or a `security` secret is a
-//     §8 dangerous op. Opening its confirmation triggers a FRESH GET /api/settings before applying,
-//     and the write is not issued until the operator confirms.
+//   - REQ-083/084/086/092: changing a control the BFF flags `dangerous:true` (provider selectors,
+//     embedding model, vector db, auth token / JWT secret) is a §8 dangerous op. Opening its
+//     confirmation triggers a FRESH GET /api/settings before applying, and the write is not issued
+//     until the operator confirms. Danger is SERVER-authoritative (the `dangerous` flag), not a
+//     client-side type/category heuristic.
 //   - A plain (non-dangerous) change saves directly on Save, with no confirmation dialog.
 //   - REQ-098a/098b: after a 2xx PATCH /api/settings returning a per-control `verified` map with a
 //     mix of true/false, each control renders its own status and the page does NOT show a single
@@ -26,7 +28,7 @@ const BASE_VIEW: SettingsView = {
       id: 'llm',
       label: 'LLM',
       controls: [
-        { id: 'llmProvider', label: 'LLM Provider', type: 'select', secret: false, value: 'openai' },
+        { id: 'llmProvider', label: 'LLM Provider', type: 'select', secret: false, value: 'openai', dangerous: true },
         { id: 'llmTimeout', label: 'Request timeout (s)', type: 'number', secret: false, value: 30 },
       ],
     },
@@ -34,7 +36,7 @@ const BASE_VIEW: SettingsView = {
       id: 'security',
       label: 'Security',
       controls: [
-        { id: 'authToken', label: 'Auth token', type: 'secret', secret: true, set: true },
+        { id: 'authToken', label: 'Auth token', type: 'secret', secret: true, set: true, dangerous: true },
       ],
     },
   ],
@@ -117,6 +119,67 @@ describe('SettingsPage — dangerous vs. plain changes (REQ-083/084/086/092)', (
 
     await userEvent.click(applyButton);
     expect(mockedApi.patchSettings).toHaveBeenCalledWith({ authToken: 'new-secret-value' });
+  });
+});
+
+describe('SettingsPage — server-authoritative danger + select rendering (follow-ups a/b)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('a select control WITHOUT dangerous:true saves directly — no confirmation (danger is server-driven)', async () => {
+    // tts.provider-style selector: type 'select' but NOT flagged dangerous by the BFF.
+    const view: SettingsView = {
+      categories: [
+        {
+          id: 'tts',
+          label: 'TTS',
+          controls: [{ id: 'ttsProvider', label: 'TTS Provider', type: 'select', secret: false, value: 'openai' }],
+        },
+      ],
+    };
+    mockedApi.getSettings.mockResolvedValue(view);
+    mockedApi.patchSettings.mockResolvedValue({ ...view, verified: { ttsProvider: true }, changedCategories: ['tts'] });
+    render(<SettingsPage />);
+
+    const input = await screen.findByLabelText(/TTS Provider/);
+    await userEvent.clear(input);
+    await userEvent.type(input, 'elevenlabs');
+    await userEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mockedApi.patchSettings).toHaveBeenCalledWith({ ttsProvider: 'elevenlabs' });
+  });
+
+  it('renders a dropdown when a select control carries options (dormant hook, follow-up a)', async () => {
+    const view: SettingsView = {
+      categories: [
+        {
+          id: 'llm',
+          label: 'LLM',
+          controls: [
+            {
+              id: 'llmProvider',
+              label: 'LLM Provider',
+              type: 'select',
+              secret: false,
+              value: 'ollama',
+              dangerous: true,
+              options: [
+                { value: 'ollama', label: 'Ollama' },
+                { value: 'openai', label: 'OpenAI' },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    mockedApi.getSettings.mockResolvedValue(view);
+    render(<SettingsPage />);
+
+    const select = await screen.findByLabelText(/LLM Provider/);
+    expect(select.tagName).toBe('SELECT');
+    expect(within(select as HTMLElement).getByRole('option', { name: 'OpenAI' })).toBeInTheDocument();
   });
 });
 

@@ -101,7 +101,7 @@ describe('toWorkspaceSettings — REQ-032 full detail-shape mapping', () => {
     });
   });
 
-  it('exposes exactly the WorkspaceSettings product fields — engine `documents`/`slug`/`id` (numeric) never leak', () => {
+  it('exposes exactly the WorkspaceSettings product fields — engine `slug`/`id` (numeric) never leak', () => {
     const settings = toWorkspaceSettings(engineWorkspaceFixture(), 'pid');
     expect(Object.keys(settings).sort()).toEqual(
       [
@@ -109,6 +109,7 @@ describe('toWorkspaceSettings — REQ-032 full detail-shape mapping', () => {
         'agentLlmProvider',
         'avatar',
         'displayName',
+        'documents',
         'historyWindow',
         'id',
         'llmModel',
@@ -122,7 +123,12 @@ describe('toWorkspaceSettings — REQ-032 full detail-shape mapping', () => {
         'temperature',
       ].sort(),
     );
-    expect((settings as unknown as { documents?: unknown }).documents).toBeUndefined();
+    // documents is the PRODUCT shape (id/title/pinned) mapped from engine docs, not the raw
+    // engine document objects (REQ-039): docpath??name → id, title??name → title, pinned boolean.
+    expect(settings.documents).toEqual([
+      { id: 'custom-documents/file1.txt', title: 'File One', pinned: true },
+      { id: 'file2.txt', title: 'file2.txt', pinned: false },
+    ]);
   });
 });
 
