@@ -104,30 +104,38 @@ Per-event payloads (all also carry actor + timestamp):
 
 | Event | target | changes | REQ |
 |---|---|---|---|
-| `admin.workspace.created` | `{workspaceId}` | `{displayName}` | REQ-037 |
-| `admin.workspace.updated` | `{workspaceId}` | `{fields: string[]}` (product field names, values non-secret) | REQ-032 |
-| `admin.workspace.deleted` | `{workspaceId}` | — | REQ-038 |
-| `admin.workspace.documents_changed` | `{workspaceId}` | `{added:string[], removed:string[]}` (doc refs) | REQ-039 |
-| `admin.workspace.knowledge_pinned` | `{workspaceId}` | `{docPath, pinned:true}` | REQ-039 |
-| `admin.workspace.knowledge_unpinned` | `{workspaceId}` | `{docPath, pinned:false}` | REQ-039 |
-| `admin.workspace_user.assigned` | `{workspaceId, userId}` | — | REQ-049 |
-| `admin.workspace_user.unassigned` | `{workspaceId, userId}` | — | REQ-049 |
-| `admin.user.created` | `{userId}` | `{username, role}` | REQ-042 |
-| `admin.user.updated` | `{userId}` | `{fields: string[]}` | REQ-043 |
-| `admin.user.suspended` | `{userId}` | — | REQ-043 |
-| `admin.user.reactivated` | `{userId}` | — | REQ-043 |
-| `admin.user.deleted` | `{userId}` | — | REQ-044 |
-| `admin.invite.created` | `{inviteId}` | `{workspaceIds: string[]}` | REQ-046 |
-| `admin.invite.revoked` | `{inviteId}` | — | REQ-047 |
-| `admin.instance.setting_changed` | `{categories: string[], controlIds: string[]}` | `{categories: string[], controlIds: string[]}` (product-control ids, secret values redacted); `verified` is a **per-control-id map** (REQ-029c/029f) | §7 intro / REQ-101 / REQ-029c / REQ-029f |
+| `admin.workspace.created` | `{id}` | `{displayName}` | REQ-037 |
+| `admin.workspace.updated` | `{id}` | applied engine update body (engine key → new value; †) | REQ-032 |
+| `admin.workspace.deleted` | `{id}` | — | REQ-038 |
+| `admin.workspace.documents_changed` | `{id}` | `{adds:string[], deletes:string[]}` (doc paths) | REQ-039 |
+| `admin.workspace.knowledge_pinned` | `{id}` | `{docPath, pinned:true}` | REQ-039 |
+| `admin.workspace.knowledge_unpinned` | `{id}` | `{docPath, pinned:false}` | REQ-039 |
+| `admin.workspace_user.assigned` | `{workspace, user}` | — | REQ-049 |
+| `admin.workspace_user.unassigned` | `{workspace, user}` | — | REQ-049 |
+| `admin.user.created` | `{id}` | `{username, role}` | REQ-042 |
+| `admin.user.updated` | `{id}` | applied engine update body (engine key → new value; †) | REQ-043 |
+| `admin.user.suspended` | `{id}` | — | REQ-043 |
+| `admin.user.reactivated` | `{id}` | — | REQ-043 |
+| `admin.user.deleted` | `{id}` | — | REQ-044 |
+| `admin.invite.created` | `{id}` | `{workspaceIds: string[]}` | REQ-046 |
+| `admin.invite.revoked` | `{id}` | — | REQ-047 |
+| `admin.instance.setting_changed` | `{controlIds: string[]}` | `{categories: string[], controlIds: string[]}` (product-control ids, secret values redacted); `verified` is a **per-control-id map** (REQ-029c/029f) | §7 intro / REQ-101 / REQ-029c / REQ-029f |
 | `admin.instance.provider_changed` | `{selector}` (product selector id: `llm.provider`/`embedding.engine`/`vectorDb.provider`/`tts.provider`/`stt.provider`, REQ-063) | `{newProvider}`; own scalar `verified` (REQ-029f) | REQ-063 / REQ-029f |
-| `admin.raw_env.written` | `{}` | `{keys: string[]}` (opaque operator keys, secret values redacted); scalar `verified` | REQ-078d / REQ-078f |
+| `admin.raw_env.written` | `{keys: string[]}` | `{keys: string[]}` (opaque operator keys, secret values redacted); scalar `verified` | REQ-078d / REQ-078f |
 
 Rules: emitted only after `verifiedWrite` succeeds (REQ-029a); none on failure/unverified
 (REQ-029b); a mutation maps to **one or more** events, one per state delta (membership emits
 one assigned/unassigned per user; a batched settings write emits one `setting_changed` plus
 one `provider_changed` per changed selector), reads to none (REQ-029/029e); targets carry
 opaque handles/product-control ids only, never parsed engine internals (REQ-021b).
+
+† **`updated`-event `changes` payload.** For `admin.workspace.updated` / `admin.user.updated`
+the `changes` object IS the engine update body that was applied — engine key → new value
+(e.g. `{openAiTemp, chatModel}`), with secret values redacted by `redactSecrets`. These
+engine key names are BFF-internal and never cross to `web/`: `web/` renders the HTTP response,
+never the on-box bus (REQ-029d), so this does not violate the product boundary (REQ-021a).
+The event `target` still carries only the opaque product handle. (The `changes` keys are the
+sole place an event exposes engine-side names; bus consumers see engine field names here.)
 
 **Batched curated settings write (`admin.instance.setting_changed`, REQ-029f/101).** The
 curated `PATCH /api/settings` save is ONE engine `update-env` call that may mix key classes,

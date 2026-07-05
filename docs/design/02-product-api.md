@@ -30,8 +30,10 @@ export interface WorkspaceSettings extends Workspace {
   noResultsMessage: string | null;         // queryRefusalResponse
   retrievalMode: string | null;            // vectorSearchMode; validated free-text (trimmed, non-empty), default 'default', NO enforced enum (REQ-036b)
   avatar: string | null;                   // pfpFilename; existing filename-string ref only, binary upload out of scope (REQ-036c, REQ-121)
+  documents: WorkspaceDocument[];          // attached docs + pin state (REQ-039); read-only in this shape, managed via the knowledge routes
 }
-// PATCH body: Partial<WorkspaceSettings> minus id; null = inherit, omitted = no change (REQ-033/036)
+// PATCH body: Partial<WorkspaceSettings> minus id AND documents (read-only fields);
+// null = inherit, omitted = no change (REQ-033/036)
 
 export interface User {
   id: string; username: string;
@@ -45,6 +47,8 @@ export interface Invite {
   workspaceIds: string[];                  // scoped product workspace handles
 }
 export interface DocumentRef { id: string; title: string; }
+export interface WorkspaceDocument extends DocumentRef { pinned: boolean; }
+export interface OversightChatPage { chats: unknown[]; hasMore: boolean; } // GET /api/oversight/chats
 export interface SettingsView {            // GET /api/settings, product-labeled
   categories: SettingCategory[];           // each control carries a product-control id + label + set/notSet for secrets
 }
@@ -70,16 +74,16 @@ export interface ErrorBody { message: string; }
 
 | Method / path | Req | Resp | Engine call | Mutates → event |
 |---|---|---|---|---|
-| `POST /api/auth/login` | `{username,password}` | `{stage:'mfa'|'enroll'|'setPassword', challengeId}` or session set | none (local store) | no |
+| `POST /api/auth/login` | `{username,password}` | `{stage:'mfa'|'enroll'|'setPassword', challengeId}` (the `enroll` stage additionally carries `{secret, otpauthUri, qr}`) or session set | none (local store) | no |
 | `POST /api/auth/mfa` | `{challengeId, code}` | session cookie set, `{staff}` | none | no (login audited) |
-| `POST /api/auth/enroll` | `{challengeId, code}` | `{recoveryCodes[]}` + session | none | no (audited REQ-017) |
+| `POST /api/auth/enroll` | `{challengeId, code}` | `{recoveryCodes[], staff}` + session | none | no (audited REQ-017) |
 | `POST /api/auth/set-password` | `{challengeId, newPassword}` | next stage | none | no (bootstrap REQ-019a) |
 | `POST /api/auth/recovery` | `{username, password, recoveryCode}` | session or enroll stage | none | no (REQ-019) |
 | `POST /api/auth/logout` | — | 204 | none | no |
 | `GET /api/auth/me` | — | `{staff}` | none | no |
 | `GET /api/staff` | — | `Staff[]` | none | no |
 | `POST /api/staff` | `{username,role?}` | `Staff` | none | audited (REQ-018) |
-| `PATCH /api/staff/:id` | `{disabled?}` | `Staff` | none | audited; guardrails REQ-018a |
+| `PATCH /api/staff/:id` | `{disabled}` (boolean, required) | `Staff` | none | audited; guardrails REQ-018a |
 | `DELETE /api/staff/:id` | — | 204 | none | audited; guardrails REQ-018a |
 | `POST /api/staff/:id/reset-password` | — | `{tempToken}` | none | audited |
 | `POST /api/staff/:id/reset-mfa` | — | 204 | none | audited (REQ-019) |
@@ -98,7 +102,7 @@ Staff routes touch only the BFF store, not the engine; they emit audit entries, 
 | `DELETE /api/workspaces/:id` | — | 204 | `DELETE /v1/workspace/{slug}` | yes → `admin.workspace.deleted` (REQ-038, §8 REQ-081) |
 | `GET /api/documents` | — | `DocumentRef[]` | `GET /v1/documents` | no (REQ-039) |
 | `PUT /api/workspaces/:id/knowledge` | `{adds:string[],deletes:string[]}` | `WorkspaceSettings` | `POST /v1/workspace/{slug}/update-embeddings` | yes → `admin.workspace.documents_changed` (REQ-039) |
-| `POST /api/workspaces/:id/knowledge/pin` | `{documentId,pinned}` | 200 | `POST /v1/workspace/{slug}/update-pin` | yes → `admin.workspace.documents_changed` (REQ-039) |
+| `POST /api/workspaces/:id/knowledge/pin` | `{docPath, pinned}` | 204 | `POST /v1/workspace/{slug}/update-pin` | yes → `admin.workspace.knowledge_pinned`/`knowledge_unpinned` (REQ-039) |
 
 Field mapping for PATCH is the REQ-032 table, applied in `engine/mappers.ts`. Only
 changed fields are sent (REQ-033); JSON `null` = inherit (REQ-036); `responseMode`
@@ -124,7 +128,7 @@ Guarded by the multi-user precondition (REQ-040): the web app calls
 | `DELETE /api/invites/:id` | — | 204 | `DELETE /v1/admin/invite/{id}` | yes → `admin.invite.revoked` (REQ-047) |
 | `GET /api/workspaces/:id/members` | — | `User[]` | `GET /v1/admin/workspaces/{workspaceId}/users` | no (REQ-048) |
 | `POST /api/workspaces/:id/members` | `{userIds:string[], reset:boolean}` | `User[]` | `POST /v1/admin/workspaces/{workspaceSlug}/manage-users` | yes → `admin.workspace_user.assigned`/`unassigned` per delta (REQ-049) |
-| `GET /api/oversight/chats` | query params | `EngineChatPage`-shaped product page | `POST /v1/admin/workspace-chats` | no (REQ-051) |
+| `GET /api/oversight/chats` | `{workspace?, limit?, offset?}` (query) | `OversightChatPage` = `{chats: unknown[], hasMore: boolean}` | `POST /v1/admin/workspace-chats` | no (REQ-051) |
 
 Membership: the BFF resolves `:id` → numeric id (for the members read) and → slug (for
 the `manage-users` write) via `identity/workspace-map` (REQ-048/049). It diffs the
