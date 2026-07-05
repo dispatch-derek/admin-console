@@ -55,10 +55,13 @@ paths take comparable time; response body unchanged (`Invalid credentials`).
 `auth.routes.ts` set-password accepted any truthy `newPassword` (a 1-char admin password was allowed).
 **Remediation (applied):** `assertPasswordPolicy` enforces a ≥12-char minimum and rejects whitespace-only.
 
-### M-4 — Vulnerable transitive dependency (`fast-uri`) via Fastify 4.x — DEFERRED
-`npm audit` flags `fast-uri <=3.1.1` (path traversal / host confusion) reached through `fastify@^4.28.1`. Practical
-exploitability here is limited (schema-compilation path, not user routes). The audit fix requires the Fastify 5
-major bump. **Deferred** to a dedicated dependency-upgrader task — not bundled into this security commit.
+### M-4 — Vulnerable transitive dependency (`fast-uri`) via Fastify 4.x — RESOLVED
+`npm audit` flagged `fast-uri <=3.1.1` (path traversal / host confusion) reached through `fastify@^4.28.1`.
+**Remediation (applied, commit `f77a5bc`):** upgraded `fastify` 4.29 → 5.9, `@fastify/cors` 9 → 11, and
+`@fastify/cookie` 9 → 11 (the Fastify 5 plugin line); `engines.node` → `>=20`. Fastify 5.9 pulls
+`@fastify/ajv-compiler@^4` with a patched `fast-uri`, clearing GHSA-q3j6-qgpj-74h6 and GHSA-v39h-62p7-jpjc.
+No application code changes were required; verified via typecheck, 216 tests, and a live boot smoke. The remaining
+`npm audit` findings are all in the dev-only `vite`/`vitest`/`esbuild` chain (Vitest UI/dev-server, not shipped).
 
 ---
 
