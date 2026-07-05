@@ -11,6 +11,7 @@ import { registerSessionGuard } from './server/session-guard.js';
 import { seedFirstAccount } from './auth/bootstrap.js';
 import { healthRoutes } from './routes/health.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
+import { workspacesRoutes } from './routes/workspaces.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
@@ -21,6 +22,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerSessionGuard(app); // REQ-012: session required on /api/* except login-flow steps
   await app.register(healthRoutes);
   await app.register(authRoutes);
+  await app.register(workspacesRoutes);
 
   return app;
 }

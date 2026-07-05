@@ -7,6 +7,9 @@ export type AdminEventName =
   | 'admin.workspace.updated'
   | 'admin.workspace.deleted'
   | 'admin.workspace.documents_changed'
+  // Knowledge pin/unpin events required by spec §14 / REQ-039.
+  | 'admin.workspace.knowledge_pinned'
+  | 'admin.workspace.knowledge_unpinned'
   | 'admin.workspace_user.assigned'
   | 'admin.workspace_user.unassigned'
   | 'admin.user.created'
