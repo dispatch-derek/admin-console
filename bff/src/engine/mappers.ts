@@ -8,11 +8,22 @@
 import { AppError } from '../server/errors.js';
 import { isSecretKey } from './env-keys.js';
 import type {
+  EngineChatPage,
   EngineDocument,
+  EngineInvite,
+  EngineUser,
+  EngineUserUpdate,
   EngineWorkspace,
   EngineWorkspaceUpdate,
 } from './engine-types.js';
-import type { DocumentRef, Workspace, WorkspaceSettings } from '../types/product-types.js';
+import type {
+  DocumentRef,
+  Invite,
+  OversightChatPage,
+  User,
+  Workspace,
+  WorkspaceSettings,
+} from '../types/product-types.js';
 
 // The placeholder written in place of a secret VALUE (REQ-062/094). Key names are kept.
 export const REDACTED = '[redacted]';
@@ -136,6 +147,74 @@ export function toDocumentRef(doc: EngineDocument): DocumentRef {
   return {
     id: String(doc.id ?? doc.docpath ?? doc.name),
     title: doc.title ?? doc.name,
+  };
+}
+
+// --- User / invite / oversight translation (§6) ---
+
+// Product User shape (REQ-041): engine `suspended` 0/1 → product boolean so no engine int
+// flag leaks across the boundary.
+export function toUser(engine: EngineUser): User {
+  return {
+    id: String(engine.id),
+    username: engine.username,
+    role: engine.role as User['role'],
+    suspended: engine.suspended === 1,
+    dailyMessageLimit: engine.dailyMessageLimit,
+  };
+}
+
+// Partial-write translator for a user edit (REQ-043): iterate ONLY over product keys PRESENT
+// in the patch (by own-property presence, like toWorkspaceUpdate), mapping product boolean
+// `suspended` → engine 1/0. An absent key never appears in the engine body.
+export function toUserUpdate(
+  patch: Partial<Pick<User, 'role' | 'suspended' | 'dailyMessageLimit'>>,
+): Partial<EngineUserUpdate> {
+  const out: Partial<EngineUserUpdate> = {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'role')) {
+    out.role = patch.role as string;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'suspended')) {
+    out.suspended = patch.suspended ? 1 : 0;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'dailyMessageLimit')) {
+    out.dailyMessageLimit = patch.dailyMessageLimit ?? null;
+  }
+  return out;
+}
+
+// Product Invite shape (REQ-045). The caller resolves engine numeric workspace ids →
+// product handles and passes them in, so the mapper stays pure (no repo import).
+export function toInvite(engine: EngineInvite, workspaceHandles: string[]): Invite {
+  return {
+    id: String(engine.id),
+    code: engine.code,
+    status: engine.status,
+    claimedBy: engine.claimedBy,
+    workspaceIds: workspaceHandles,
+  };
+}
+
+// Parse the engine invite `workspaceIds` csv (e.g. "1,3") into a number[] so the service
+// can reverse-map each engine numeric id to a product workspace handle (REQ-045/046).
+export function parseInviteWorkspaceIds(engine: EngineInvite): number[] {
+  if (!engine.workspaceIds) return [];
+  const out: number[] = [];
+  for (const part of engine.workspaceIds.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) continue;
+    const n = Number(trimmed);
+    if (Number.isNaN(n)) continue;
+    out.push(n);
+  }
+  return out;
+}
+
+// Read-only oversight page shape (REQ-051): pass through opaque chat records.
+export function toOversightPage(engine: EngineChatPage): OversightChatPage {
+  return {
+    chats: engine.chats ?? [],
+    hasMore: engine.hasPages === true,
   };
 }
 

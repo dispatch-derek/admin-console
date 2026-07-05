@@ -56,6 +56,13 @@ export interface DocumentRef {
   title: string;
 }
 
+// EngineChatPage-shaped read-only oversight page (REQ-051, design 02); chats are opaque
+// history records passed through.
+export interface OversightChatPage {
+  chats: unknown[];
+  hasMore: boolean;
+}
+
 // A single curated control within a settings category (§7). Carries a product-control
 // id + label + type; secret-bearing controls expose only set/notSet state, never the
 // stored value (REQ-060, REQ-062b). Non-secret controls carry their current value.

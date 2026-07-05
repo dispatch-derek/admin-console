@@ -12,6 +12,8 @@ import { seedFirstAccount } from './auth/bootstrap.js';
 import { healthRoutes } from './routes/health.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { workspacesRoutes } from './routes/workspaces.routes.js';
+import { usersRoutes } from './routes/users.routes.js';
+import { oversightRoutes } from './routes/oversight.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
@@ -23,6 +25,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(authRoutes);
   await app.register(workspacesRoutes);
+  await app.register(usersRoutes);
+  await app.register(oversightRoutes);
 
   return app;
 }

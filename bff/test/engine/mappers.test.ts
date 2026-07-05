@@ -6,14 +6,25 @@
 import { describe, it, expect } from 'vitest';
 import {
   documentPaths,
+  parseInviteWorkspaceIds,
   toDocumentRef,
+  toInvite,
+  toOversightPage,
+  toUser,
+  toUserUpdate,
   toWorkspace,
   toWorkspaceSettings,
   toWorkspaceUpdate,
   validateWorkspacePatch,
 } from '../../src/engine/mappers.js';
 import { AppError } from '../../src/server/errors.js';
-import type { EngineDocument, EngineWorkspace } from '../../src/engine/engine-types.js';
+import type {
+  EngineChatPage,
+  EngineDocument,
+  EngineInvite,
+  EngineUser,
+  EngineWorkspace,
+} from '../../src/engine/engine-types.js';
 import type { WorkspaceSettings } from '../../src/types/product-types.js';
 
 // A fully-populated engine workspace fixture (REQ-032 grounding §3 shape).
@@ -339,5 +350,178 @@ describe('validateWorkspacePatch — present-key-only validation (REQ-033/036 de
   it('validates only the keys actually present in a mixed patch (one valid, one invalid)', () => {
     // retrievalTopN is invalid; temperature is absent and must not be checked.
     expect(() => validateWorkspacePatch({ retrievalTopN: 0, displayName: 'X' })).toThrow(AppError);
+  });
+});
+
+// --- §6 Users / invites / oversight translation (REQ-041/043/045/051) ---
+
+// A fully-populated engine user fixture (§6.2 grounding).
+function engineUserFixture(overrides: Partial<EngineUser> = {}): EngineUser {
+  return {
+    id: 7,
+    username: 'alice',
+    role: 'default',
+    suspended: 0,
+    dailyMessageLimit: 50,
+    ...overrides,
+  };
+}
+
+describe('toUser — REQ-041 engine `suspended` 0/1 → product boolean; id → string', () => {
+  it('maps suspended 0 → false', () => {
+    expect(toUser(engineUserFixture({ suspended: 0 })).suspended).toBe(false);
+  });
+
+  it('maps suspended 1 → true', () => {
+    expect(toUser(engineUserFixture({ suspended: 1 })).suspended).toBe(true);
+  });
+
+  it('maps the engine numeric id to a product string id', () => {
+    const user = toUser(engineUserFixture({ id: 42 }));
+    expect(user.id).toBe('42');
+    expect(typeof user.id).toBe('string');
+  });
+
+  it('passes through username, role, and dailyMessageLimit unchanged', () => {
+    const user = toUser(engineUserFixture({ username: 'bob', role: 'admin', dailyMessageLimit: null }));
+    expect(user.username).toBe('bob');
+    expect(user.role).toBe('admin');
+    expect(user.dailyMessageLimit).toBeNull();
+  });
+
+  it('exposes ONLY the product User fields — no engine int flag leaks through', () => {
+    const user = toUser(engineUserFixture());
+    expect(Object.keys(user).sort()).toEqual(
+      ['dailyMessageLimit', 'id', 'role', 'suspended', 'username'].sort(),
+    );
+    expect(typeof user.suspended).toBe('boolean');
+  });
+});
+
+describe('toUserUpdate — REQ-043 present-key-only partial-write translator', () => {
+  it('an empty patch produces an empty engine body', () => {
+    expect(toUserUpdate({})).toEqual({});
+  });
+
+  it('suspended:true maps to engine {suspended:1}', () => {
+    expect(toUserUpdate({ suspended: true })).toEqual({ suspended: 1 });
+  });
+
+  it('suspended:false maps to engine {suspended:0}', () => {
+    expect(toUserUpdate({ suspended: false })).toEqual({ suspended: 0 });
+  });
+
+  it('role passes through unchanged', () => {
+    expect(toUserUpdate({ role: 'manager' })).toEqual({ role: 'manager' });
+  });
+
+  it('dailyMessageLimit passes through unchanged, including a present null', () => {
+    expect(toUserUpdate({ dailyMessageLimit: 100 })).toEqual({ dailyMessageLimit: 100 });
+    expect(toUserUpdate({ dailyMessageLimit: null })).toEqual({ dailyMessageLimit: null });
+  });
+
+  it('only maps keys PRESENT in the patch — an absent key never appears in the engine body', () => {
+    const out = toUserUpdate({ role: 'admin' });
+    expect(Object.prototype.hasOwnProperty.call(out, 'suspended')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(out, 'dailyMessageLimit')).toBe(false);
+  });
+
+  it('a multi-field patch maps every present field to its engine key', () => {
+    expect(toUserUpdate({ role: 'admin', suspended: true, dailyMessageLimit: 10 })).toEqual({
+      role: 'admin',
+      suspended: 1,
+      dailyMessageLimit: 10,
+    });
+  });
+});
+
+// A fully-populated engine invite fixture (§6.3 grounding).
+function engineInviteFixture(overrides: Partial<EngineInvite> = {}): EngineInvite {
+  return {
+    id: 3,
+    code: 'ABC123',
+    status: 'pending',
+    claimedBy: null,
+    workspaceIds: null,
+    ...overrides,
+  };
+}
+
+describe('parseInviteWorkspaceIds — REQ-045 engine `workspaceIds` csv parser', () => {
+  it('parses "1,3" into [1, 3]', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: '1,3' }))).toEqual([1, 3]);
+  });
+
+  it('returns [] for an empty string', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: '' }))).toEqual([]);
+  });
+
+  it('returns [] for null', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: null }))).toEqual([]);
+  });
+
+  it('filters out non-numeric (NaN) segments', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: '1,foo,3' }))).toEqual([1, 3]);
+  });
+
+  it('trims whitespace around each segment', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: ' 1 , 3 ' }))).toEqual([1, 3]);
+  });
+
+  it('skips empty segments produced by a trailing/double comma', () => {
+    expect(parseInviteWorkspaceIds(engineInviteFixture({ workspaceIds: '1,,3,' }))).toEqual([1, 3]);
+  });
+});
+
+describe('toInvite — REQ-045 product invite shape', () => {
+  it('shapes id (as string), code, status, and claimedBy from the engine invite', () => {
+    const invite = toInvite(
+      engineInviteFixture({ id: 9, code: 'XYZ', status: 'claimed', claimedBy: '5' }),
+      [],
+    );
+    expect(invite).toMatchObject({ id: '9', code: 'XYZ', status: 'claimed', claimedBy: '5' });
+  });
+
+  it('uses the passed-in product workspace handles verbatim, ignoring the engine numeric csv', () => {
+    const invite = toInvite(engineInviteFixture({ workspaceIds: '1,2' }), ['handle-a', 'handle-b']);
+    expect(invite.workspaceIds).toEqual(['handle-a', 'handle-b']);
+  });
+
+  it('an unscoped invite (no product handles resolved) has an empty workspaceIds array', () => {
+    const invite = toInvite(engineInviteFixture({ workspaceIds: null }), []);
+    expect(invite.workspaceIds).toEqual([]);
+  });
+
+  it('defaults status to "pending" (engine default, passthrough)', () => {
+    const invite = toInvite(engineInviteFixture({ status: 'pending' }), []);
+    expect(invite.status).toBe('pending');
+  });
+});
+
+describe('toOversightPage — REQ-051 read-only oversight page shape', () => {
+  it('maps hasPages:true → hasMore:true', () => {
+    const page = toOversightPage({ chats: [{ a: 1 }], hasPages: true } as EngineChatPage);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it('maps hasPages:false → hasMore:false', () => {
+    const page = toOversightPage({ chats: [], hasPages: false } as EngineChatPage);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('a missing hasPages defaults hasMore to false', () => {
+    const page = toOversightPage({ chats: [] } as EngineChatPage);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('passes chats through unchanged', () => {
+    const chats = [{ id: 1 }, { id: 2 }];
+    const page = toOversightPage({ chats, hasPages: true } as EngineChatPage);
+    expect(page.chats).toBe(chats);
+  });
+
+  it('defaults chats to [] when missing from the engine page', () => {
+    const page = toOversightPage({ hasPages: false } as unknown as EngineChatPage);
+    expect(page.chats).toEqual([]);
   });
 });

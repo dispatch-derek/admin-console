@@ -18,6 +18,9 @@ const insertStmt = db.prepare(
 );
 const findByProductIdStmt = db.prepare(`SELECT * FROM workspace_map WHERE product_id = ?`);
 const findBySlugStmt = db.prepare(`SELECT * FROM workspace_map WHERE engine_slug = ?`);
+const findByNumericIdStmt = db.prepare(
+  `SELECT * FROM workspace_map WHERE engine_numeric_id = ?`,
+);
 const listStmt = db.prepare(`SELECT * FROM workspace_map`);
 const updateNumericIdStmt = db.prepare(
   `UPDATE workspace_map SET engine_numeric_id = ? WHERE product_id = ?`,
@@ -33,6 +36,9 @@ export const workspaceMapRepo = {
   },
   findBySlug(engineSlug: string): WorkspaceMapRow | undefined {
     return findBySlugStmt.get(engineSlug) as WorkspaceMapRow | undefined;
+  },
+  findByNumericId(engineNumericId: number): WorkspaceMapRow | undefined {
+    return findByNumericIdStmt.get(engineNumericId) as WorkspaceMapRow | undefined;
   },
   list(): WorkspaceMapRow[] {
     return listStmt.all() as WorkspaceMapRow[];
