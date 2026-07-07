@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM Preference — Test Page</title>
+<link rel="stylesheet" href="../styles.css" />
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../_ds_bundle.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--theme-bg-container); font-family: var(--font-sans); }
+  a { color: var(--theme-text-primary); }
+  a:hover { color: var(--theme-text-secondary); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {
+  PageHeader, Table, Badge, Button, IconButton,
+  Input, Select, Textarea, Toggle, SidebarItem, Modal,
+} = window.AnythingLLMAdminDesignSystem_4c97b8;
+
+function Page() {
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [streaming, setStreaming] = React.useState(true);
+  const apiKeys = [
+    { name: 'ci-pipeline', status: 'Active', tone: 'success', created: 'Jun 2, 2026' },
+    { name: 'zapier-integration', status: 'Active', tone: 'success', created: 'May 14, 2026' },
+    { name: 'old-deploy-key', status: 'Revoked', tone: 'neutral', created: 'Jan 9, 2026' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', height: '100vh' }}>
+      {/* Sidebar */}
+      <aside style={{ width: 252, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column', padding: 18, background: 'var(--theme-bg-sidebar)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em', color: '#fff' }}>Admin Console</span>
+          <span style={{ display: 'inline-flex', padding: 8, borderRadius: 9999, color: '#fff', background: 'var(--theme-action-menu-bg)' }}><i className="ph ph-house" style={{ fontSize: 16 }} /></span>
+        </div>
+        <div style={{ height: 1, background: 'var(--theme-sidebar-border)', margin: '10px 0 14px' }} />
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--theme-text-secondary)', padding: '0 12px 8px' }}>Settings</span>
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <SidebarItem label="LLM Preference" active icon={<i className="ph ph-brain" style={{ fontSize: 18 }} />} />
+          <SidebarItem label="Vector Database" icon={<i className="ph ph-database" style={{ fontSize: 18 }} />} />
+          <SidebarItem label="API Keys" icon={<i className="ph ph-key" style={{ fontSize: 18 }} />} />
+        </nav>
+        <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
+          <div style={{ width: 30, height: 30, borderRadius: 9999, background: 'var(--gradient-selected)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700 }}>A</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>admin</span>
+            <span style={{ fontSize: 10, color: 'var(--theme-text-secondary)' }}>Administrator</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* Panel */}
+      <main style={{ flex: 1, margin: '16px 16px 16px 2px', borderRadius: 16, background: 'var(--theme-bg-secondary)', overflowY: 'auto' }}>
+        <div style={{ padding: '24px 50px 24px 24px', maxWidth: 720 }}>
+          <PageHeader title="LLM Preference" description="Configure the default language model provider and behavior for new workspaces." />
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 24 }}>
+            <Select label="LLM Provider" hint="Used by default for all new workspaces"
+              options={[{ value: 'openai', label: 'OpenAI' }, { value: 'anthropic', label: 'Anthropic' }, { value: 'ollama', label: 'Ollama' }]} />
+            <Input label="Model Name" placeholder="gpt-4o-mini" hint="Must match a model available to your provider" />
+            <Textarea label="System Prompt" placeholder="You are a helpful assistant..." rows={4} />
+            <Toggle label="Stream responses" description="Send tokens to the client as they are generated" variant="horizontal" enabled={streaming} onChange={setStreaming} />
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <Button variant="cta">Save changes</Button>
+              <Button variant="ghost">Cancel</Button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginTop: 36, paddingBottom: 16, borderBottom: '2px solid var(--theme-sidebar-border)' }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--theme-text-primary)' }}>API Keys</p>
+            <Button variant="solid" onClick={() => setModalOpen(true)}>Generate key</Button>
+          </div>
+
+          <Table>
+            {apiKeys.map((key) => (
+              <Table.Row key={key.name}>
+                <Table.Cell>{key.name}</Table.Cell>
+                <Table.Cell><Badge tone={key.tone}>{key.status}</Badge></Table.Cell>
+                <Table.Cell>{key.created}</Table.Cell>
+                <Table.Cell>
+                  <IconButton title="Revoke key"><i className="ph ph-trash" style={{ fontSize: 14 }} /></IconButton>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table>
+        </div>
+      </main>
+
+      <Modal open={modalOpen} title="Generate API Key" onClose={() => setModalOpen(false)}
+        footer={<>
+          <Button variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button>
+          <Button variant="cta" onClick={() => setModalOpen(false)}>Create key</Button>
+        </>}>
+        <Input label="Key label" placeholder="e.g. CI pipeline" />
+      </Modal>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
+</script>
+</body>
+</html>

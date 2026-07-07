@@ -1,0 +1,34 @@
+/* Admin Console — Typography tokens
+   Single family (Plus Jakarta Sans). The admin console is a dense, compact UI:
+   most body copy is 12–14px, headers 18–20px, page-hero login text ~38px.
+   Values lifted verbatim from the source components. */
+
+:root {
+  --font-sans:
+    "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+
+  /* Weights actually used in the product */
+  --fw-normal: 400;   /* @kind font */
+  --fw-medium: 500;   /* @kind font */
+  --fw-semibold: 600; /* @kind font */
+  --fw-bold: 700;     /* @kind font */
+
+  /* Type scale (px) — named by usage in the admin console */
+  --fs-hero: 38px;       /* login welcome heading */
+  --fs-h3: 20px;         /* modal title (text-xl) */
+  --fs-h4: 18px;         /* page section header (text-lg) */
+  --fs-base: 16px;       /* text-base */
+  --fs-sm: 14px;         /* form labels, body (text-sm) */
+  --fs-xs: 12px;         /* table cells, buttons, hints (text-xs) */
+  --fs-2xs: 10px;        /* micro labels */
+
+  --lh-tight: 1.1;       /* @kind other */
+  --lh-snug: 1.35;       /* @kind other */
+  --lh-normal: 1.5;      /* @kind other */
+
+  /* Table headers are uppercase + bold in the admin console */
+  --tracking-caps: 0.02em;
+}

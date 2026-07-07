@@ -1,0 +1,25 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Surfaces & Neutrals" subtitle="App background, panels, inputs, borders (dark theme)" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../styles.css" />
+<style>
+  body { margin: 0; background: var(--theme-bg-primary); font-family: var(--font-sans); }
+  .wrap { display: flex; gap: 10px; padding: 20px; }
+  .sw { flex: 1; height: 96px; border-radius: 8px; border: 1px solid rgba(255,255,255,.1); display: flex; flex-direction: column; justify-content: flex-end; padding: 8px; box-sizing: border-box; }
+  .name { font-size: 11px; font-weight: 700; color: #fff; }
+  .hex { font-size: 10px; color: rgba(255,255,255,.55); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="sw" style="background:#0e0f0f"><span class="name">bg / ink</span><span class="hex">#0E0F0F</span></div>
+  <div class="sw" style="background:#1b1b1e"><span class="name">surface</span><span class="hex">#1B1B1E</span></div>
+  <div class="sw" style="background:#27282a"><span class="name">input</span><span class="hex">#27282A</span></div>
+  <div class="sw" style="background:#2c2f36"><span class="name">secondary</span><span class="hex">#2C2F36</span></div>
+  <div class="sw" style="background:#3f3f42"><span class="name">modal border</span><span class="hex">#3F3F42</span></div>
+  <div class="sw" style="background:#4e5153"><span class="name">outline</span><span class="hex">#4E5153</span></div>
+</div>
+</body>
+</html>

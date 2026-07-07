@@ -1,0 +1,35 @@
+<!-- @dsCard group="Colors" viewport="700x160" name="Status & Badges" subtitle="Event-log tones — info, success, warn, danger" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../styles.css" />
+<style>
+  body { margin: 0; background: var(--theme-bg-secondary); font-family: var(--font-sans); }
+  .wrap { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .row { display: flex; gap: 12px; align-items: center; }
+  .pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500; }
+  .sw { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .bar { height: 40px; border-radius: 8px; }
+  .cap { font-size: 10px; color: var(--theme-text-secondary); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+    <span class="pill" style="background:var(--theme-badge-info-bg);color:var(--theme-badge-info-text)">info</span>
+    <span class="pill" style="background:var(--theme-badge-success-bg);color:var(--theme-badge-success-text)">success</span>
+    <span class="pill" style="background:var(--theme-badge-warn-bg);color:var(--theme-badge-warn-text)">warn</span>
+    <span class="pill" style="background:var(--theme-badge-danger-bg);color:var(--theme-badge-danger-text)">danger</span>
+  </div>
+  <div class="row">
+    <div class="sw"><div class="bar" style="background:#f04438"></div><span class="cap">danger #F04438</span></div>
+    <div class="sw"><div class="bar" style="background:#b42318"></div><span class="cap">error #B42318</span></div>
+    <div class="sw"><div class="bar" style="background:#854708"></div><span class="cap">warn #854708</span></div>
+    <div class="sw"><div class="bar" style="background:#05603a"></div><span class="cap">success #05603A</span></div>
+    <div class="sw"><div class="bar" style="background:#4a1fb8"></div><span class="cap">purple #4A1FB8</span></div>
+    <div class="sw"><div class="bar" style="background:#9e165f"></div><span class="cap">magenta #9E165F</span></div>
+  </div>
+</div>
+</body>
+</html>

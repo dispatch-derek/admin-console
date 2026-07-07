@@ -1,0 +1,35 @@
+<!-- @dsCard group="Spacing" viewport="700x170" name="Radius & Elevation" subtitle="Corner radii and the subtle shadow system" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../styles.css" />
+<style>
+  body { margin: 0; background: var(--theme-bg-secondary); font-family: var(--font-sans); color: #fff; }
+  .wrap { padding: 22px; display: flex; gap: 26px; align-items: center; }
+  .grp { display: flex; gap: 16px; }
+  .u { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .box { width: 60px; height: 60px; background: var(--theme-bg-chat-input); border: 1px solid var(--theme-modal-border); }
+  .sh { width: 60px; height: 60px; background: var(--theme-bg-chat-input); border-radius: 8px; }
+  .lab { font-size: 10px; color: var(--theme-text-secondary); }
+  .div { width: 1px; height: 80px; background: var(--theme-modal-border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="grp">
+    <div class="u"><div class="box" style="border-radius:6px"></div><span class="lab">xs · 6</span></div>
+    <div class="u"><div class="box" style="border-radius:8px"></div><span class="lab">sm · 8</span></div>
+    <div class="u"><div class="box" style="border-radius:12px"></div><span class="lab">md · 12</span></div>
+    <div class="u"><div class="box" style="border-radius:16px"></div><span class="lab">lg · 16</span></div>
+    <div class="u"><div class="box" style="border-radius:9999px"></div><span class="lab">full</span></div>
+  </div>
+  <div class="div"></div>
+  <div class="grp">
+    <div class="u"><div class="sh" style="box-shadow:0 1px 2px rgba(0,0,0,.25)"></div><span class="lab">sm</span></div>
+    <div class="u"><div class="sh" style="box-shadow:0 2px 8px rgba(0,0,0,.3)"></div><span class="lab">card</span></div>
+    <div class="u"><div class="sh" style="box-shadow:0 8px 32px rgba(0,0,0,.5)"></div><span class="lab">modal</span></div>
+  </div>
+</div>
+</body>
+</html>

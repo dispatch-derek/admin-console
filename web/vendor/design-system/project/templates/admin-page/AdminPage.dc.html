@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="Admin Page" description="Admin Console page — sidebar shell, page header, and data table" -->
+<helmet>
+  <script src="./ds-base.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+  </style>
+</helmet>
+
+<div style="display:flex; height:100vh; background:var(--theme-bg-container); font-family:var(--font-sans);">
+
+  <!-- Sidebar -->
+  <aside style="width:252px; flex-shrink:0; height:100%; display:flex; flex-direction:column; padding:18px; background:var(--theme-bg-sidebar);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <span style="font-size:16px; font-weight:700; letter-spacing:-0.01em; color:#fff;">Admin Console</span>
+      <span style="display:inline-flex; padding:8px; border-radius:9999px; color:#fff; background:var(--theme-action-menu-bg);"><i class="ph ph-house" style="font-size:16px;"></i></span>
+    </div>
+    <div style="height:1px; background:var(--theme-sidebar-border); margin:10px 0 14px;"></div>
+    <span style="font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--theme-text-secondary); padding:0 12px 8px;">Admin</span>
+    <nav style="display:flex; flex-direction:column; gap:4px;">
+      <a style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border-radius:6px; background:var(--theme-sidebar-item-selected); color:#fff; font-size:14px; font-weight:600;"><i class="ph ph-users-three" style="font-size:18px;"></i>Users</a>
+      <a style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border-radius:6px; color:#fff; font-size:14px; font-weight:500;"><i class="ph ph-squares-four" style="font-size:18px;"></i>Workspaces</a>
+      <a style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border-radius:6px; color:#fff; font-size:14px; font-weight:500;"><i class="ph ph-envelope-simple" style="font-size:18px;"></i>Invitations</a>
+      <a style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border-radius:6px; color:#fff; font-size:14px; font-weight:500;"><i class="ph ph-list-magnifying-glass" style="font-size:18px;"></i>Event Log</a>
+    </nav>
+    <div style="margin-top:auto; display:flex; align-items:center; gap:10px; padding:10px 12px;">
+      <div style="width:30px; height:30px; border-radius:9999px; background:var(--gradient-selected); display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700;">A</div>
+      <div style="display:flex; flex-direction:column;">
+        <span style="font-size:12px; font-weight:600; color:#fff;">admin</span>
+        <span style="font-size:10px; color:var(--theme-text-secondary);">Administrator</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Panel -->
+  <main style="flex:1; margin:16px 16px 16px 2px; border-radius:16px; background:var(--theme-bg-secondary); overflow-y:auto;">
+    <div style="padding:24px 50px 24px 24px;">
+
+      <!-- Page header -->
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding-bottom:24px; border-bottom:2px solid var(--theme-sidebar-border);">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <p style="margin:0; font-size:18px; line-height:24px; font-weight:700; color:var(--theme-text-primary);">Users</p>
+          <p style="margin:0; max-width:760px; font-size:12px; line-height:18px; color:var(--theme-text-secondary);">These are all the accounts which have an account on this instance. Removing an account will instantly remove their access to this instance.</p>
+        </div>
+        <x-import component-from-global-scope="AnythingLLMAdminDesignSystem_4c97b8.Button" variant="cta" hint-size="110px,34px">Add user</x-import>
+      </div>
+
+      <!-- Table -->
+      <table style="width:100%; margin-top:24px; text-align:left; border-collapse:collapse; font-family:var(--font-sans); font-size:12px;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--theme-sidebar-border);">
+            <th style="padding:12px 24px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; color:var(--theme-text-secondary);">Username</th>
+            <th style="padding:12px 24px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; color:var(--theme-text-secondary);">Role</th>
+            <th style="padding:12px 24px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; color:var(--theme-text-secondary);">Date Added</th>
+            <th style="padding:12px 24px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="height:40px; color:rgba(255,255,255,.8); font-weight:500; border-bottom:1px solid var(--theme-sidebar-border);">
+            <th scope="row" style="padding:0 24px; white-space:nowrap;">admin</th>
+            <td style="padding:0 24px;"><x-import component-from-global-scope="AnythingLLMAdminDesignSystem_4c97b8.Badge" tone="info" hint-size="60px,22px">Admin</x-import></td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Jan 2, 2025</td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Edit</td>
+          </tr>
+          <tr style="height:40px; color:rgba(255,255,255,.8); font-weight:500; border-bottom:1px solid var(--theme-sidebar-border);">
+            <th scope="row" style="padding:0 24px; white-space:nowrap;">sarah.chen</th>
+            <td style="padding:0 24px;"><x-import component-from-global-scope="AnythingLLMAdminDesignSystem_4c97b8.Badge" tone="success" hint-size="70px,22px">Manager</x-import></td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Feb 14, 2025</td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Edit</td>
+          </tr>
+          <tr style="height:40px; color:rgba(255,255,255,.8); font-weight:500; border-bottom:1px solid var(--theme-sidebar-border);">
+            <th scope="row" style="padding:0 24px; white-space:nowrap;">devon.k</th>
+            <td style="padding:0 24px;"><x-import component-from-global-scope="AnythingLLMAdminDesignSystem_4c97b8.Badge" tone="neutral" hint-size="60px,22px">Default</x-import></td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Mar 3, 2025</td>
+            <td style="padding:0 24px; color:var(--theme-text-secondary);">Edit</td>
+          </tr>
+        </tbody>
+      </table>
+
+    </div>
+  </main>
+</div>
+
+</x-dc>
+</body>
+</html>

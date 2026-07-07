@@ -1,0 +1,39 @@
+<!-- @dsCard group="Components" viewport="700x430" name="Modal Dialog" subtitle="Bordered dialog with header, form body and footer actions" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  body { margin: 0; background: var(--theme-bg-container); font-family: var(--font-sans); }
+  /* Card preview: render modal inline (not fixed) so it sits in the frame */
+  #root :first-child { position: static !important; background: transparent !important; padding: 0 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { Modal, Input, Select, Button } = window.AnythingLLMAdminDesignSystem_4c97b8;
+  function Demo() {
+    return (
+      <Modal title="Add user to instance" onClose={() => {}}
+        footer={<>
+          <Button variant="ghost">Cancel</Button>
+          <Button variant="solid">Add user</Button>
+        </>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <Input label="Username" placeholder="User's username" hint="Must be 3–100 characters" />
+          <Select label="Role" options={[{value:"default",label:"Default"},{value:"manager",label:"Manager"},{value:"admin",label:"Administrator"}]} />
+        </div>
+      </Modal>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+</script>
+</body>
+</html>
