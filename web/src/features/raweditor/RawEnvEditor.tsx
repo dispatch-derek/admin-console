@@ -83,7 +83,6 @@ export function RawEnvEditor() {
 
   return (
     <div className="raw-editor">
-      <h2>Raw environment editor</h2>
       <AdvancedModeGate advanced={advanced} onChange={setAdvanced} />
       <ErrorBanner message={loadError} />
       {result && <p className="success">{result}</p>}

@@ -56,7 +56,6 @@ export function ChatOversight() {
 
   return (
     <section className="chat-oversight">
-      <h2>Chat oversight</h2>
       <ErrorBanner message={error} />
 
       <label className="field">
