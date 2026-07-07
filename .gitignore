@@ -6,3 +6,6 @@ web/.env
 bff/data/
 .DS_Store
 *:Zone.Identifier
+
+# Claude Code: track project-level agents/commands, ignore machine-local settings
+.claude/settings.local.json
