@@ -83,7 +83,6 @@ export function MembershipPanel() {
 
   return (
     <section className="membership-panel">
-      <h2>Workspace membership</h2>
       <ErrorBanner message={error} />
 
       <label className="field">

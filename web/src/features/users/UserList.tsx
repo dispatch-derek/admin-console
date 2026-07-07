@@ -85,7 +85,6 @@ export function UserList() {
 
   return (
     <section className="user-list">
-      <h2>Users</h2>
       <ErrorBanner message={error} />
 
       <form className="create-user" onSubmit={create}>

@@ -53,9 +53,8 @@ export function WorkspaceList() {
     <div className="workspaces-view">
       <div className="list-column">
         <div className="list-header">
-          <h2>Workspaces</h2>
-          <button type="button" onClick={() => setCreating(true)}>
-            New
+          <button type="button" className="primary-button" onClick={() => setCreating(true)}>
+            New workspace
           </button>
         </div>
         <ErrorBanner message={error} />

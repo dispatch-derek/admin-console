@@ -41,7 +41,6 @@ export function DiagnosticsPage() {
 
   return (
     <div className="diagnostics-page">
-      <h2>Diagnostics</h2>
       <ErrorBanner message={error} />
 
       <section>

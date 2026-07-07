@@ -194,6 +194,45 @@ Live system flags observed: `RequiresAuth`, `AuthToken`, `JWTSecret`, `MultiUser
 > never the plaintext. The admin UI must reflect "set / not set" state and allow overwrite without
 > displaying stored secrets.
 
+### 5.9 Settings visible in the native AnythingLLM UI with NO `/api/v1` equivalent
+
+Confirmed by reading the running instance's server source (`~/anything-llm/server/endpoints/`), not
+inferred: the developer API (`endpoints/api/`, API-key auth via `validApiKey`) is a strict subset of
+what the native AnythingLLM frontend can do. Everything else lives in session-cookie-authenticated
+route files (`system.js`, `telegram.js`, `embedManagement.js`, `scheduledJobs.js`, `communityHub.js`,
+`browserExtension.js`, `modelRouter.js`, `agentSkillWhitelist.js`, `mcpServers.js`, `memory.js`) that
+the admin console cannot reach, because the BFF only ever authenticates as the API key — it never
+holds a session-authenticated AnythingLLM user identity (REQ-021a boundary). `/api/v1/system` itself
+exposes exactly: `env-dump`, `system` (read), `vector-count`, `update-env`, `export-chats`,
+`remove-documents` — nothing more. Everything reachable through `update-env`'s 186 keys is already
+covered by the §7 settings catalog; the table below is everything that ISN'T:
+
+| Native settings page | Route(s) (session-auth only) | `/api/v1` equivalent |
+|---|---|---|
+| Enable multi-user mode | `/system/enable-multi-user` | none |
+| API Keys | `/system/api-keys`, `/system/generate-api-key`, `/system/api-key/:id` | none |
+| Default System Prompt | `/system/default-system-prompt` | none |
+| Branding (logo, app name, footer/support email) | `/system/logo`, `/system/upload-logo`, `/system/remove-logo`, `/system/is-default-logo`, `/system/custom-app-name`, `/system/footer-data`, `/system/support-email` | none |
+| System Prompt Variables | `/system/prompt-variables`, `/system/prompt-variables/:id` | none |
+| Slash command presets | `/system/slash-command-presets`, `/system/slash-command-presets/:slashCommandId` | none |
+| Event Logs | `/system/event-logs` | none (only `export-chats`/`env-dump` exist) |
+| Model Router (named routers + rules, full CRUD) | `/model-routers`, `/model-routers/:id`, `/model-routers/new`, `/model-routers/:id/rules/*` | none — v1 only *references* a router via `ModelRouterId`, never manages routers/rules |
+| Agent Skills enable/disable toggles (per-tool) | `/agent-skills/*/is-available`, `/agent-skills/*/toggle-enabled`-style routes | none — v1 only has the search-provider API keys (`Agent*ApiKey` in §5.5), not per-tool whitelisting |
+| Telegram channel | entire `telegram.js` | none |
+| Embeds (create/edit/delete chat-widget embeds) | entire `embedManagement.js` | `GET /v1/embed` only lists — no create/update/delete |
+| Scheduled Jobs | entire `scheduledJobs.js` | none |
+| Community Hub (trending/import/account link) | entire `communityHub.js` | none |
+| Browser Extension pairing | entire `browserExtension.js` | none |
+| MCP Servers | entire `mcpServers.js` | none |
+| Memory feature config | entire `memory.js` | none (the read-only `MemoryEnabled`/`MemoryAutoExtraction` flags in §5.8 are separately exposed via `GET /v1/system`) |
+| User/workspace profile picture upload | `/system/pfp/:id`, `/system/upload-pfp`, `/system/remove-pfp` | none — consistent with the existing decision that `WorkspaceSettings.avatar` is an existing-filename reference only (REQ-036c/121) |
+
+This is a hard boundary at the API layer, not an admin-console omission: none of the above can be
+added without either (a) the admin console holding a session-authenticated AnythingLLM identity
+(rejected — breaks the API-key-only custody model), or (b) AnythingLLM adding API-key-reachable
+routes for them upstream. Two of these (multi-user toggle, API-key listing) were already noted as
+non-goals in §4; this section is the exhaustive pass over the rest of the native settings sidebar.
+
 ## 6. Existing customer-app architecture to mirror
 
 - Two-package layout: `bff/` (Fastify + TypeScript, injects API key, port 3002) and `web/`

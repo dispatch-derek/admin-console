@@ -62,7 +62,6 @@ export function InviteList() {
 
   return (
     <section className="invite-list">
-      <h2>Invites</h2>
       <ErrorBanner message={error} />
 
       <div className="create-invite">
