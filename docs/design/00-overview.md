@@ -19,7 +19,7 @@ sibling docs:
 Two packages, mirroring `front-end-custom`:
 
 ```
-anythingllm-admin-console/
+admin-console/
   bff/    Fastify + TypeScript, port 3002   (the anti-corruption layer)
   web/    React + TypeScript + Vite, 5173   (speaks only /api/*)
 ```
