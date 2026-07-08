@@ -1,6 +1,7 @@
 # F-002: Customer-Wide Baseline System Prompt — Specification
 
-Status: Draft rev 4 — companion change for F-003 ruling REQ-F003-042 (fan-out honors per-workspace composition_mode); for implementation and QA review
+Status: Draft rev 7 — resolves spec-review `docs/spec-review-F002-rev6.md`; for implementation and QA review
+(rev 4 baseline: companion change for F-003 ruling REQ-F003-042 — fan-out honors per-workspace composition_mode)
 (rev 3 baseline: revised against `docs/spec-review-F002.md` and four human rulings A–D on REQ-F002-041/042/043/053/054)
 Feature brief (authoritative intent): `briefs/F-002-customer-system-prompt.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
@@ -146,16 +147,34 @@ drift.
   baseline text in effect at that apply. The same algorithm is used wherever this spec compares "by
   hash" (REQ-F002-023, REQ-F002-047). *Test:* two applies that write byte-identical composed prompts
   record identical `applied_composed_hash` values; a one-byte change produces a different digest.
-- REQ-F002-010d — **Shared store; F-003-owned `composition_mode` column (rev 4).** The
-  `workspace_baseline_state` row is **shared** across F-002 and F-003. F-002 owns the `remainder`
-  (REQ-F002-010) and the applied-hash bookkeeping; **F-003 adds and owns a `composition_mode` column**
-  on the same row (F-003 REQ-F003-013/043, one of `inherit | append`). F-002 does **not** define,
-  default, or write that column — it only **reads** it when present, to resolve the effective
-  per-workspace mode during the fan-out (REQ-F002-059). Because the column is additive and may be
-  absent (F-003 unbuilt) or unset for a given row, F-002 MUST tolerate its absence and fall back to the
-  operator-selected apply mode (REQ-F002-059). *Test:* F-002 code never issues a write that sets
-  `composition_mode`; the fan-out's read of the column is null-safe and, when the column/value is
-  absent, the apply behaves exactly as rev 3.
+- REQ-F002-010d — **Shared store; the `composition_mode` column (REVISED rev 5 — nullable-NULL
+  contract, resolves review R4-1/R4-N1/R4-5).** The `workspace_baseline_state` row is **shared** across
+  F-002 and F-003. The two features split the row by **read/write role**, not by exclusive ownership of
+  every value:
+  - F-002 is the **schema-definer** of `remainder` and the applied-hash bookkeeping
+    (`applied_composed_hash`, `applied_baseline_hash`, `applied_at`) (REQ-F002-010) and **writes** them
+    on every verified fan-out apply (REQ-F002-022). F-003's per-workspace editor **also writes**
+    `remainder` and the applied hashes on its own saves (F-003 REQ-F003-023 step 4, the single-model
+    reconciliation of F-003 REQ-F003-003) — so these are **co-written**, not F-002-exclusive. "Owns"
+    here means schema-definer plus a defined read/write split, NOT sole writer (resolves review R4-N1).
+  - **`composition_mode` is schema-defined and written by F-003**, and **read-only for F-002**. Per the
+    shared data-model contract with F-003 (revised in parallel to match), the column is:
+    - **nullable TEXT, `DEFAULT NULL`** — NOT `DEFAULT 'append'`. A NULL (or absent) value is the real,
+      distinguishable state **"F-003 has not tracked this workspace."** F-003 writes a non-null value
+      **only** when it tracks/derives a workspace (on the first editor save or explicit track), **never**
+      as a blanket migration default. An `ALTER TABLE ADD COLUMN composition_mode TEXT` (no SQL default)
+      therefore leaves every pre-existing F-002 row **NULL**, and those rows keep resolving to the
+      operator-selected apply mode (REQ-F002-059) — byte-identical to rev 3.
+    - Allowed non-null values are **exactly `'append' | 'inherit'`** (F-003 REQ-F003-013/016).
+      `'override'` is **not** valid (F-003 dropped it, REQ-F003-050), so a stored value can never select
+      F-002's destructive `overwrite` branch (REQ-F002-059).
+  - F-002 **never** writes, defines a default for, or normalizes `composition_mode`; it only **reads**
+    it null-safely to resolve the effective per-workspace mode during the fan-out (REQ-F002-059). F-003
+    owns validating/normalizing the column (rejecting or coercing out-of-domain values); F-002 defends
+    against an unrecognized stored value by treating it as NULL (REQ-F002-059, resolves review R4-5).
+  *Test:* F-002 code never issues a write that sets, defaults, or normalizes `composition_mode`; the
+  fan-out's read of the column is null-safe; a row whose `composition_mode` is NULL (or a column absent
+  because F-003 is unbuilt) behaves exactly as rev 3 (REQ-F002-059 test (a)).
 - REQ-F002-051 — **Orphaned-state cleanup (resolves review M4).** Status and preview enumerate live
   workspaces via the product list route (parent REQ-030); a `workspace_baseline_state` row whose
   `workspace_id` no longer resolves to a live workspace is an orphan. On `admin.workspace.deleted`
@@ -178,13 +197,17 @@ first-class parameter of preview and apply, is part of the confirmed snapshot bo
 and the UI (§8). `prepend` remains the recommended default; `overwrite` is a §8 danger-class operation
 because it destroys per-workspace prompts (REQ-F002-056, §8 REQ-F002-031).
 
-**Rev 4 refinement (companion to F-003 ruling REQ-F003-042):** the operator-selected per-apply `mode`
+**Rev 4/5 refinement (companion to F-003 ruling REQ-F003-042):** the operator-selected per-apply `mode`
 is no longer applied *uniformly* to every workspace. Per the 2026-07-07 human ruling on sibling spec
 F-003 (REQ-F003-042), the **per-workspace, persistent `composition_mode`** stored on the shared
-`workspace_baseline_state` row (owned by F-003, REQ-F002-010d/REQ-F003-013) is **authoritative** for a
-workspace that has one; the operator-selected apply `mode` becomes the **default** applied only to
-workspaces with no stored per-workspace mode. The resolution rule and its backward-compatibility (F-002
-ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
+`workspace_baseline_state` row (schema-defined and written by F-003, read-only for F-002,
+REQ-F002-010d/REQ-F003-013) is **authoritative** for a workspace that **has a non-null value**; the
+operator-selected apply `mode` becomes the **default** applied only to workspaces whose stored
+`composition_mode` is **NULL/absent** (F-003 has not tracked them). Backward compatibility rests on the
+**NULL (untracked)** state, not on the column being absent (rev 5, resolves review R4-1): F-002 is
+byte-identical to rev 3 for every workspace F-003 has not tracked (mode NULL), and a workspace's
+F-003-tracked mode governs a customer-wide apply the moment F-003 tracks it. The resolution rule is
+specified in **REQ-F002-059**.
 
 - REQ-F002-055 — **Operator-selectable composition mode (Ruling A machinery; REVISED rev 4 — now the
   DEFAULT mode, not the uniform mode, per F-003 ruling REQ-F003-042).** Preview and apply
@@ -226,20 +249,25 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
     **no `composition_mode` column at all** (F-003 not yet built, REQ-F002-010d) OR a given workspace's
     row has **no stored `composition_mode`** (a workspace never touched by F-003, or a `never-applied`
     workspace with no row at all), the effective mode for that workspace **is** the operator-selected
-    apply `mode` — behavior is **byte-for-byte identical to rev 3**. F-002 therefore ships **before**
-    F-003 with no behavior change whatsoever; the per-workspace honoring engages only once F-003
-    persists modes on the shared row. This change is fully backward-compatible.
+    apply `mode` — behavior is **byte-for-byte identical to rev 3**. This backward-compat state is the
+    **NULL (untracked) mode**, a real and distinguishable value (REQ-F002-010d, resolves review R4-1),
+    not merely the column being absent. F-002 therefore ships **before** F-003 with no behavior change
+    whatsoever; the per-workspace honoring engages for a given workspace only once F-003 persists a
+    **non-null** `composition_mode` on its shared row. This change is fully backward-compatible.
   - **The operator-selected `mode` remains a real, bound parameter** (REQ-F002-055): it is the default
     for un-stored workspaces, it is still carried in the request and bound into the `confirmToken`
     snapshot (REQ-F002-020/047), and selecting `overwrite` (a §8-destructive selection, §8
     REQ-F002-031) still governs every un-stored workspace and still triggers the danger gate. It no
     longer *overrides* a workspace that carries its own stored mode.
-  - **Snapshot binding & mode-change divergence.** The **resolved effective mode per workspace** is
-    captured into the previewed snapshot bound by `confirmToken` (REQ-F002-020/047), so the write a
-    workspace receives is exactly the one previewed. A workspace whose stored `composition_mode`
-    **changes** (via an out-of-band F-003 save) between preview and apply is treated as a per-workspace
-    **divergence** (REQ-F002-047): its write is withheld and it is reported **`diverged`**, and the
-    apply proceeds for the remaining workspaces (no whole-apply rejection).
+  - **Snapshot binding & mode-change divergence.** The **resolved effective mode per workspace** (the
+    `prepend` / `baseline-only` / `overwrite` / `fill` branch) is captured into the previewed snapshot as
+    `BaselinePreviewItem.resolvedMode`, bound by `confirmToken` (REQ-F002-020/047), so the write a
+    workspace receives is exactly the one previewed. A stored-`composition_mode` change (via an
+    out-of-band F-003 save) between preview and apply is per-workspace **divergence only when it changes
+    the resolved branch** (compared in F-002 vocabulary, not the raw F-003 string — REQ-F002-047,
+    resolves review R4-3): such a workspace's write is withheld and it is reported **`diverged`** while
+    the apply proceeds for the rest (no whole-apply rejection). A mode change that resolves to the same
+    branch (a byte-identical write) is not divergent.
   *Test:* (a) with F-003 absent (no `composition_mode` column) an apply behaves identically to rev 3 —
   every workspace is composed under the operator-selected `mode`. (b) **A workspace whose stored
   `composition_mode` is `append` keeps its `append`/`prepend` composition after a customer-wide apply
@@ -249,7 +277,10 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   apply uses the operator-selected `overwrite` and is replaced by `B`. (d) A workspace with stored
   `composition_mode = 'inherit'` receives effective `B` (baseline alone) with its stored `remainder`
   retained. (e) Changing a workspace's stored `composition_mode` after preview marks that workspace
-  `diverged` with no write while the rest apply.
+  `diverged` with no write while the rest apply. (f) **A workspace bearing an out-of-domain stored
+  `composition_mode` (e.g. `'override'`, a value F-003 REQ-F003-052 would never write) resolves via the
+  NULL fallback (REQ-F002-010d) to the operator-selected mode and never reaches the destructive
+  `overwrite` branch through the stored-mode path** (resolves review R4-5/R5-N1).
 - REQ-F002-011 — **Composition function (`prepend` mode; the recommended default).** For a baseline
   `B`, a workspace remainder `R`, and `mode = 'prepend'`, the composed prompt is defined over the full
   domain including a cleared/undefined baseline (resolves review B2):
@@ -323,7 +354,12 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   across baseline changes, so per-workspace content is not lost when only the baseline changes. In
   `overwrite` mode re-sync writes `compose(newBaseline, R, 'overwrite') = newBaseline` (the stored
   remainder is already empty per REQ-F002-056). In `fill` mode a re-sync writes only still-empty
-  workspaces and skips the rest (REQ-F002-057). *Test:* changing the baseline and re-syncing in
+  workspaces and skips the rest (REQ-F002-057). **Per-workspace resolution applies here too (rev 5,
+  resolves review R4-N2):** the mode named in this requirement is the *effective* per-workspace mode of
+  REQ-F002-059, not a uniform operator mode — a re-sync honors each workspace's stored `composition_mode`
+  when present (an `append`/`inherit` workspace re-syncs under `prepend`/`baseline-only` even when the
+  operator selected `overwrite`), falling back to the operator mode only for un-stored workspaces.
+  *Test:* changing the baseline and re-syncing in
   `prepend` mode updates the baseline segment while leaving each workspace's remainder segment
   byte-identical; the same re-sync in `overwrite` mode writes the new baseline alone.
 - REQ-F002-014 — **No silent remainder mutation.** The console MUST NOT alter a stored remainder as a
@@ -395,6 +431,15 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
     carries BOTH candidates — `composedIfPreserve = compose(B, currentLivePrompt, 'prepend')` and
     `composedIfDiscard = compose(B, storedRemainder, 'prepend')` (REQ-F002-025/050) — resolving the
     ordering paradox without a per-choice re-fetch.
+  - **`baseline-only`** (a workspace whose stored `composition_mode = 'inherit'`, REQ-F002-059;
+    resolves review R4-4) — the item carries a **single** `composedPrompt = B` (baseline alone; the
+    stored `remainder` is retained-but-suppressed, never emptied) and `resolvedMode = 'baseline-only'`.
+    This branch is **exempt from the override preserve/discard machinery**: even when the workspace is
+    `overridden`, it carries **no** `composedIfPreserve`/`composedIfDiscard` candidates and requires
+    **no** `overrides` resolution — the write is `B` regardless, its out-of-band content being
+    intentionally discarded by F-003's own gated `inherit` decision (F-003 REQ-F003-025(a)). The diff
+    still shows current-live-vs-`B` so the operator sees what `inherit` drops. It is NOT `skipped` for
+    lack of a resolution (contrast REQ-F002-050).
   - **`overwrite`** — every non-empty-diff item carries a single `composedPrompt = B` and its diff
     shows the **full replacement**: the current live prompt (what will be **destroyed**) versus `B`.
     There are no preserve/discard candidates (the field is replaced, not composed); the preview
@@ -412,9 +457,12 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   `overwrite` mode items show current-vs-`B` with a destruction indicator; in `fill` mode non-empty
   workspaces are marked skipped.
 - REQ-F002-020 — The preview response carries a server-issued, opaque **binding `confirmToken`** (a
-  nonce) that binds a subsequent apply to this previewed snapshot — the **`mode`** (REQ-F002-055), the
-  target set, the baseline text, each workspace's `currentPromptHash`, and, for overridden workspaces
-  (only meaningful in `prepend` mode), both resolution candidates (REQ-F002-021/047/050). It is distinct
+  nonce) that binds a subsequent apply to this previewed snapshot — the operator-selected **`mode`**
+  (REQ-F002-055), the target set, the baseline text, each workspace's `currentPromptHash`, **each
+  workspace's resolved effective mode** (the per-workspace branch actually previewed — `prepend`,
+  `baseline-only`, `overwrite`, or `fill` — resolved per REQ-F002-059; the referent for the mode-change
+  divergence check of REQ-F002-047, resolves review R4-2), and, for overridden workspaces
+  (only meaningful in the `prepend` branch), both resolution candidates (REQ-F002-021/047/050). It is distinct
   from the human-typed danger phrase (REQ-F002-048); the
   response also carries the human-typeable `confirmationPhrase` to display for typing. An apply
   presenting an **absent or malformed** token is rejected **400**; a **well-formed but
@@ -490,11 +538,19 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   the previewed diff in all three modes): in `prepend`/`overwrite` a changed live prompt means the
   previewed replacement/destruction no longer matches reality → `diverged`; in `fill` a workspace
   previewed as empty-and-writable that is now non-empty → `diverged` (not silently filled), while a
-  workspace previewed as non-empty-and-skipped stays `skipped`. **Per rev 4 (REQ-F002-059):** a change
-  to a workspace's stored `composition_mode` (an out-of-band F-003 save) between preview and apply is
-  likewise per-workspace divergence — the resolved effective mode bound into the snapshot no longer
-  matches the stored mode, so that workspace is reported `diverged` (no write) and the apply proceeds
-  for the rest; it does NOT invalidate the whole-apply token. This reconciles REQ-F002-021
+  workspace previewed as non-empty-and-skipped stays `skipped`. **Per rev 4/5 (REQ-F002-059; comparison
+  basis pinned per review R4-3):** a change to a workspace's stored `composition_mode` (an out-of-band
+  F-003 save) between preview and apply is likewise per-workspace divergence, detected in a **single
+  vocabulary** — F-002's resolved effective branch, NOT the raw F-003 mode string. At apply the console
+  recomputes the workspace's **resolved effective mode** (REQ-F002-059) from its *current* stored
+  `composition_mode` and the operator default, and compares it to the **`resolvedMode`** captured in the
+  snapshot (REQ-F002-020). Divergence is declared **iff the resolved branch differs** (e.g.
+  `prepend`→`baseline-only`, or `baseline-only`→`prepend`); the workspace is then reported `diverged`
+  (no write) and the apply proceeds for the rest. A stored-mode change that maps to the **same** resolved
+  branch as the snapshot (e.g. an operator-default `prepend` row that gains an explicit
+  `composition_mode = 'append'`, which also resolves to `prepend`) is **NOT** divergent — the write is
+  byte-identical to the previewed one, so it proceeds normally. This never invalidates the whole-apply
+  token. This reconciles REQ-F002-021
   (whole-apply token rejection) with REQ-F002-040 (per-item divergence). *Test:* changing the baseline
   OR the `mode` after preview makes the apply 409 with zero writes; editing a single workspace
   out-of-band after preview leaves the token valid, marks that workspace's item `diverged` with no
@@ -546,17 +602,35 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
 
 ### §6.4 Drift & override visibility; new-workspace inheritance
 
-- REQ-F002-023 — **Sync-state classification.** For each workspace the console computes a sync state
-  from a fresh engine read of the live prompt `P`, the current baseline `B`, and the stored state
-  (`remainder`, `applied_composed_hash`):
+- REQ-F002-023 — **Sync-state classification (mode-aware; resolves review R5-1).** For each workspace the
+  console computes a sync state from a fresh engine read of the live prompt `P`, the current baseline `B`,
+  and the stored state (`remainder`, `applied_composed_hash`, `composition_mode`). Classification compares
+  `P` against the workspace's stored-mode **resolved effective composition** — the value the console's own
+  fan-out records as in-sync for that workspace (REQ-F002-059) — via `effective(B, remainder, classifyMode)`,
+  **NOT** the mode-blind `compose(B, remainder)`:
+  - `effective(B, remainder, 'baseline-only') = B` (a stored `inherit` workspace: baseline alone, even
+    when a non-empty `remainder` is retained-but-suppressed);
+  - `effective(B, remainder, 'prepend') = compose(B, remainder, 'prepend')`;
+  - an empty `remainder` collapses every branch to `B`.
+  `classifyMode` is derived **only from the stored `composition_mode`** — `inherit`→`baseline-only`,
+  `append`→`prepend` — and a **NULL** (untracked) stored mode is classified as `prepend`. This is a
+  *mode-agnostic reconstruction*, not the operator-selected apply mode: a NULL row last written under an
+  operator `overwrite`/`fill` carries an **empty** `remainder`, so `effective(B, "", 'prepend') = B`
+  equals exactly what that destructive/fill apply wrote — the classification is therefore outcome-correct
+  without needing to know which operator mode last touched an untracked row. (A workspace's own stored
+  mode never selects `overwrite`, REQ-F002-056.) States:
   - `never-applied` — no `workspace_baseline_state` row (the console has never applied here);
-  - `synced` — `P == compose(B, remainder)`;
+  - `synced` — `P == effective(B, remainder, resolvedMode)`;
   - `stale` — `P` matches the last-applied composition (`hash(P) == applied_composed_hash`) but the
-    baseline has since changed (so `compose(B, remainder) != P`) — needs re-sync (§6.5);
+    baseline has since changed (so `effective(B, remainder, resolvedMode) != P`) — needs re-sync (§6.5);
   - `overridden` — `P` matches neither (edited out-of-band since last apply).
+  This matches F-003's own classifier (REQ-F003-027, which uses `effective(B, L, rel)`), so a workspace the
+  console has just correctly synced under `inherit`/`baseline-only` — live `P = B` while a non-empty
+  `remainder = R` is retained-but-suppressed — is reported **`synced`**, not `overridden`.
   *Test:* a workspace with an out-of-band prompt edit reports `overridden`; a workspace unchanged
   since apply but whose baseline was edited afterward reports `stale`; an untouched, current one
-  reports `synced`; a never-touched one reports `never-applied`.
+  reports `synced`; a never-touched one reports `never-applied`; **a `baseline-only`/`inherit` workspace
+  carrying a non-empty retained remainder whose live prompt equals `B` reports `synced`, not `overridden`.**
 - REQ-F002-024 — **Drift visibility surface.** The console exposes drift/override status across
   workspaces via `GET /api/baseline-prompt/status` (§7) and presents it so the operator can see, at a
   glance, which workspaces carry the current baseline versus diverge — so the "single source of truth"
@@ -564,17 +638,25 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   REQ-F002-023 and MUST NOT encode them by color alone (accessibility, REQ-F002-033). *Test:* the
   status view lists every workspace with its sync state; the four states are visually distinguishable
   without relying solely on color.
-- REQ-F002-025 — **Resolving an override.** For an `overridden` workspace, the console MUST NOT
-  silently clobber the out-of-band prompt on the next apply. Re-applying the baseline to an
-  `overridden` workspace requires the operator to make a deliberate choice, surfaced in the preview
-  diff as two candidates (REQ-F002-019): either (a) **preserve** — treat the current out-of-band prompt
-  as the new remainder (beneath the baseline), or (b) **discard** — recompose from the stored
+- REQ-F002-025 — **Resolving an override (`prepend`-resolved workspaces; baseline-only is gated
+  differently — resolves review R6-1).** For an `overridden` workspace whose resolved effective mode is
+  `prepend`, the console MUST NOT silently clobber the out-of-band prompt on the next apply. Re-applying
+  the baseline to such a workspace requires the operator to make a deliberate choice, surfaced in the
+  preview diff as two candidates (REQ-F002-019): either (a) **preserve** — treat the current out-of-band
+  prompt as the new remainder (beneath the baseline), or (b) **discard** — recompose from the stored
   remainder. On a preserve resolution the out-of-band prompt becomes the stored remainder (the explicit
   remainder re-derivation permitted by REQ-F002-014). The chosen action is reflected in the
   per-workspace preview item and confirmed under the apply danger gate (REQ-F002-021); resolutions are
-  bound to the `confirmToken` and their absence is defined by REQ-F002-050. *Test:* applying to an
-  overridden workspace does not proceed without an explicit preserve-or-discard choice; choosing
-  "preserve" makes the out-of-band text the new remainder.
+  bound to the `confirmToken` and their absence is defined by REQ-F002-050. **A `baseline-only` (stored
+  `inherit`) `overridden` workspace is deliberately EXEMPT from this two-candidate choice** (REQ-F002-050/019):
+  it carries no preserve/discard candidates and is written `B` regardless — its no-silent-clobber guarantee
+  is met **not** by a per-workspace choice but by surfacing its content discard in the §8 **destructive
+  blast-radius count and danger gate** (REQ-F002-031(b)), so the operator still confirms the destruction
+  before it happens. *Test:* applying to a `prepend`-resolved overridden workspace does not proceed without
+  an explicit preserve-or-discard choice, and choosing "preserve" makes the out-of-band text the new
+  remainder; applying to a `baseline-only`/`inherit` overridden workspace requires **no** per-workspace
+  resolution (an `overrides` entry naming it is 400, REQ-F002-050) yet still counts it in the destructive
+  blast radius (REQ-F002-031) so the danger gate names the discard.
 - REQ-F002-026 — **New-workspace inheritance is surfaced, not automatic.** A workspace created after
   the baseline exists appears as `never-applied` in the status surface (REQ-F002-024) and is included
   in the next preview/apply target set. The console does NOT auto-write the baseline on workspace
@@ -592,7 +674,12 @@ ships before F-003 with identical behavior) are specified in **REQ-F002-059**.
   reject (**409**) an apply whose `overrides` reference a workspace that was NOT `overridden` in the
   previewed snapshot. An `overridden` workspace in the target set that has **no** resolution in
   `overrides` is NOT written — it is reported `skipped` with an explanatory `message` — and the apply
-  PROCEEDS for the rest (no whole-apply rejection). *Test:* in `prepend` mode an apply omitting a
+  PROCEEDS for the rest (no whole-apply rejection). **Baseline-only exemption (stored `inherit`,
+  REQ-F002-059; resolves review R4-4):** a workspace whose resolved effective mode is `baseline-only`
+  is **outside** this preserve/discard contract even when `overridden` — it carries no resolution
+  candidates, requires no `overrides` entry, and is written `B` (never `skipped` for a missing
+  resolution). An `overrides` entry naming a `baseline-only` workspace is rejected **400** (there is no
+  choice to resolve), consistent with the `overwrite`/`fill` rejection above. *Test:* in `prepend` mode an apply omitting a
   resolution for an overridden target skips just that workspace and applies the others; an apply whose
   `overrides` name a non-overridden workspace is rejected 409; in `overwrite`/`fill` mode a non-empty
   `overrides` is rejected 400.
@@ -640,18 +727,24 @@ export interface BaselineStatusView {
   baseline: BaselinePrompt;
   workspaces: BaselineWorkspaceStatus[];
   counts: Record<BaselineSyncState, number>;
-  nextCursor: string | null;        // pagination (REQ-F002-049); null = last page
 }
 
 export interface BaselinePreviewItem {
   workspaceId: string;
   displayName: string;
   syncState: BaselineSyncState;
+  resolvedMode: 'prepend' | 'baseline-only' | 'overwrite' | 'fill';
+                                    // per-workspace resolved effective branch, bound by confirmToken
+                                    // (REQ-F002-059/020); referent of the mode-change divergence check
+                                    // (REQ-F002-047). 'baseline-only' = stored inherit (REQ-F002-059).
   currentPrompt: string | null;     // live engine prompt (for the diff)
   currentPromptHash: string;        // snapshot hash bound by confirmToken (REQ-F002-047)
-  composedPrompt: string | null;    // single candidate; null for overridden items (see below)
-  // For overridden items the composed value depends on the operator's choice, so BOTH
-  // candidates are supplied instead of composedPrompt (REQ-F002-019/025/050):
+  composedPrompt: string | null;    // single candidate; for 'baseline-only' this is B (REQ-F002-019);
+                                    // null only for an overridden prepend item (candidates below)
+  // For an OVERRIDDEN item resolved to the 'prepend' branch the composed value depends on the
+  // operator's choice, so BOTH candidates are supplied instead of composedPrompt (REQ-F002-019/025/050).
+  // A 'baseline-only' (stored inherit) item never carries candidates — it is always composedPrompt = B
+  // regardless of override state, and requires no preserve/discard resolution (REQ-F002-019/050).
   composedIfPreserve?: string;      // compose(B, currentLivePrompt)
   composedIfDiscard?: string;       // compose(B, storedRemainder)
   willChange: boolean;
@@ -663,7 +756,6 @@ export interface BaselinePreview {
   items: BaselinePreviewItem[];
   confirmToken: string;             // opaque binding nonce, machine value (REQ-F002-020/048)
   confirmationPhrase: string;       // human-typeable danger phrase to display + type (REQ-F002-048)
-  nextCursor: string | null;        // pagination (REQ-F002-049); null = last page
 }
 
 export type BaselineApplyOutcome = 'applied' | 'failed' | 'skipped' | 'diverged';
@@ -683,17 +775,10 @@ export interface BaselineApplyResult {
   skippedCount: number;
   divergedCount: number;            // (REQ-F002-047)
   items: BaselineApplyResultItem[]; // per-workspace legibility (REQ-F002-022a)
-  nextCursor: string | null;        // pagination of items (REQ-F002-049)
 }
-
-// Async apply job (REQ-F002-049): POST /apply returns 202 { jobId }, polled here.
-export interface BaselineApplyJob {
-  jobId: string;
-  status: 'running' | 'completed' | 'failed';
-  processed: number;                // per-workspace progress
-  total: number;
-  result: BaselineApplyResult | null; // populated when status === 'completed'
-}
+// Apply is SYNCHRONOUS (Ruling B, REQ-F002-054/058): POST /apply returns 200 BaselineApplyResult
+// directly, bounded by the workspace-count ceiling (REQ-F002-058). There is no async job type, no
+// 202 { jobId } response, no polling route, and no cursor pagination (all deleted per REQ-F002-049).
 ```
 
 ### §7.2 Routes
@@ -703,10 +788,9 @@ export interface BaselineApplyJob {
 | `GET /api/baseline-prompt` | — | `BaselinePrompt` | console store read | no (REQ-F002-015) |
 | `PUT /api/baseline-prompt` | `{ text: string }` | `BaselinePrompt` | console store write | yes (console store) → `admin.baseline_prompt.updated` (REQ-F002-016/035) |
 | `DELETE /api/baseline-prompt` | — | `BaselinePrompt` | console store write (`text` → null) | yes (console store) → `admin.baseline_prompt.updated` `cleared` (REQ-F002-046/035) |
-| `GET /api/baseline-prompt/status` | `?cursor` | `BaselineStatusView` | product workspace list (parent REQ-030) + per-ws live prompt read + store | no (REQ-F002-024) |
+| `GET /api/baseline-prompt/status` | — | `BaselineStatusView` | product workspace list (parent REQ-030) + per-ws live prompt read + store | no (REQ-F002-024) |
 | `GET /api/baseline-prompt/preview` | — | `BaselinePreview` | live prompt reads (parent REQ-031); no engine writes (mints `confirmToken`, REQ-F002-019) | no engine write (REQ-F002-019) — dry run |
-| `POST /api/baseline-prompt/apply` | `{ confirmToken, typedConfirmation, overrides?: {workspaceId, resolution}[] }` | `202 { jobId }` (REQ-F002-049) | per-ws `PATCH /api/workspaces/:id/settings` (parent REQ-032) | yes → one `admin.workspace.updated` per applied ws (parent REQ-032) + one `admin.baseline_prompt.applied` summary (REQ-F002-035) |
-| `GET /api/baseline-prompt/apply/:jobId` | `?cursor` | `BaselineApplyJob` | job / store read | no (REQ-F002-049) |
+| `POST /api/baseline-prompt/apply` | `{ confirmToken, typedConfirmation, overrides?: {workspaceId, resolution}[] }` | `200 BaselineApplyResult` (synchronous, REQ-F002-054/058) | per-ws `PATCH /api/workspaces/:id/settings` (parent REQ-032) | yes → one `admin.workspace.updated` per applied ws (parent REQ-032) + one `admin.baseline_prompt.applied` summary (REQ-F002-035) |
 
 - REQ-F002-028 — Every route above is BFF-brokered (parent REQ-021/026/027): the browser calls only
   these product `/api/*` routes; the fan-out's engine writes are the existing
@@ -737,10 +821,25 @@ home).
   apply is gated by the typed-token confirmation dialog: it names the blast radius (the affected
   count), states the irreversible consequence (workspace prompts will be rewritten; the console is the
   only place the prior composed value is recorded, and engine writes have no native undo —
-  REQ-F002-038), and requires typing the exact displayed `confirmationPhrase` (REQ-F002-048) before the
+  REQ-F002-038). **Destructive blast radius (rev 5, resolves reviews R4-N3 + R5-2):** the dialog's "will be
+  destroyed / rewritten" naming and destructive count are sourced from the per-workspace preview
+  (REQ-F002-019) — **NOT** the whole target set — and enumerate exactly the workspaces whose apply
+  **discards live content with no preserve/discard choice**:
+  (a) every workspace whose `resolvedMode` is `overwrite` (the field is fully replaced by `B`); and
+  (b) every **`baseline-only`** (stored `inherit`) workspace that is currently `overridden` — its
+  uncaptured out-of-band content is discarded by the `B`-only write (REQ-F002-050) with no
+  preserve/discard gate, the same destruction F-003 danger-gates at `inherit`-set time
+  (F-003 REQ-F003-025(a)). Surfacing (b) here is what keeps the baseline-only exemption of REQ-F002-050
+  consistent with the no-silent-clobber rule of REQ-F002-025.
+  A stored `append`/`prepend` workspace is written non-destructively (its remainder is preserved) and is
+  **NOT** counted even under an operator `overwrite` selection (per-workspace resolution, REQ-F002-059); a
+  `baseline-only` workspace that is already `synced`/`never-applied` has no live content to discard and is
+  **NOT** counted. The count is over this union, not the whole target set. It requires typing the exact displayed `confirmationPhrase` (REQ-F002-048) before the
   fan-out is issued; the client submits it as `typedConfirmation` alongside the binding `confirmToken`.
   *Test:* the fan-out call fires only after the typed `confirmationPhrase` matches and a valid
-  `confirmToken` is present.
+  `confirmToken` is present; an apply (in any operator mode) over a target set containing an `overridden`
+  `baseline-only`/`inherit` workspace counts that workspace in the destructive blast radius, while the
+  same workspace when `synced` is not counted.
 - REQ-F002-032 — **Partial-failure legibility (UI side of REQ-F002-022a).** After an apply the UI
   renders the per-workspace outcome list — applied / failed / skipped / diverged (REQ-F002-047) with
   counts — and never a single uniform success banner when any workspace failed or diverged; failed-workspace `message` values are rendered
@@ -749,13 +848,16 @@ home).
 - REQ-F002-033 — **Drift status is non-color-only and legible.** Sync states (REQ-F002-023) are
   encoded with text/iconography in addition to any color (WCAG non-color-only encoding). *Test:* sync
   states remain distinguishable in a grayscale/color-blind simulation.
-- REQ-F002-034 — **Accessibility of the new async/bulk surfaces (mostly inherited; deltas made
-  explicit, ux_risk_read).** The preview dialog, the confirm dialog, and the async apply-progress /
-  result region require deliberate focus management (focus moves into the dialog on open, returns to
-  the trigger on close) and status messaging announced to assistive technology via an ARIA live
-  region — specifically async apply progress and the partial-failure result. *Test:* opening the
-  confirm dialog moves focus into it; the apply result (including failures) is announced via a live
-  region; keyboard-only operation completes a preview → confirm → result cycle.
+- REQ-F002-034 — **Accessibility of the new bulk surfaces (mostly inherited; deltas made
+  explicit, ux_risk_read; async wording removed per Ruling B — resolves review R6-2).** The preview
+  dialog, the confirm dialog, and the (synchronous, REQ-F002-039/058) apply **result** region require
+  deliberate focus management (focus moves into the dialog on open, returns to the trigger on close) and
+  status messaging announced to assistive technology via an ARIA live region — specifically the
+  apply **result** and the partial-failure breakdown (there is no async progress stream to announce: apply
+  is a single blocking request returning `200 BaselineApplyResult`, so the announcement is the completed
+  result, not incremental `processed`/`total` progress). *Test:* opening the confirm dialog moves focus
+  into it; the apply result (including failures) is announced via a live region; keyboard-only operation
+  completes a preview → confirm → result cycle.
 
 ---
 
@@ -773,7 +875,7 @@ parent §14). Two new event names are added; per-workspace engine writes reuse t
     console-store write, not an engine mutation, so it carries no engine verify; per an explicit,
     deliberate deviation from parent REQ-029c (resolves review M5), `verified` is recorded as
     store-confirmed `true`.
-  - `admin.baseline_prompt.applied` — emitted once after a fan-out job completes (REQ-F002-021/049).
+  - `admin.baseline_prompt.applied` — emitted once after a synchronous fan-out apply completes (REQ-F002-021/058).
     Payload: actor, `appliedCount`, `failedCount`, `skippedCount`, `divergedCount`, the applied
     baseline hash, and — distinctly (resolves review M9) — the list of **applied** workspace `id`s and
     the list of **failed/diverged** workspace `id`s (so the audit breakdown in REQ-F002-036 lines up),
@@ -808,13 +910,16 @@ parent §14). Two new event names are added; per-workspace engine writes reuse t
   irreversibility. *Test:* the confirm dialog's copy states that the write is not natively undoable and
   that the console is the sole record of the prior workspace-specific content.
 - REQ-F002-039 — **Fan-out performance & bounds.** Under the parent spec's nominal single-instance
-  load (≤ 200 workspaces, parent REQ-100), a preview renders within **p95 < 3000 ms**; each
-  per-workspace write + verify (parent REQ-028) completes within **p95 < 1500 ms**; and the apply runs
-  as an async job (REQ-F002-049) whose UI polls progress rather than blocking opaquely — never an
-  opaque wait with no `processed`/`total` signal. Preview, status, and the apply-job result paginate
-  via `cursor` / `nextCursor` (REQ-F002-049) rather than assume a small fixed count. *Test:* with 200
-  seeded workspaces, the preview renders under 3000 ms p95, each per-workspace write+verify under
-  1500 ms p95, and the apply job reports monotonically increasing `processed` up to `total`.
+  load (≤ 200 workspaces, parent REQ-100), a preview renders within **p95 < 3000 ms** and each
+  per-workspace write + verify (parent REQ-028) completes within **p95 < 1500 ms**. Apply runs
+  **synchronously** within a single request/response (Ruling B, REQ-F002-054/058) — returning
+  `200 BaselineApplyResult` directly, bounded by the workspace-count ceiling and the p95 < 60 s total
+  time bound of REQ-F002-058, using batched bounded-concurrency writes — NOT an async job with progress
+  polling (the `202 { jobId }` / `:jobId` polling / `cursor`/`nextCursor` model is deleted, REQ-F002-049).
+  Preview, status, and the apply result are returned whole (bounded by the ≤ 200 ceiling, REQ-F002-058),
+  not paginated. *Test:* with 200 seeded workspaces, the preview renders under 3000 ms p95, each
+  per-workspace write+verify under 1500 ms p95, and the apply returns a single `200 BaselineApplyResult`
+  within the 60 s p95 bound (no `202`, no `jobId`, no `nextCursor`).
 - REQ-F002-040 — **Concurrency / staleness.** The preview reads live prompts immediately before
   presenting the diff and captures each workspace's `currentPromptHash` into the snapshot bound by
   `confirmToken` (REQ-F002-020/047). Token-level staleness (baseline change, new preview, target-set
@@ -856,10 +961,12 @@ ratification. Where a default is adopted, the governing REQ is cited.
   workspace `openAiPrompt` and the native default is NOT verified in the grounding. *Ruling needed:*
   confirm this is acceptable, and whether the UI should warn operators that a native default may exist
   invisibly beneath the managed baseline.
-- REQ-F002-045 — **Scale.** The performance bounds (REQ-F002-039) assume the parent spec's ≤ 200
-  workspaces per deployment. *Ruling needed:* confirm the typical/maximum workspaces-per-customer so
-  the bulk-apply progress model and drift-visibility UI are sized correctly. If materially larger,
-  streaming/batched apply and pagination become mandatory rather than advisory.
+- REQ-F002-045 — **Scale (now a correctness gate on the synchronous model, REQ-F002-058).** The
+  performance bounds (REQ-F002-039) assume the parent spec's ≤ 200 workspaces per deployment. *Ruling
+  needed:* confirm the typical/maximum workspaces-per-customer so the synchronous bounded apply
+  (REQ-F002-058) and drift-visibility UI are sized correctly. If materially larger than the ≤ 200 ceiling,
+  the chunk-or-re-evaluate escape valve of REQ-F002-058 engages (a spec change), rather than a silent
+  runtime fallback.
 - REQ-F002-053 — **Clear-baseline effect on applied workspaces (load-bearing; from review B2).** This
   spec adopts a **non-destructive** default: clearing (REQ-F002-046) is a console-store-only action
   that leaves already-applied workspace prompts untouched on the engine and marks them `stale`; the
@@ -868,14 +975,16 @@ ratification. Where a default is adopted, the governing REQ is cited.
   non-destructive, apply-to-strip default (consistent with the no-auto-enforcement stance,
   REQ-F002-006). *Ruling needed:* confirm, or require that a clear immediately fan-out-strips the
   baseline from all tracked workspaces (which would make clear itself a §8-class dangerous operation).
-- REQ-F002-054 — **Apply execution model: async job vs synchronous (load-bearing; from review B5).**
-  This spec adopts an **asynchronous job** model for apply (`202 { jobId }` + progress polling,
-  REQ-F002-049), because a fan-out of up to ~200 workspaces × (write + verify) can exceed a single
-  request window and the UI already requires async progress reporting (REQ-F002-034). *Recommended
-  option:* asynchronous job. *Ruling needed:* confirm, or — if deployments are known to be small —
-  approve a synchronous bounded apply instead, in which case REQ-F002-049's job/polling route and the
-  streaming/pagination requirements in REQ-F002-039 would be removed and apply would return
-  `BaselineApplyResult` directly.
+- REQ-F002-054 — **Apply execution model: async job vs synchronous (load-bearing; from review B5).
+  RESOLVED — Ruling B: synchronous bounded apply.** The review raised whether apply should be an
+  asynchronous job (`202 { jobId }` + progress polling) because a fan-out of up to ~200 workspaces ×
+  (write + verify) can approach a single request window. **Human Ruling B chose the synchronous bounded
+  model:** deployments are bounded at ≤ 200 workspaces (parent REQ-100), so apply runs synchronously and
+  returns `200 BaselineApplyResult` directly within an explicit envelope (REQ-F002-058: workspace-count
+  ceiling, p95 < 60 s total time bound, batched bounded-concurrency writes, chunk/re-evaluate escape
+  valve). Consequently the async `BaselineApplyJob` type, the `202 { jobId }` response, the `:jobId`
+  polling route, and cursor/`nextCursor` pagination are all **deleted** (REQ-F002-049). New work MUST
+  cite REQ-F002-058.
 
 ---
 
@@ -893,7 +1002,7 @@ ratification. Where a default is adopted, the governing REQ is cited.
 | Open Q — conflict with native default | REQ-F002-004 + REQ-F002-044 |
 | Open Q — scale | REQ-F002-039 + REQ-F002-045 |
 | Cleared/undefined baseline behavior | §5 REQ-F002-011, §6.1 REQ-F002-046 + REQ-F002-053 |
-| Apply execution model (async job + progress) | §6.3 REQ-F002-049, §10 REQ-F002-039 + REQ-F002-054 |
+| Apply execution model (synchronous bounded, Ruling B) | §6.3 REQ-F002-058 (REQ-F002-049 deleted the async model), §10 REQ-F002-039 + §11 REQ-F002-054 |
 | Concurrency: per-workspace divergence (`diverged`) | §6.3 REQ-F002-047, §10 REQ-F002-040 |
 | Two-artifact danger gate (binding token vs typed phrase) | §6.3 REQ-F002-048, §8 REQ-F002-031 |
 | Override preserve/discard binding | §6.4 REQ-F002-025/050, §6.2 REQ-F002-019 |
@@ -923,6 +1032,32 @@ apply job (REQ-F002-049), override-resolution binding and missing-resolution han
 and structural first-apply double-prepend detection (REQ-F002-012) — each to an exact predicate and
 test. All internal `REQ-F002-###` cross-references were re-audited and corrected so the "downstream
 tests cite the id" contract holds.
+
+Rev 7 (resolves spec-review `docs/spec-review-F002-rev6.md`, 2026-07-08) closes two narrow reconciliation
+gaps the rev-6 edits left: (R6-1) REQ-F002-025's mandatory two-candidate preserve/discard choice is now
+**scoped to `prepend`-resolved** overridden workspaces, with `baseline-only` overridden workspaces
+explicitly exempt — their no-silent-clobber guarantee is met by the §8 destructive blast-radius count and
+danger gate (REQ-F002-031(b)) rather than a per-workspace choice, removing the contradiction with the
+REQ-F002-050/019 exemption; and (R6-2) the last async remnant — REQ-F002-034's "async apply-progress"
+accessibility surface — is rewritten for the synchronous result region (no progress stream to announce).
+Notes: REQ-F002-023's NULL-row phrasing is tightened to a *mode-agnostic reconstruction* (`classifyMode`
+from the stored mode only, NULL→prepend, outcome-correct because untracked destructive/fill rows carry an
+empty remainder) (R6-N1); and REQ-F002-045's stale "bulk-apply progress model" wording is updated to the
+synchronous bounded model + escape valve (R6-N2). No REQ ids were renumbered or deleted.
+
+Rev 6 (resolves spec-review `docs/spec-review-F002-rev5.md`, 2026-07-08) reconciles the rev-5
+`baseline-only` write with two rev-3 requirements it collided with: (R5-1) the sync-state classifier
+(REQ-F002-023) is made **mode-aware** — it compares the live prompt against `effective(B, remainder,
+resolvedMode)` (`= B` for a stored-`inherit`/`baseline-only` workspace), matching F-003's own classifier
+(REQ-F003-027), so a workspace just correctly synced under `inherit` with a retained non-empty remainder
+reports `synced`, not `overridden`; and (R5-2) the §8 destructive blast-radius count (REQ-F002-031) is
+widened to also count `baseline-only` writes to `overridden` workspaces (uncaptured content is discarded
+with no preserve/discard gate), reconciling REQ-F002-050's exemption with REQ-F002-025's no-silent-clobber
+rule. Notes folded in: `'fill'` added to the two resolved-mode enumerations (R5-3); an F-002-side
+out-of-domain `composition_mode` test added (R5-N1); and the async apply-job remnants REQ-F002-049
+already declared deleted (the `BaselineApplyJob` type, `202 { jobId }` response, `:jobId` polling route,
+and `nextCursor` pagination) are actually removed from §7.1/§7.2 and REQ-F002-035/039, with REQ-F002-054
+marked RESOLVED to Ruling B's synchronous bounded model (R5-4). No REQ ids were renumbered or deleted.
 
 Rev 4 (companion change for F-003 ruling REQ-F003-042, 2026-07-07) makes the fan-out honor each
 workspace's stored per-workspace `composition_mode` rather than blanket-applying one operator-selected

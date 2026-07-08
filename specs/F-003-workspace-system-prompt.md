@@ -1,8 +1,8 @@
 # F-003: Set a Workspace-Level System Prompt — Specification
 
-Status: Draft rev 3 — §9 open questions ratified by 2026-07-07 human rulings; for implementation and QA review
+Status: Draft rev 4 — resolves cross-spec data-model finding R4-1 (nullable composition_mode); for implementation and QA review
 Feature brief (authoritative intent): `briefs/F-003-workspace-system-prompt.md`
-Sibling spec (hard dependency; composition machinery this spec consumes): `specs/F-002-customer-system-prompt.md` (rev 4 — companion revision whose REQ-F002-055 honors the per-workspace `composition_mode`, per REQ-F003-042)
+Sibling spec (hard dependency; composition machinery this spec consumes): `specs/F-002-customer-system-prompt.md` (rev 5 — companion revision whose REQ-F002-055 honors the per-workspace `composition_mode` and whose null-safe read keys on the nullable `composition_mode` this spec now defines, per REQ-F003-042/052)
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `web/src/features/workspaces/WorkspaceSettings.tsx` (the existing per-workspace
 prompt textarea), `bff/src/engine/mappers.ts` + `bff/src/engine/engine-types.ts` (single engine
@@ -158,21 +158,31 @@ parallel table.
 
 - REQ-F003-013 — The BFF store adds ONE column to F-002's `workspace_baseline_state` (REQ-F002-010),
   migrated in `store/db.ts`:
-  - **`composition_mode`** (TEXT, one of `'inherit' | 'append'`; column default `'append'`, subject to
-    REQ-F003-044) — the workspace's persistent composition relationship. (`override` is not a permitted
-    value, REQ-F003-050.)
+  - **`composition_mode`** (**nullable TEXT, `DEFAULT NULL`**; when non-null, exactly one of
+    `'inherit' | 'append'`; validated on write per REQ-F003-052) — the workspace's persistent
+    composition relationship. (`override` is not a permitted value, REQ-F003-050.) The migration MUST
+    NOT declare a SQL column default of `'append'` (or any non-null default): the `ALTER TABLE ADD
+    COLUMN composition_mode TEXT` leaves the column **NULL** on every pre-existing and every F-002-only
+    row. **NULL means "F-003 has not tracked this workspace"**, and F-002's fan-out treats a NULL/absent
+    `composition_mode` as "no per-workspace choice stored" and falls back to the operator-selected apply
+    mode — byte-for-byte identical to F-002 rev 3 — per the shared contract (F-002 REQ-F002-010d/059,
+    F-003 REQ-F003-042). A NULL mode is a real, distinguishable state; F-003 writes a non-null value
+    (`'append'` or `'inherit'`) into this column **only** when it tracks/derives a workspace on a
+    deliberate editor save (REQ-F003-014/023), never as a blanket migration default.
   - (Optional, for audit parity) `composition_mode_updated_at` (TEXT ISO-8601),
     `composition_mode_updated_by` (TEXT staff id, parent REQ-029c actor).
   The **workspace layer** reuses the existing `remainder` column (REQ-F002-010); F-003 adds NO second
-  prompt column. **Default-vs-derivation (resolves review M4):** the column default `'append'` applies
-  ONLY to a row created outside the editor path (e.g. a row F-002's fan-out writes without an operator
-  mode choice, pending REQ-F003-042). The **persisted mode on a first save through the F-003 editor is
-  the operator-confirmed value shown by the structural derivation (REQ-F003-014)**, not the column
-  default — the two never race because the editor always writes an explicit `composition_mode`. *Test:*
-  the migration adds `composition_mode` to `workspace_baseline_state` constrained to `inherit|append`;
-  an existing F-002 row (with a stored remainder) reads back with a defined `composition_mode`; reading
-  the layer returns the same `remainder` value F-002 stored; a first save through the editor persists
-  the operator-confirmed derived mode, not `'append'`, when the derivation differs.
+  prompt column. **NULL-vs-derivation (resolves review M4 and cross-spec finding R4-1):** a row's
+  `composition_mode` is **NULL until F-003 tracks the workspace**; there is no column-default `'append'`
+  that would populate rows at migration and mask the "untouched-by-F-003" state F-002's fallback keys
+  on. The **persisted mode on a first save through the F-003 editor is the operator-confirmed value
+  shown by the structural derivation (REQ-F003-014)** — `'append'` for a standalone/sentinel-bearing
+  live prompt, `'inherit'` for an empty one — written explicitly by the save path. Until that first
+  deliberate save, the mode stays NULL. *Test:* the migration adds `composition_mode` to
+  `workspace_baseline_state` as nullable with no non-null column default; an existing F-002 row (with a
+  stored remainder) reads back with `composition_mode = NULL`, NOT `'append'`; reading the layer returns
+  the same `remainder` value F-002 stored; a first save through the editor persists the
+  operator-confirmed derived mode (`'append'`/`'inherit'`), moving the column from NULL to that value.
 - REQ-F003-014 — **Relationship/layer derivation for an untracked workspace (mirrors F-002
   REQ-F002-012 structural test).** A workspace with NO `workspace_baseline_state` row has never been
   managed. The console derives an **initial view** (not a stored decision until the operator saves)
@@ -201,6 +211,20 @@ parallel table.
   Drift/sync (§6.5) is computed against a fresh engine read, not a cached value (F-002 REQ-F002-010a).
   *Test:* changing a workspace's prompt out-of-band and reopening the editor reflects the new live
   value in the diff without any console write.
+- REQ-F003-052 — **`composition_mode` domain validation on write (backs F-002 R4-5 fallback; rev-4
+  addition).** F-003 is the sole writer of `composition_mode` (F-002 only reads it, F-002 REQ-F002-010d).
+  On every write to the column, F-003 MUST enforce `composition_mode ∈ {NULL, 'append', 'inherit'}` and
+  MUST reject/normalize any out-of-domain value (`'override'` — dropped per REQ-F003-050 — or any
+  corrupted string). Because F-003 has **never shipped**, no legacy `composition_mode` data exists, so
+  this is defensive rather than a migration concern; nonetheless, should F-003 ever encounter an
+  out-of-domain stored value on read, it MUST treat it as **NULL** (untracked) and normalize it on the
+  next write, never persisting or presenting it as a valid relationship. This keeps the column provably
+  within `{NULL, 'append', 'inherit'}`, which is the precondition F-002's null-safe read (F-002
+  REQ-F002-059, review R4-5) relies on so a stored mode can NEVER select F-002's destructive `overwrite`
+  branch. *Test:* a write with `composition_mode` outside `{NULL, 'append', 'inherit'}` is rejected (or
+  normalized to NULL) and never persisted; a row read back bearing an out-of-domain value (injected
+  directly) is treated as untracked (NULL) and normalized on the next write, never surfaced as a valid
+  relationship.
 
 ---
 
@@ -609,16 +633,22 @@ ruling and is recorded here so its many in-text citations resolve.
   NOT auto-rewrite the engine value on a baseline change. *Test:* the store exposes exactly one
   per-workspace layer column (`remainder`); after a baseline change an `append`/`inherit` workspace is
   `stale` with its stored layer byte-identical and no engine write issued until an explicit re-save.
-- REQ-F003-044 — **RATIFIED (2026-07-07): `append` column default; standalone prompt folds BENEATH the
-  baseline.** The stored-column default `append` for newly-tracked workspaces (rows created outside the
-  editor path; REQ-F003-013) is confirmed, as is the structural derivation of REQ-F003-014 (empty →
-  `inherit`; sentinel-bearing → `append`; standalone → `append`). A pre-F-003 hand-authored **standalone**
-  prompt folds **BENEATH** the baseline via `append` — this is the ratified desired behavior (rather than
-  leaving it baseline-free). With `override` dropped (REQ-F003-050) there is no mode that preserves a
-  standalone prompt *above* the baseline; such a prompt is dropped only via an explicit, gated `inherit`
-  save (REQ-F003-025(a)). *Test:* a newly-tracked workspace row defaults to `append`; an untracked
-  workspace whose live standalone prompt is captured on first save composes as `B + SENTINEL + L` (layer
-  beneath the baseline), not as the standalone prompt alone.
+- REQ-F003-044 — **RATIFIED (2026-07-07): `append` default for newly-tracked workspaces; standalone
+  prompt folds BENEATH the baseline. (Rev-4 clarification, resolves cross-spec finding R4-1.)** The
+  ruling's INTENT — that a workspace F-003 **newly tracks** defaults to `append` — is preserved, but
+  `append` is the **DERIVATION OUTCOME at track time**, NOT a SQL column default. Per REQ-F003-013 the
+  `composition_mode` column is nullable `DEFAULT NULL`; a workspace F-003 has **never touched** carries
+  a **NULL** mode and F-002's fan-out uses the operator-selected apply mode for it (the "identical to
+  rev 3" fallback). The `append` value is written only when F-003 tracks/derives a workspace on its
+  first deliberate editor save via the REQ-F003-014 structural derivation (empty → `inherit`;
+  sentinel-bearing → `append`; standalone → `append`). A pre-F-003 hand-authored **standalone** prompt,
+  once tracked, folds **BENEATH** the baseline via `append` — this is the ratified desired behavior
+  (rather than leaving it baseline-free). With `override` dropped (REQ-F003-050) there is no mode that
+  preserves a standalone prompt *above* the baseline; such a prompt is dropped only via an explicit,
+  gated `inherit` save (REQ-F003-025(a)). *Test:* a workspace F-003 has never tracked reads back with
+  `composition_mode = NULL` (no column default writes `'append'` at migration); tracking an untracked
+  workspace whose live standalone prompt is captured on first save derives and persists `append` and
+  composes as `B + SENTINEL + L` (layer beneath the baseline), not as the standalone prompt alone.
 - REQ-F003-045 — **RATIFIED (2026-07-07): adopt `inherit = run the customer baseline`; ADD a
   native-default warning.** The wording `inherit = run the customer baseline` and the mandated relabeling
   (REQ-F003-017/031) are confirmed. **ADDITIONALLY**, the ruling requires the UI to **warn** that an
