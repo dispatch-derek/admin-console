@@ -1,0 +1,12 @@
+/* F-001 adopted DS token layer barrel (REQ-F001-017).
+   @imports the four DS token files adopted byte-for-byte verbatim from the vendored bundle
+   (web/vendor/design-system/project/tokens/*, carve-out A = the co-vendored font asset only),
+   in bundle order, plus the bridge light-source token file (REQ-F001-052, carve-out C) that
+   backs the @media (prefers-color-scheme: light) block. Imported once from main.tsx, replacing
+   the ad-hoc token block previously hand-authored in index.css (REQ-F001-009). */
+
+@import './fonts.css'; /* @font-face — carve-out A (co-vendored PlusJakartaSans.ttf) */
+@import './colors.css'; /* :root (dark) + [data-theme="light"] --theme-* / --alm-* families */
+@import './typography.css'; /* --font-*, --fw-*, --fs-*, --lh-*, --tracking-* */
+@import './spacing.css'; /* --space-*, --radius-*, --control-*, --input-pad, --shadow-*, --gradient-* */
+@import './light-source.css'; /* REQ-F001-052 light-source tokens for the bridge @media block */

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { Button, Table } from '../../design-system';
 import type { Invite, Workspace } from '../../api/types';
 
 export function InviteList() {
@@ -61,12 +62,12 @@ export function InviteList() {
   }
 
   return (
-    <section className="invite-list">
+    <section className="ac-invite-list">
       <ErrorBanner message={error} />
 
-      <div className="create-invite">
+      <div className="ac-create-invite">
         <h3>Create invite (scoped to workspaces)</h3>
-        <ul className="checkbox-list">
+        <ul className="ac-checkbox-list">
           {workspaces.map((ws) => (
             <li key={ws.id}>
               <label>
@@ -80,42 +81,27 @@ export function InviteList() {
             </li>
           ))}
         </ul>
-        <button type="button" disabled={busy} onClick={create}>
+        <Button variant="cta" disabled={busy} onClick={create}>
           Create invite
-        </button>
+        </Button>
       </div>
 
-      <table className="entity-table">
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Status</th>
-            <th>Workspaces</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {invites.map((inv) => (
-            <tr key={inv.id}>
-              <td>
-                <code>{inv.code}</code>
-              </td>
-              <td>{inv.status}</td>
-              <td>{inv.workspaceIds.length}</td>
-              <td>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={busy}
-                  onClick={() => revoke(inv.id)}
-                >
-                  Revoke
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Table columns={['Code', 'Status', 'Workspaces', 'Actions']}>
+        {invites.map((inv) => (
+          <Table.Row key={inv.id}>
+            <Table.Cell>
+              <code>{inv.code}</code>
+            </Table.Cell>
+            <Table.Cell>{inv.status}</Table.Cell>
+            <Table.Cell>{inv.workspaceIds.length}</Table.Cell>
+            <Table.Cell>
+              <Button variant="danger" size="sm" disabled={busy} onClick={() => revoke(inv.id)}>
+                Revoke
+              </Button>
+            </Table.Cell>
+          </Table.Row>
+        ))}
+      </Table>
     </section>
   );
 }

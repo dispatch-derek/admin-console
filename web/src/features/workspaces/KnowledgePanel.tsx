@@ -10,6 +10,7 @@ import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { DangerConfirm } from '../../components/DangerConfirm';
+import { Button } from '../../design-system';
 import type { DocumentRef, WorkspaceDocument } from '../../api/types';
 
 interface KnowledgePanelProps {
@@ -92,7 +93,7 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
   }
 
   return (
-    <section className="knowledge-panel">
+    <section className="ac-knowledge-panel">
       <h3>Knowledge &amp; documents</h3>
       <ErrorBanner message={error} />
 
@@ -100,23 +101,19 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
       {current.length === 0 ? (
         <p>No documents attached to this workspace.</p>
       ) : (
-        <ul className="document-list attached">
+        <ul className="ac-document-list ac-document-list-attached">
           {current.map((doc) => (
             <li key={doc.id}>
-              <span className="doc-title">{doc.title}</span>
-              <span className={doc.pinned ? 'pin-on' : 'pin-off'}>
+              <span className="ac-doc-title">{doc.title}</span>
+              <span className={doc.pinned ? 'ac-pin-on' : 'ac-pin-off'}>
                 {doc.pinned ? 'Pinned' : 'Not pinned'}
               </span>
-              <button type="button" onClick={() => togglePin(doc)}>
+              <Button variant="ghost" size="sm" onClick={() => togglePin(doc)}>
                 {doc.pinned ? 'Unpin' : 'Pin'}
-              </button>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={() => setDetachTarget(doc)}
-              >
+              </Button>
+              <Button variant="danger" size="sm" onClick={() => setDetachTarget(doc)}>
                 Detach
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -126,13 +123,13 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
       {attachable.length === 0 ? (
         <p>No further documents available.</p>
       ) : (
-        <ul className="document-list available">
+        <ul className="ac-document-list ac-document-list-available">
           {attachable.map((doc) => (
             <li key={doc.id}>
-              <span className="doc-title">{doc.title}</span>
-              <button type="button" onClick={() => attach(doc)}>
+              <span className="ac-doc-title">{doc.title}</span>
+              <Button variant="solid" size="sm" onClick={() => attach(doc)}>
                 Attach
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

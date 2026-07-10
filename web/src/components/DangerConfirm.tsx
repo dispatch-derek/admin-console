@@ -6,9 +6,18 @@
 //       REQ-078c) or ticks an explicit "I understand" toggle (provider/embedding/auth-token
 //       warnings REQ-083/084/086).
 // The destructive callback cannot fire until that criterion is satisfied.
+//
+// F-001 REQ-F001-020: re-implemented on the recreated DS primitives — the dialog chrome is the DS
+// `Modal` (role="dialog" + aria-modal + accessible name from `title`, parent §8 a11y preserved), the
+// footer actions are DS `Button`s (ghost Cancel + danger confirm), and the typed-token field is the
+// DS `Input`. The acknowledge affordance stays a native checkbox (role="checkbox") — the DS `Toggle`
+// renders role="switch", which would change this component's contract, so it is NOT substituted here.
+// Public props/contract and gating behavior are unchanged.
 
 import { useState, type ReactNode } from 'react';
 import { ErrorBanner } from './ErrorBanner';
+import { AcknowledgeCheckbox } from './AcknowledgeCheckbox';
+import { Modal, Button, Input } from '../design-system';
 
 interface DangerConfirmProps {
   title: string;
@@ -45,55 +54,42 @@ export function DangerConfirm({
   const armed = expectedToken !== undefined ? typed === expectedToken : acknowledged;
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="modal danger">
-        <h3>{title}</h3>
-        <p className="danger-target">
-          Target: <strong>{target}</strong>
-        </p>
-        <p className="danger-consequence">{consequence}</p>
-
-        {children}
-
-        {expectedToken !== undefined ? (
-          <label className="field">
-            <span>
-              Type the {tokenLabel ?? 'target'} <code>{expectedToken}</code> to confirm:
-            </span>
-            <input
-              type="text"
-              value={typed}
-              autoComplete="off"
-              onChange={(e) => setTyped(e.target.value)}
-            />
-          </label>
-        ) : (
-          <label className="field checkbox">
-            <input
-              type="checkbox"
-              checked={acknowledged}
-              onChange={(e) => setAcknowledged(e.target.checked)}
-            />
-            <span>I understand and want to proceed</span>
-          </label>
-        )}
-
-        <ErrorBanner message={error} />
-
-        <div className="modal-actions">
-          <button type="button" onClick={onCancel} disabled={busy}>
+    <Modal
+      open
+      title={title}
+      width={512}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="danger-button"
-            disabled={!armed || busy}
-            onClick={onConfirm}
-          >
+          </Button>
+          <Button variant="danger" disabled={!armed || busy} onClick={onConfirm}>
             {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </>
+      }
+    >
+      <p className="ac-danger-target">
+        Target: <strong>{target}</strong>
+      </p>
+      <p>{consequence}</p>
+
+      {children}
+
+      {expectedToken !== undefined ? (
+        <Input
+          label={`Type the ${tokenLabel ?? 'target'} "${expectedToken}" to confirm:`}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoComplete="off"
+        />
+      ) : (
+        <AcknowledgeCheckbox checked={acknowledged} onChange={setAcknowledged}>
+          I understand and want to proceed
+        </AcknowledgeCheckbox>
+      )}
+
+      <ErrorBanner message={error} />
+    </Modal>
   );
 }

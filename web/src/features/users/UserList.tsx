@@ -7,6 +7,7 @@ import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { DangerConfirm } from '../../components/DangerConfirm';
+import { Input, Select, Button, Table } from '../../design-system';
 import type { User } from '../../api/types';
 
 const ROLES = ['default', 'admin', 'manager'] as const;
@@ -84,84 +85,61 @@ export function UserList() {
   }
 
   return (
-    <section className="user-list">
+    <section className="ac-user-list">
       <ErrorBanner message={error} />
 
-      <form className="create-user" onSubmit={create}>
+      <form className="ac-create-user" onSubmit={create}>
         <h3>Create user</h3>
-        <input
+        <Input
           type="text"
           placeholder="username"
           value={newUsername}
           onChange={(e) => setNewUsername(e.target.value)}
         />
-        <input
+        <Input
           type="password"
           placeholder="password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
         />
-        <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
-          {ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+        <Select value={newRole} onChange={(e) => setNewRole(e.target.value)} options={[...ROLES]} />
         <ErrorBanner message={createError} />
-        <button
+        <Button
+          variant="cta"
           type="submit"
           disabled={busy || newUsername.trim() === '' || newPassword === ''}
         >
           Create
-        </button>
+        </Button>
       </form>
 
-      <table className="entity-table">
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((user) => (
-            <tr key={user.id}>
-              <td>{user.username}</td>
-              <td>
-                <select
-                  value={user.role}
-                  onChange={(e) => patch(user, { role: e.target.value })}
-                >
-                  {ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>{user.suspended ? 'suspended' : 'active'}</td>
-              <td>
-                <button
-                  type="button"
-                  onClick={() => patch(user, { suspended: !user.suspended })}
-                >
-                  {user.suspended ? 'Reactivate' : 'Suspend'}
-                </button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  onClick={() => setDeleteTarget(user)}
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Table columns={['Username', 'Role', 'Status', 'Actions']}>
+        {users.map((user) => (
+          <Table.Row key={user.id}>
+            <Table.Cell>{user.username}</Table.Cell>
+            <Table.Cell>
+              <Select
+                value={user.role}
+                onChange={(e) => patch(user, { role: e.target.value })}
+                options={[...ROLES]}
+              />
+            </Table.Cell>
+            <Table.Cell>{user.suspended ? 'suspended' : 'active'}</Table.Cell>
+            <Table.Cell>
+              <Button
+                variant="solid"
+                size="sm"
+                onClick={() => patch(user, { suspended: !user.suspended })}
+              >
+                {user.suspended ? 'Reactivate' : 'Suspend'}
+              </Button>
+              <Button variant="danger" size="sm" onClick={() => setDeleteTarget(user)}>
+                Delete
+              </Button>
+            </Table.Cell>
+          </Table.Row>
+        ))}
+      </Table>
 
       {deleteTarget && (
         <DangerConfirm

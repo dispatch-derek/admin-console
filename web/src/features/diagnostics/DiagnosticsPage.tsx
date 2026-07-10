@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { Button, Table } from '../../design-system';
 
 export function DiagnosticsPage() {
   const [vectorCount, setVectorCount] = useState<number | null>(null);
@@ -40,7 +41,7 @@ export function DiagnosticsPage() {
   }
 
   return (
-    <div className="diagnostics-page">
+    <div className="ac-diagnostics-page">
       <ErrorBanner message={error} />
 
       <section>
@@ -50,31 +51,23 @@ export function DiagnosticsPage() {
 
       <section>
         <h3>Masked environment dump</h3>
-        <button type="button" onClick={loadDump} disabled={busy}>
+        <Button variant="solid" onClick={loadDump} disabled={busy}>
           Load env dump
-        </button>
+        </Button>
         <ErrorBanner message={dumpError} />
         {envDump && (
-          <table className="entity-table">
-            <thead>
-              <tr>
-                <th>Key</th>
-                <th>Value (masked)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(envDump).map(([key, value]) => (
-                <tr key={key}>
-                  <td>
-                    <code>{key}</code>
-                  </td>
-                  <td>
-                    <code>{String(value)}</code>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Table columns={['Key', 'Value (masked)']}>
+            {Object.entries(envDump).map(([key, value]) => (
+              <Table.Row key={key}>
+                <Table.Cell>
+                  <code>{key}</code>
+                </Table.Cell>
+                <Table.Cell>
+                  <code>{String(value)}</code>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table>
         )}
       </section>
     </div>

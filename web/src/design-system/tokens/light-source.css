@@ -1,0 +1,43 @@
+/* F-001 bridge light-source token file (REQ-F001-052, carve-out C).
+   Holds the raw DS light-theme values as named tokens so the
+   @media (prefers-color-scheme: light) bridge block can re-point every theme alias
+   to its light value with var() ONLY (no raw hex) and still pass the stylelint gate.
+   PATH-EXEMPT (the 5th explicitly-named file) in .stylelintrc.json — raw hex/rgba live
+   here legitimately as token definitions, exactly like the four adopted DS token files.
+   Names are deliberately NOT in the theme-alias namespace so they are never mistaken for a
+   consumed runtime theme alias.
+   RE-SYNC COUPLING (REQ-F001-025): these values duplicate the DS light values; a DS light-value
+   change must be re-applied here too (documented in bridge/README.md). */
+
+:root {
+  --light-loader: #000000;
+  --light-bg-primary: #ffffff;
+  --light-bg-secondary: #ffffff;
+  --light-bg-sidebar: #edf2fa;
+  --light-bg-container: #f9fbfd;
+  --light-bg-chat: #ffffff;
+  --light-bg-chat-input: #eaeaea;
+  --light-text-primary: #0e0f0f;
+  --light-text-secondary: #7a7d7e;
+  --light-placeholder: #9ca3af;
+  --light-sidebar-item-hover: #c8efff;
+  --light-sidebar-item-selected: #ffffff;
+  --light-sidebar-border: #d3d4d4;
+  --light-modal-border: #d3d3d3;
+  --light-settings-input-bg: #edf2fa;
+  --light-settings-input-placeholder: rgba(0, 0, 0, 0.5);
+  --light-settings-input-text: #0e0f0f;
+  --light-chat-input-border: #cccccc;
+  --light-action-menu-bg: #eaeaea;
+  --light-button-primary: #0ba5ec;
+  --light-button-primary-hover: #dedede;
+  --light-button-cta: #7cd4fd;
+  --light-badge-info-bg: rgba(2, 132, 199, 0.12);
+  --light-badge-info-text: #0369a1;
+  --light-badge-success-bg: rgba(5, 150, 105, 0.12);
+  --light-badge-success-text: #047857;
+  --light-badge-warn-bg: rgba(202, 138, 4, 0.12);
+  --light-badge-warn-text: #a16207;
+  --light-badge-danger-bg: rgba(220, 38, 38, 0.12);
+  --light-badge-danger-text: #b91c1c;
+}

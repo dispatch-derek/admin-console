@@ -1,0 +1,8 @@
+/* Code-editor affordances layered on the DS Textarea (REQ-F001-046). Token-referencing only. */
+.code :global(textarea),
+.code textarea {
+  font-family: var(--font-mono);
+  line-height: var(--lh-normal);
+  white-space: pre;
+  word-break: normal;
+}

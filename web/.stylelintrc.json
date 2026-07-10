@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "color-no-hex": true,
+    "unit-disallowed-list": ["px"],
+    "declaration-property-value-allowed-list": {
+      "font-family": ["/Plus Jakarta Sans/", "/--font/"]
+    }
+  },
+  "ignoreFiles": ["dist/**", "**/vendor/**"],
+  "overrides": [
+    {
+      "files": [
+        "**/design-system/tokens/colors.css",
+        "**/design-system/tokens/spacing.css",
+        "**/design-system/tokens/typography.css",
+        "**/design-system/tokens/fonts.css",
+        "**/design-system/tokens/light-source.css"
+      ],
+      "rules": {
+        "color-no-hex": null,
+        "unit-disallowed-list": null,
+        "declaration-property-value-allowed-list": null
+      }
+    }
+  ]
+}

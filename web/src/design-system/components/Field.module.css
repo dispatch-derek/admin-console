@@ -1,0 +1,69 @@
+/* Shared field styling for Input / Select / Textarea (REQ-F001-018/045). */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--theme-text-primary);
+}
+
+.control {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--input-pad);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--theme-settings-input-text);
+  background: var(--theme-settings-input-bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.control:focus {
+  outline: 0.125rem solid var(--theme-button-primary);
+  outline-offset: 0;
+}
+
+.control::placeholder {
+  color: var(--theme-settings-input-placeholder);
+}
+
+.control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control:read-only {
+  opacity: 0.7;
+}
+
+.select {
+  padding-right: var(--space-8);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.textarea {
+  line-height: var(--lh-normal);
+  resize: vertical;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--theme-text-secondary);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--theme-badge-danger-text);
+}

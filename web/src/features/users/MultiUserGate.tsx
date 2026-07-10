@@ -35,7 +35,7 @@ export function MultiUserGate({ children }: MultiUserGateProps) {
 
   if (!enabled) {
     return (
-      <div className="multi-user-disabled" role="status">
+      <div className="ac-multi-user-disabled" role="status">
         <h2>User management unavailable</h2>
         <p>
           Multi-user mode is not enabled on this instance. User, invite, and membership management

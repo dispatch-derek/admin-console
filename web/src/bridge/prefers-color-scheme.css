@@ -1,0 +1,44 @@
+/* F-001 bridge layer (REQ-F001-052, carve-out C; ruling OQ-11, RISK-1).
+   The vendored DS colors.css defines light ONLY under [data-theme="light"] and ships NO
+   @media (prefers-color-scheme: light) block, but the console must keep auto-selecting light
+   from the OS for users with no data-theme (REQ-F001-013/023/024). This block restores that,
+   scoped to :root:not([data-theme='dark']) (mirroring the pre-migration selector), and re-points
+   every theme alias to the SAME DS light value via var() ONLY (no raw hex/px) — gate-clean
+   (REQ-F001-047). Raw light values live in the path-exempt light-source.css. This is expected
+   bridge content, NOT ad-hoc drift (REQ-F001-026). No byte of the verbatim token files changes. */
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --theme-loader: var(--light-loader);
+    --theme-bg-primary: var(--light-bg-primary);
+    --theme-bg-secondary: var(--light-bg-secondary);
+    --theme-bg-sidebar: var(--light-bg-sidebar);
+    --theme-bg-container: var(--light-bg-container);
+    --theme-bg-chat: var(--light-bg-chat);
+    --theme-bg-chat-input: var(--light-bg-chat-input);
+    --theme-text-primary: var(--light-text-primary);
+    --theme-text-secondary: var(--light-text-secondary);
+    --theme-placeholder: var(--light-placeholder);
+    --theme-sidebar-item-hover: var(--light-sidebar-item-hover);
+    --theme-sidebar-item-selected: var(--light-sidebar-item-selected);
+    --theme-sidebar-border: var(--light-sidebar-border);
+    --theme-modal-border: var(--light-modal-border);
+    --theme-settings-input-bg: var(--light-settings-input-bg);
+    --theme-settings-input-placeholder: var(--light-settings-input-placeholder);
+    --theme-settings-input-text: var(--light-settings-input-text);
+    --theme-chat-input-border: var(--light-chat-input-border);
+    --theme-action-menu-bg: var(--light-action-menu-bg);
+    --theme-button-primary: var(--light-button-primary);
+    --theme-button-primary-hover: var(--light-button-primary-hover);
+    --theme-button-cta: var(--light-button-cta);
+    --theme-badge-info-bg: var(--light-badge-info-bg);
+    --theme-badge-info-text: var(--light-badge-info-text);
+    --theme-badge-success-bg: var(--light-badge-success-bg);
+    --theme-badge-success-text: var(--light-badge-success-text);
+    --theme-badge-warn-bg: var(--light-badge-warn-bg);
+    --theme-badge-warn-text: var(--light-badge-warn-text);
+    --theme-badge-danger-bg: var(--light-badge-danger-bg);
+    --theme-badge-danger-text: var(--light-badge-danger-text);
+    color-scheme: light;
+  }
+}
