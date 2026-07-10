@@ -21,6 +21,9 @@ export interface ButtonProps {
   // <button>. The vendored reference is unchanged.
   title?: string;
   'aria-label'?: string;
+  // Associates a hint/status node with the button (REQ-F002-034, WCAG 3.3.1); wired straight to
+  // the <button>.
+  'aria-describedby'?: string;
 }
 
 const VARIANT_CLASS: Record<NonNullable<ButtonProps['variant']>, string> = {
@@ -50,6 +53,7 @@ export function Button({
   style,
   title,
   'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy,
 }: ButtonProps) {
   const classes = [styles.btn, VARIANT_CLASS[variant], SIZE_CLASS[size], full ? styles.full : '', className]
     .filter(Boolean)
@@ -63,6 +67,7 @@ export function Button({
       style={style}
       title={title}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
     >
       {icon}
       {children}

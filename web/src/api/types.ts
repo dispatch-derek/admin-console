@@ -156,3 +156,77 @@ export type StageOrSession = LoginStage | SessionResult;
 export function isSessionResult(r: StageOrSession): r is SessionResult {
   return (r as SessionResult).staff !== undefined;
 }
+
+// --- F-002 Customer-Wide Baseline System Prompt (mirrored from product-types.ts §7.1) ----------
+// Product vocabulary ONLY (REQ-F002-028/037): no engine field names cross this boundary. The web
+// speaks exclusively to the /api/baseline-prompt* product routes.
+
+export interface BaselinePrompt {
+  text: string | null; // the baseline; null = never defined
+  updatedAt: string | null; // ISO-8601
+  updatedBy: string | null; // staff id (actor)
+}
+
+export type BaselineSyncState = 'synced' | 'stale' | 'overridden' | 'never-applied';
+export type OperatorMode = 'prepend' | 'overwrite' | 'fill';
+export type BaselineResolvedMode = 'prepend' | 'baseline-only' | 'overwrite' | 'fill';
+export type OverrideResolution = 'preserve' | 'discard';
+export type BaselineApplyOutcome = 'applied' | 'failed' | 'skipped' | 'diverged';
+
+export interface BaselineWorkspaceStatus {
+  workspaceId: string;
+  displayName: string;
+  syncState: BaselineSyncState;
+  hasWorkspaceRemainder: boolean;
+}
+
+export interface BaselineStatusView {
+  baseline: BaselinePrompt;
+  workspaces: BaselineWorkspaceStatus[];
+  counts: Record<BaselineSyncState, number>;
+}
+
+export interface BaselinePreviewItem {
+  workspaceId: string;
+  displayName: string;
+  syncState: BaselineSyncState;
+  resolvedMode: BaselineResolvedMode; // per-workspace resolved branch (REQ-F002-059)
+  currentPrompt: string | null;
+  currentPromptHash: string;
+  composedPrompt: string | null; // null only for an overridden prepend item (candidates below)
+  composedIfPreserve?: string; // overridden prepend only
+  composedIfDiscard?: string; // overridden prepend only
+  willChange: boolean;
+  message?: string;
+}
+
+export interface BaselinePreview {
+  affectedCount: number;
+  unchangedCount: number;
+  items: BaselinePreviewItem[];
+  confirmToken: string; // opaque binding nonce — never displayed (REQ-F002-020/048)
+  confirmationPhrase: string; // human-typeable danger phrase (REQ-F002-048)
+}
+
+export interface BaselineApplyResultItem {
+  workspaceId: string;
+  displayName: string;
+  outcome: BaselineApplyOutcome;
+  verified: boolean;
+  message?: string;
+}
+
+export interface BaselineApplyResult {
+  appliedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  divergedCount: number;
+  items: BaselineApplyResultItem[];
+}
+
+export interface BaselineApplyRequest {
+  confirmToken: string;
+  typedConfirmation: string;
+  mode: OperatorMode;
+  overrides?: { workspaceId: string; resolution: OverrideResolution }[];
+}

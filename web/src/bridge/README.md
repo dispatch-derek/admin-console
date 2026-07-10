@@ -57,7 +57,9 @@ these, so they must be re-applied after a diff. All extended props are standard 
 | `Input` | `onBlur`, `aria-describedby`, `aria-invalid`, `error` | validation/a11y hooks (`.field-error`) | `error` renders a token-styled `.error` line and defaults `aria-invalid`; the hint/error nodes carry generated ids that are auto-referenced from the control's `aria-describedby` (an explicit `aria-describedby` is merged, not replaced) — WCAG 3.3.1 |
 | `Input` | `autoComplete` | login/enroll forms (password-manager + one-time-code) | standard attribute, benign |
 | `Textarea` | `readOnly`, `spellCheck` | raw/code-editor bridge, masked diff (REQ-F001-046) | code-editor affordances |
+| `Textarea` | `aria-invalid`, `error` | baseline-prompt whitespace-only validation (REQ-F002-018) | mirrors `Input`'s `error` extension above: renders a token-styled `.error` line and defaults `aria-invalid`; the error node's generated id is auto-referenced from the control's `aria-describedby` — WCAG 3.3.1 |
 | `Button` | `title`, `aria-label` | icon-bearing / a11y buttons (REQ-F001-030) | accessible-name hooks |
+| `Button` | `aria-describedby` | baseline-prompt "Apply baseline" hint association (REQ-F002-034) | WCAG 3.3.1; wired straight to `<button>` |
 
 `Select` and `Textarea` likewise generate an id for their optional `hint` node and reference it from
 the control's `aria-describedby` when a hint is present (WCAG 3.3.1). This is internal a11y wiring, not

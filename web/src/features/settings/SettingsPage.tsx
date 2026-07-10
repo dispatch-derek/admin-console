@@ -13,7 +13,7 @@
 // currently-selected provider expanded and badged. Grouping is derived structurally from the ids
 // and labels the BFF returns — no control-id literals are compiled in.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
@@ -83,6 +83,11 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
   const [busy, setBusy] = useState(false);
   // Provider sections the operator explicitly opened/closed; unset = follow the active provider.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  // Focus fallback for a successful save (REQ-F002-034): a successful write clears the draft, which
+  // disables the "Save changes" trigger in the same commit that closes the dialog. Focus returns to
+  // this actions landmark — adjacent to the save button and the post-save status region — rather
+  // than dropping to <body>.
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async (): Promise<SettingsView | null> => {
     setLoadError(null);
@@ -357,7 +362,7 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
           <p className="ac-warning">Some changes could not be confirmed — see the fields above.</p>
         ))}
 
-      <div className="ac-settings-actions">
+      <div className="ac-settings-actions" ref={actionsRef} tabIndex={-1}>
         <Button
           variant="cta"
           disabled={busy || changedIds.length === 0}
@@ -379,6 +384,7 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
           busy={busy}
           onConfirm={write}
           onCancel={() => setConfirming(false)}
+          fallbackFocusRef={actionsRef}
         />
       )}
     </div>

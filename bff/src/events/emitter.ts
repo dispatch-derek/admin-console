@@ -13,6 +13,10 @@ export async function emitAdminEvent<P>(
   target: AdminEventEnvelope['target'],
   verified: boolean | Record<string, boolean>, // map only for setting_changed (REQ-029f)
   changes?: P,
+  // Optional structured summary payload for non-field-change events (F-002 baseline, REQ-F002-035).
+  // Not treated as a secret (the baseline is the very content being managed, REQ-F002-010b), but
+  // still passes through redactSecrets so an incidental secret KEY name is never leaked.
+  payload?: unknown,
 ): Promise<void> {
   const envelope: AdminEventEnvelope<P> = {
     event: name,
@@ -21,6 +25,7 @@ export async function emitAdminEvent<P>(
     changes: changes === undefined ? undefined : (redactSecrets(changes) as P),
     verified,
     timestamp: new Date().toISOString(), // ISO-8601
+    payload: payload === undefined ? undefined : redactSecrets(payload),
   };
   await getEventBus().publish(envelope);
 }

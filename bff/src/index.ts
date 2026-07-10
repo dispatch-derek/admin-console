@@ -15,6 +15,7 @@ import { workspacesRoutes } from './routes/workspaces.routes.js';
 import { usersRoutes } from './routes/users.routes.js';
 import { oversightRoutes } from './routes/oversight.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
+import { baselineRoutes } from './routes/baseline.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
@@ -29,6 +30,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(usersRoutes);
   await app.register(oversightRoutes);
   await app.register(settingsRoutes);
+  await app.register(baselineRoutes);
 
   return app;
 }

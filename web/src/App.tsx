@@ -16,6 +16,7 @@ import { MultiUserGate } from './features/users/MultiUserGate';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { RawEnvEditor } from './features/raweditor/RawEnvEditor';
 import { DiagnosticsPage } from './features/diagnostics/DiagnosticsPage';
+import { BaselinePromptPage } from './features/baseline-prompt/BaselinePromptPage';
 import { SidebarItem, PageHeader, Button } from './design-system';
 
 type View =
@@ -29,6 +30,7 @@ type View =
   | 'invites'
   | 'membership'
   | 'oversight'
+  | 'baseline'
   | 'agentSkills'
   | 'raw'
   | 'diagnostics'
@@ -66,6 +68,10 @@ const NAV: NavSection[] = [
     ],
   },
   {
+    label: 'Customer-wide',
+    items: [{ id: 'baseline', label: 'Baseline Prompt' }],
+  },
+  {
     label: 'Agent Skills',
     items: [{ id: 'agentSkills', label: 'Agent Skills' }],
   },
@@ -93,6 +99,10 @@ const PAGE_META: Record<View, { title: string; description: string }> = {
   invites: { title: 'Invites', description: 'Invite new users, optionally scoped to specific workspaces.' },
   membership: { title: 'Workspace Membership', description: 'Control which users can access which workspaces.' },
   oversight: { title: 'Workspace Chats', description: 'Review chat history across all workspaces.' },
+  baseline: {
+    title: 'Customer-wide Baseline Prompt',
+    description: 'Define one baseline system prompt and fan it out to every workspace.',
+  },
   agentSkills: { title: 'Agent Skills', description: 'API keys and configuration for @agent tool-use skills.' },
   raw: { title: 'Raw Env Editor', description: 'Advanced: edit environment keys directly, bypassing curated controls.' },
   diagnostics: { title: 'Diagnostics', description: 'Vector counts and a masked environment dump for troubleshooting.' },
@@ -144,6 +154,7 @@ function Console() {
         <div className="ac-page-body">
           {SETTINGS_VIEWS.has(view) && <SettingsPage categoryIds={[view]} />}
           {view === 'workspaces' && <WorkspaceList />}
+          {view === 'baseline' && <BaselinePromptPage />}
           {view === 'raw' && <RawEnvEditor />}
           {view === 'diagnostics' && <DiagnosticsPage />}
           {(view === 'users' || view === 'invites' || view === 'membership' || view === 'oversight') && (

@@ -379,3 +379,76 @@ export type SettingsPatch = Partial<Record<ProductControlId, string | number | b
 export interface ErrorBody {
   message: string;
 }
+
+// --- F-002 Customer-Wide Baseline System Prompt product types (§7.1, REQ-F002-025 parent) ---
+// Product vocabulary only; no engine field names cross this boundary (REQ-021a/F002-028/037).
+
+export interface BaselinePrompt {
+  text: string | null; // the baseline; null = never defined
+  updatedAt: string | null; // ISO-8601
+  updatedBy: string | null; // staff id (parent REQ-029c actor)
+}
+
+export type BaselineSyncState = 'synced' | 'stale' | 'overridden' | 'never-applied';
+
+export interface BaselineWorkspaceStatus {
+  workspaceId: string; // opaque product handle (parent REQ-021b)
+  displayName: string;
+  syncState: BaselineSyncState;
+  hasWorkspaceRemainder: boolean; // whether a per-workspace segment is stored
+}
+
+export interface BaselineStatusView {
+  baseline: BaselinePrompt;
+  workspaces: BaselineWorkspaceStatus[];
+  counts: Record<BaselineSyncState, number>;
+}
+
+export interface BaselinePreviewItem {
+  workspaceId: string;
+  displayName: string;
+  syncState: BaselineSyncState;
+  // Per-workspace resolved effective branch, bound by confirmToken (REQ-F002-059/020) and the
+  // referent of the mode-change divergence check (REQ-F002-047). 'baseline-only' = stored inherit.
+  // PREVIEW/APPLY-ONLY: folds in the operator-selected apply mode for NULL rows. This is NOT the
+  // status-path classifyMode (REQ-F002-023) — BaselineWorkspaceStatus carries no resolvedMode.
+  resolvedMode: 'prepend' | 'baseline-only' | 'overwrite' | 'fill';
+  currentPrompt: string | null; // live engine prompt (for the diff)
+  currentPromptHash: string; // snapshot hash bound by confirmToken (REQ-F002-047)
+  composedPrompt: string | null; // single candidate; for 'baseline-only' this is B (REQ-F002-019);
+  // null only for an overridden prepend item (candidates below).
+  composedIfPreserve?: string; // compose(B, currentLivePrompt)  — overridden prepend only
+  composedIfDiscard?: string; // compose(B, storedRemainder)     — overridden prepend only
+  willChange: boolean;
+  message?: string; // e.g. a fill skip explanation (REQ-F002-057)
+}
+
+export interface BaselinePreview {
+  affectedCount: number; // workspaces whose composed prompt would change
+  unchangedCount: number;
+  items: BaselinePreviewItem[];
+  confirmToken: string; // opaque binding nonce, machine value (REQ-F002-020/048)
+  confirmationPhrase: string; // human-typeable danger phrase to display + type (REQ-F002-048)
+}
+
+export type BaselineApplyOutcome = 'applied' | 'failed' | 'skipped' | 'diverged';
+// 'diverged' = live prompt / resolved mode changed out-of-band since the previewed snapshot; not
+// written (REQ-F002-047).
+
+export type OverrideResolution = 'preserve' | 'discard';
+
+export interface BaselineApplyResultItem {
+  workspaceId: string;
+  displayName: string;
+  outcome: BaselineApplyOutcome;
+  verified: boolean; // per-workspace verify-after-write (parent REQ-028)
+  message?: string; // failure / diverge / skip detail, rendered verbatim
+}
+
+export interface BaselineApplyResult {
+  appliedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  divergedCount: number; // (REQ-F002-047)
+  items: BaselineApplyResultItem[]; // per-workspace legibility (REQ-F002-022a)
+}

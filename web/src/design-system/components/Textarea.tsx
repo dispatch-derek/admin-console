@@ -23,6 +23,10 @@ export interface TextareaProps {
   // straight to the <textarea>. The vendored reference is unchanged.
   readOnly?: boolean;
   spellCheck?: boolean;
+  // Validation/a11y hook (mirrors Input's `error`, REQ-F002-018): renders a token-styled `.error`
+  // line via FieldFrame and sets `aria-invalid`/`aria-describedby` accordingly (WCAG 3.3.1).
+  error?: string | null;
+  'aria-invalid'?: boolean;
 }
 
 export function Textarea({
@@ -40,10 +44,22 @@ export function Textarea({
   style,
   readOnly = false,
   spellCheck,
+  error,
+  'aria-invalid': ariaInvalid,
 }: TextareaProps) {
-  const { fieldId: textareaId, hintId } = useFieldIds(id, hint);
+  const { fieldId: textareaId, hintId, errorId } = useFieldIds(id, hint, error);
+  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
   return (
-    <FieldFrame fieldId={textareaId} label={label} hint={hint} hintId={hintId} className={className} style={style}>
+    <FieldFrame
+      fieldId={textareaId}
+      label={label}
+      hint={hint}
+      hintId={hintId}
+      error={error}
+      errorId={errorId}
+      className={className}
+      style={style}
+    >
       <textarea
         id={textareaId}
         name={name}
@@ -55,7 +71,8 @@ export function Textarea({
         disabled={disabled}
         readOnly={readOnly}
         spellCheck={spellCheck}
-        aria-describedby={hintId}
+        aria-describedby={describedBy}
+        aria-invalid={ariaInvalid ?? (error ? true : undefined)}
         className={`${styles.control} ${styles.textarea}`}
       />
     </FieldFrame>

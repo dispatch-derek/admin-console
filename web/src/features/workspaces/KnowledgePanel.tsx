@@ -5,7 +5,7 @@
 // the panel reflects the new state. Detaching deletes the document's vector data for the workspace,
 // so it is a §8 dangerous operation gated behind an explicit confirmation naming the document (REQ-087).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
@@ -26,6 +26,10 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
   const [detachTarget, setDetachTarget] = useState<WorkspaceDocument | null>(null);
   const [detachError, setDetachError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Focus fallback for a successful detach (REQ-F002-034): a successful detach removes that doc's
+  // "Detach" trigger from the DOM in the same commit that closes the dialog, so focus returns to
+  // this panel heading rather than dropping to <body>.
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Keep local state in sync if the parent reloads the workspace.
   useEffect(() => setCurrent(attached), [attached]);
@@ -94,7 +98,9 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
 
   return (
     <section className="ac-knowledge-panel">
-      <h3>Knowledge &amp; documents</h3>
+      <h3 ref={headingRef} tabIndex={-1}>
+        Knowledge &amp; documents
+      </h3>
       <ErrorBanner message={error} />
 
       <h4>Attached documents</h4>
@@ -143,6 +149,7 @@ export function KnowledgePanel({ workspaceId, attached, onChanged }: KnowledgePa
           error={detachError}
           busy={busy}
           confirmLabel="Detach document"
+          fallbackFocusRef={headingRef}
           onConfirm={confirmDetach}
           onCancel={() => {
             setDetachTarget(null);

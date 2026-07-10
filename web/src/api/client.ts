@@ -6,11 +6,17 @@
 
 import { ApiError, apiErrorFrom } from './errors';
 import type {
+  BaselineApplyRequest,
+  BaselineApplyResult,
+  BaselinePreview,
+  BaselinePrompt,
+  BaselineStatusView,
   DocumentRef,
   EnrollResult,
   Invite,
   LoginStage,
   OllamaModelsResult,
+  OperatorMode,
   OversightChatPage,
   RawEnvEntry,
   SessionResult,
@@ -285,6 +291,32 @@ export function getEnvDump(): Promise<Record<string, unknown>> {
 
 export function getOllamaModels(): Promise<OllamaModelsResult> {
   return request('/api/models/ollama');
+}
+
+// --- Customer-wide baseline system prompt (F-002, §7.2) ---------------------------------------
+
+export function getBaselinePrompt(): Promise<BaselinePrompt> {
+  return request('/api/baseline-prompt');
+}
+
+export function putBaselinePrompt(text: string): Promise<BaselinePrompt> {
+  return request('/api/baseline-prompt', { method: 'PUT', body: { text } });
+}
+
+export function clearBaselinePrompt(): Promise<BaselinePrompt> {
+  return request('/api/baseline-prompt', { method: 'DELETE' });
+}
+
+export function getBaselineStatus(): Promise<BaselineStatusView> {
+  return request('/api/baseline-prompt/status');
+}
+
+export function getBaselinePreview(mode: OperatorMode): Promise<BaselinePreview> {
+  return request(`/api/baseline-prompt/preview${query({ mode })}`);
+}
+
+export function applyBaselinePrompt(body: BaselineApplyRequest): Promise<BaselineApplyResult> {
+  return request('/api/baseline-prompt/apply', { method: 'POST', body });
 }
 
 export { ApiError };

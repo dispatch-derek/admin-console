@@ -4,7 +4,7 @@
 // until advanced mode is enabled (REQ-078). A write is confirmed via a masked diff + typed token
 // (REQ-078c) and issued only on an exact token match; only keys the BFF returned can be written.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
@@ -28,6 +28,11 @@ export function RawEnvEditor() {
   const [result, setResult] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Focus fallback for a successful write (REQ-F002-034): a successful write clears the drafts,
+  // which disables the "Review & write" trigger in the same commit that closes the dialog. Focus
+  // returns to this actions landmark — adjacent to the trigger and the post-write result — rather
+  // than dropping to <body>.
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -116,7 +121,7 @@ export function RawEnvEditor() {
         ))}
       </Table>
 
-      <div className="ac-raw-actions">
+      <div className="ac-raw-actions" ref={actionsRef} tabIndex={-1}>
         <Button
           variant="solid"
           disabled={!advanced || rows.length === 0 || busy}
@@ -131,6 +136,7 @@ export function RawEnvEditor() {
           rows={rows}
           error={writeError}
           busy={busy}
+          fallbackFocusRef={actionsRef}
           onConfirm={confirmWrite}
           onCancel={() => {
             setConfirming(false);

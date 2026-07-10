@@ -21,6 +21,7 @@ import {
   resolveSlug,
 } from '../identity/workspace-map.js';
 import { verifiedWrite } from './verify.js';
+import { baselineRepo } from '../store/repositories/baseline.repo.js';
 import { emitAdminEvent } from '../events/emitter.js';
 import { recordAudit } from '../audit/audit.js';
 import { AppError } from '../server/errors.js';
@@ -184,6 +185,11 @@ export async function deleteWorkspace(actorId: string, productId: string): Promi
   );
 
   forget(productId);
+  // F-002 orphan-state cleanup (REQ-F002-051): drop the workspace's baseline tracking row inline,
+  // consistent with the existing forget() cleanup (design §1.1 — chosen over a bus subscriber since
+  // this codebase has no BFF-store bus-consumer pattern and deleteWorkspace already does inline
+  // post-delete cleanup). Direct repo call to avoid a service→service import cycle.
+  baselineRepo.deleteState(productId);
   await emitAdminEvent('admin.workspace.deleted', actorId, target, true);
   recordAudit({
     actor: actorId,

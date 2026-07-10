@@ -1,6 +1,10 @@
 # F-002: Customer-Wide Baseline System Prompt — Specification
 
-Status: Draft rev 7 — resolves spec-review `docs/spec-review-F002-rev6.md`; for implementation and QA review
+Status: Draft rev 9 — records a human ruling on REQ-F002-044 (native Default System Prompt interaction);
+adds a UI warning requirement (REQ-F002-060); NOT a review-fix round;
+for implementation and QA review
+(rev 8 baseline: resolves two BLOCKING findings from adversarial review of rev 7, round 1 of ≤2)
+(rev 7 baseline: resolves spec-review `docs/spec-review-F002-rev6.md`)
 (rev 4 baseline: companion change for F-003 ruling REQ-F003-042 — fan-out honors per-workspace composition_mode)
 (rev 3 baseline: revised against `docs/spec-review-F002.md` and four human rulings A–D on REQ-F002-041/042/043/053/054)
 Feature brief (authoritative intent): `briefs/F-002-customer-system-prompt.md`
@@ -262,7 +266,10 @@ specified in **REQ-F002-059**.
   - **Snapshot binding & mode-change divergence.** The **resolved effective mode per workspace** (the
     `prepend` / `baseline-only` / `overwrite` / `fill` branch) is captured into the previewed snapshot as
     `BaselinePreviewItem.resolvedMode`, bound by `confirmToken` (REQ-F002-020/047), so the write a
-    workspace receives is exactly the one previewed. A stored-`composition_mode` change (via an
+    workspace receives is exactly the one previewed. (`resolvedMode` here folds in the operator-selected
+    apply `mode` for NULL rows and lives only on this preview/apply path; it is a **different notion**
+    from the status-path `classifyMode` of REQ-F002-023, which carries no operator mode — do not conflate
+    them.) A stored-`composition_mode` change (via an
     out-of-band F-003 save) between preview and apply is per-workspace **divergence only when it changes
     the resolved branch** (compared in F-002 vocabulary, not the raw F-003 string — REQ-F002-047,
     resolves review R4-3): such a workspace's write is withheld and it is reported **`diverged`** while
@@ -461,7 +468,9 @@ specified in **REQ-F002-059**.
   (REQ-F002-055), the target set, the baseline text, each workspace's `currentPromptHash`, **each
   workspace's resolved effective mode** (the per-workspace branch actually previewed — `prepend`,
   `baseline-only`, `overwrite`, or `fill` — resolved per REQ-F002-059; the referent for the mode-change
-  divergence check of REQ-F002-047, resolves review R4-2), and, for overridden workspaces
+  divergence check of REQ-F002-047, resolves review R4-2 — this preview/apply-bound `resolvedMode` folds
+  in the operator-selected `mode` and is **distinct from** the status-path `classifyMode` of
+  REQ-F002-023, which has no operator mode; the two MUST NOT be conflated), and, for overridden workspaces
   (only meaningful in the `prepend` branch), both resolution candidates (REQ-F002-021/047/050). It is distinct
   from the human-typed danger phrase (REQ-F002-048); the
   response also carries the human-typeable `confirmationPhrase` to display for typing. An apply
@@ -618,19 +627,65 @@ specified in **REQ-F002-059**.
   operator `overwrite`/`fill` carries an **empty** `remainder`, so `effective(B, "", 'prepend') = B`
   equals exactly what that destructive/fill apply wrote — the classification is therefore outcome-correct
   without needing to know which operator mode last touched an untracked row. (A workspace's own stored
-  mode never selects `overwrite`, REQ-F002-056.) States:
-  - `never-applied` — no `workspace_baseline_state` row (the console has never applied here);
-  - `synced` — `P == effective(B, remainder, resolvedMode)`;
-  - `stale` — `P` matches the last-applied composition (`hash(P) == applied_composed_hash`) but the
-    baseline has since changed (so `effective(B, remainder, resolvedMode) != P`) — needs re-sync (§6.5);
-  - `overridden` — `P` matches neither (edited out-of-band since last apply).
+  mode never selects `overwrite`, REQ-F002-056.)
+
+  **`classifyMode` is the ONLY mode notion in this requirement (rev 8, resolves review CONTRADICTION on
+  `resolvedMode`).** Every state predicate below is defined solely in terms of `classifyMode` — the
+  mode reconstructed from the stored `composition_mode` (NULL→`prepend`) — and NEVER in terms of
+  `resolvedMode`. `resolvedMode` and `classifyMode` are **distinct notions for distinct routes** and
+  MUST NOT be conflated:
+  - `resolvedMode` (REQ-F002-059/020, `BaselinePreviewItem.resolvedMode` §7.1) is a **preview/apply-only**
+    per-workspace branch that **folds in the operator-selected apply `mode`** (REQ-F002-055) as the
+    default for untracked (NULL) rows. It exists only on the write path (`GET /preview` →
+    `POST /apply`), is bound by `confirmToken`, and is the referent of the mode-change divergence check
+    (REQ-F002-047). For a NULL-mode workspace it can be any of `prepend`/`overwrite`/`fill` depending on
+    the operator's current selection.
+  - `classifyMode` is a **status/classification-only** per-workspace branch that has **no operator mode
+    at all** — a NULL row is always `prepend`, never the operator's `overwrite`/`fill`. Classification
+    (this requirement) and the status surface (`GET /api/baseline-prompt/status`, REQ-F002-024) are a
+    **bare read with no `mode` parameter**; there is no operator selection to fold in, so `resolvedMode`
+    is **undefined on the status surface** and is never used here. Two implementers must both compute
+    `synced`/`stale`/`overridden` from `classifyMode` only.
+
+  **States (evaluated in the stated precedence order, rev 8):** classification is deterministic for every
+  `(P, B, remainder, applied_composed_hash, composition_mode)` tuple; the predicates below are checked
+  **top-to-bottom and the FIRST match wins**:
+  1. `never-applied` — no `workspace_baseline_state` row (the console has never applied here).
+  2. `synced` — `P == effective(B, remainder, classifyMode)` (the live prompt equals the current-baseline
+     reconstruction under the stored mode).
+  3. `stale` — NOT `synced` AND `hash(P) == applied_composed_hash` (the live prompt still byte-equals the
+     composed value the console last wrote, but the current-baseline reconstruction differs because the
+     baseline changed since apply, so `effective(B, remainder, classifyMode) != P`) — needs re-sync (§6.5).
+  4. `overridden` — none of the above (the live prompt matches neither the current reconstruction nor the
+     last-applied composition; edited out-of-band since last apply).
+
+  **Precedence rule (rev 8, resolves review AMBIGUOUS `stale` vs `overridden`).** The `stale` hash-match
+  check (step 3) takes precedence over the `overridden` "matches neither" fallback (step 4): when a
+  workspace is not `synced` but `hash(P) == applied_composed_hash`, it is classified **`stale`**, never
+  `overridden`. Concretely, for the reviewer's worked example — a workspace last written under operator
+  `overwrite`/`fill` (so `applied_composed_hash = hash(oldB)`, `remainder` empty), unedited since, whose
+  baseline then changes from `oldB` to `newB`: `classifyMode = 'prepend'` (NULL row) yields
+  `effective(newB, "", 'prepend') = newB`, and `P = oldB != newB`, so it is **not** `synced`; but
+  `hash(P) = hash(oldB) = applied_composed_hash`, so step 3 fires and it is **`stale`**, not `overridden`.
+  This is intentional: the console last wrote exactly `P`, so re-sync (§6.5) will correctly recompose it
+  to `newB` and the operator is not asked to resolve a false "override." The residual risk the reviewer
+  named — an out-of-band edit that coincidentally restores the prompt to the exact last-applied bytes —
+  is accepted and low-probability (it byte-collides with `applied_composed_hash`); such a workspace is
+  reported `stale` and its next re-sync recomposes it, which is the correct outcome regardless of whether
+  the coincidental value arrived by console write or by hand.
+
   This matches F-003's own classifier (REQ-F003-027, which uses `effective(B, L, rel)`), so a workspace the
   console has just correctly synced under `inherit`/`baseline-only` — live `P = B` while a non-empty
   `remainder = R` is retained-but-suppressed — is reported **`synced`**, not `overridden`.
-  *Test:* a workspace with an out-of-band prompt edit reports `overridden`; a workspace unchanged
+  *Test:* a workspace with an out-of-band prompt edit (matching neither reconstruction nor last-applied
+  hash) reports `overridden`; a workspace unchanged
   since apply but whose baseline was edited afterward reports `stale`; an untouched, current one
   reports `synced`; a never-touched one reports `never-applied`; **a `baseline-only`/`inherit` workspace
-  carrying a non-empty retained remainder whose live prompt equals `B` reports `synced`, not `overridden`.**
+  carrying a non-empty retained remainder whose live prompt equals `B` reports `synced`, not `overridden`**;
+  **a workspace last written under operator `overwrite` (or `fill`), unedited since, whose baseline then
+  changes, reports `stale` (its `hash(P) == applied_composed_hash`), NOT `overridden`** — the `stale`
+  hash-match takes precedence over the `overridden` fallback; **classification uses `classifyMode` only —
+  the status surface (REQ-F002-024) has no operator `mode` and never consults `resolvedMode`.**
 - REQ-F002-024 — **Drift visibility surface.** The console exposes drift/override status across
   workspaces via `GET /api/baseline-prompt/status` (§7) and presents it so the operator can see, at a
   glance, which workspaces carry the current baseline versus diverge — so the "single source of truth"
@@ -737,6 +792,10 @@ export interface BaselinePreviewItem {
                                     // per-workspace resolved effective branch, bound by confirmToken
                                     // (REQ-F002-059/020); referent of the mode-change divergence check
                                     // (REQ-F002-047). 'baseline-only' = stored inherit (REQ-F002-059).
+                                    // PREVIEW/APPLY-ONLY: folds in the operator-selected apply mode for
+                                    // NULL rows. This is NOT the status-path classifyMode (REQ-F002-023),
+                                    // which has no operator mode; BaselineWorkspaceStatus carries no
+                                    // resolvedMode — the status surface classifies via classifyMode only.
   currentPrompt: string | null;     // live engine prompt (for the diff)
   currentPromptHash: string;        // snapshot hash bound by confirmToken (REQ-F002-047)
   composedPrompt: string | null;    // single candidate; for 'baseline-only' this is B (REQ-F002-019);
@@ -858,6 +917,19 @@ home).
   result, not incremental `processed`/`total` progress). *Test:* opening the confirm dialog moves focus
   into it; the apply result (including failures) is announced via a live region; keyboard-only operation
   completes a preview → confirm → result cycle.
+- REQ-F002-060 — **Native Default System Prompt advisory (human ruling on REQ-F002-044, 2026-07-09).**
+  The console-level baseline settings surface (REQ-F002-029) MUST display a **persistent, always-present**
+  advisory (e.g. a static informational banner/callout on the baseline section — not a one-time or
+  permanently-dismissible toast; exact UX mechanics deferred to UX design, but the notice MUST be visible
+  whenever the baseline surface is shown) stating that AnythingLLM's native **instance-level Default
+  System Prompt** is a **separate, console-unreachable** setting (REQ-F002-004) that may **also** affect
+  what a workspace's assistant sees, and that the managed baseline here **does not account for it** — so a
+  native default may exist invisibly beneath the managed baseline. The advisory is informational only; it
+  gates no action and adds no engine read/write (the native default remains unreachable, REQ-F002-004).
+  *Test:* the baseline settings surface (REQ-F002-029) renders the native-default advisory persistently
+  whenever it is shown (it is not gone after a page reload or a dismissal), and the advisory text names
+  the native instance-level Default System Prompt as a separate, console-unreachable setting the managed
+  baseline does not account for.
 
 ---
 
@@ -954,13 +1026,17 @@ ratification. Where a default is adopted, the governing REQ is cited.
   survive workspace edits. This spec assumes **best-effort is acceptable** (REQ-F002-002/005). *Ruling
   needed:* if a hard, tamper-proof guarantee is actually required, F-002's whole approach changes
   (it cannot be met through the API-key-reachable single prompt field) and must be re-scoped.
-- REQ-F002-044 — **Interaction with the native Default System Prompt.** A customer could set
+- REQ-F002-044 — **Interaction with the native Default System Prompt. RESOLVED — human ruling
+  (2026-07-09): proceed with the independence assumption AND add a UI warning.** A customer could set
   AnythingLLM's native instance-level default out-of-band; the console can neither read nor write it
   (REQ-F002-004). This spec assumes the two are independent and that the console's guarantee is scoped
   strictly to the per-workspace field it writes; the exact engine-level layering/precedence between a
-  workspace `openAiPrompt` and the native default is NOT verified in the grounding. *Ruling needed:*
-  confirm this is acceptable, and whether the UI should warn operators that a native default may exist
-  invisibly beneath the managed baseline.
+  workspace `openAiPrompt` and the native default is NOT verified in the grounding. **The human ruled
+  this independence assumption acceptable** (the console's guarantee remains scoped to the per-workspace
+  field it writes, per REQ-F002-004's custody boundary; the unverified engine-level layering is accepted
+  as out of the console's reach). **The ruling additionally requires a UI warning** that a native
+  instance-level default may exist invisibly beneath the managed baseline — specified as **REQ-F002-060**
+  (§8). This item is now resolved; no further ruling is needed.
 - REQ-F002-045 — **Scale (now a correctness gate on the synchronous model, REQ-F002-058).** The
   performance bounds (REQ-F002-039) assume the parent spec's ≤ 200 workspaces per deployment. *Ruling
   needed:* confirm the typical/maximum workspaces-per-customer so the synchronous bounded apply
@@ -999,7 +1075,8 @@ ratification. Where a default is adopted, the governing REQ is cited.
 | Open Q — enforcement strength / re-sync / auto-apply | §6.3–§6.5, REQ-F002-006/026/027 + REQ-F002-042 |
 | Open Q — persistence & per-workspace sync/drift tracking | §4 REQ-F002-010, §6.4 REQ-F002-023 |
 | Open Q — baseline-change propagation & partial-failure | §6.5 REQ-F002-027, §6.3 REQ-F002-022/022a |
-| Open Q — conflict with native default | REQ-F002-004 + REQ-F002-044 |
+| Open Q — conflict with native default (RESOLVED: independence assumption + UI warning) | REQ-F002-004 + REQ-F002-044 (ruling) + §8 REQ-F002-060 (UI advisory) |
+| Native Default System Prompt advisory (UI warning per REQ-F002-044 ruling) | §8 REQ-F002-060 (on REQ-F002-029 surface) |
 | Open Q — scale | REQ-F002-039 + REQ-F002-045 |
 | Cleared/undefined baseline behavior | §5 REQ-F002-011, §6.1 REQ-F002-046 + REQ-F002-053 |
 | Apply execution model (synchronous bounded, Ruling B) | §6.3 REQ-F002-058 (REQ-F002-049 deleted the async model), §10 REQ-F002-039 + §11 REQ-F002-054 |
@@ -1032,6 +1109,47 @@ apply job (REQ-F002-049), override-resolution binding and missing-resolution han
 and structural first-apply double-prepend detection (REQ-F002-012) — each to an exact predicate and
 test. All internal `REQ-F002-###` cross-references were re-audited and corrected so the "downstream
 tests cite the id" contract holds.
+
+Rev 9 (records human ruling on REQ-F002-044, 2026-07-09; NOT a review-fix round) records the human
+ruling on the one remaining open question that bears on behavior — the interaction with AnythingLLM's
+native instance-level **Default System Prompt** (REQ-F002-044). The human ruled: **proceed with the
+independence assumption** the spec already adopts (the console's managed baseline and the native
+instance-level default are treated as independent; the console's guarantee stays scoped strictly to the
+per-workspace field it writes, per REQ-F002-004's custody boundary), **AND add a UI warning** that a
+native instance-level default may exist invisibly beneath the managed baseline. REQ-F002-044's §11 entry
+is updated to record the ruling (independence assumption confirmed; UI warning now required) and to cite
+the new requirement. One new requirement, **REQ-F002-060**, is appended in §8 requiring the console-level
+baseline settings surface (REQ-F002-029) to display a persistent, always-present advisory that the native
+Default System Prompt is a separate, console-unreachable setting the managed baseline does not account
+for. The traceability table (§12) gains a row for it. No existing REQ id was renumbered, reused, deleted,
+or marked DEPRECATED; no normative behavior of any other requirement changed.
+
+Rev 8 (resolves two BLOCKING findings from an adversarial review of rev 7, 2026-07-09; round 1 of ≤2)
+fixes REQ-F002-023's sync-state classifier, which the reviewer showed was self-contradictory and
+non-deterministic. (1) **CONTRADICTION — `resolvedMode` vs `classifyMode`.** The state definitions
+(`synced`/`stale`) had been written against `resolvedMode`, but the surrounding prose reconstructs the
+effective value from `classifyMode` (derived only from the stored `composition_mode`, NULL→`prepend`),
+and `resolvedMode` — which folds in the operator-selected apply `mode` — exists **only** on the
+preview/apply path, not on the bare `GET /api/baseline-prompt/status` surface (REQ-F002-024), where it is
+undefined. Rev 8 rewrites every REQ-F002-023 state predicate to use **`classifyMode` exclusively**, adds
+an explicit statement that classification/status carries **no operator mode** and never consults
+`resolvedMode`, and pins the two as distinct notions for distinct routes (status/classification vs.
+preview/apply) so they cannot be conflated again. Cross-references were added — non-normatively — to
+REQ-F002-020's `confirmToken` snapshot description, REQ-F002-059's snapshot-binding bullet, and the §7.1
+`BaselinePreviewItem.resolvedMode` type comment — clarifying that `resolvedMode` is preview/apply-only and
+distinct from `classifyMode`, without changing their normative behavior. (2) **AMBIGUOUS — `stale` vs
+`overridden` precedence.** The `stale` hash-match and the `overridden` "matches neither" checks had no
+stated evaluation order, so a workspace last written under operator `overwrite`/`fill` (whose
+`applied_composed_hash = hash(oldB)`) whose baseline then changes could be claimed as either. Rev 8 makes
+the four states an **ordered, first-match-wins** list and states an explicit precedence rule: the `stale`
+hash-match (step 3) takes precedence over the `overridden` fallback (step 4). The reviewer's worked
+example is resolved **explicitly as `stale`** (with a stated reason: the console last wrote exactly `P`,
+so re-sync recomposes it correctly; the coincidental-restore residual risk is named and accepted), and
+the REQ-F002-023 test list is extended to cover this exact case plus the `classifyMode`-only status
+assertion. No normative behavior of REQ-F002-020/047/059 changed; only clarifying cross-references were
+added. No REQ ids were renumbered, deleted, or newly created; no item was marked DEPRECATED — the fix was
+achievable by tightening REQ-F002-023 in place and adding cross-references. The rev-7 NOTE about
+status-line bookkeeping was not touched (left no worse).
 
 Rev 7 (resolves spec-review `docs/spec-review-F002-rev6.md`, 2026-07-08) closes two narrow reconciliation
 gaps the rev-6 edits left: (R6-1) REQ-F002-025's mandatory two-candidate preserve/discard choice is now

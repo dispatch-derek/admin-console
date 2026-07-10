@@ -1,0 +1,19 @@
+{
+  "name": "admin-console-e2e-integration",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Real-BFF-plus-web-dev-server integration E2E suite (Playwright), driving a live login/preview/apply flow against a fake-engine stub. Distinct from tests/e2e/, which is F-001's mocked-API smoke suite against a production preview build. Owned by tests/e2e-integration/ only -- see specs/ and TEST_PLAN.md for the spec-level test matrix; this package covers cross-component user journeys, not every unit/spec-level edge case.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^20.19.43",
+    "otplib": "^12.0.1",
+    "typescript": "^5.9.3"
+  }
+}

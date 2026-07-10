@@ -4,6 +4,7 @@
 // requires the operator to type a fixed on-screen confirmation token. The write is issued only on
 // an exact token match (enforced by DangerConfirm's typed-token mode).
 
+import type { RefObject } from 'react';
 import { DangerConfirm } from '../../components/DangerConfirm';
 
 export interface RawWriteRow {
@@ -20,9 +21,19 @@ interface MaskedDiffConfirmProps {
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  // Forwarded to DangerConfirm: a successful write disables the "Review & write" trigger in the same
+  // commit that closes the dialog, so focus falls back to this landmark instead of <body>.
+  fallbackFocusRef?: RefObject<HTMLElement>;
 }
 
-export function MaskedDiffConfirm({ rows, error, busy, onConfirm, onCancel }: MaskedDiffConfirmProps) {
+export function MaskedDiffConfirm({
+  rows,
+  error,
+  busy,
+  onConfirm,
+  onCancel,
+  fallbackFocusRef,
+}: MaskedDiffConfirmProps) {
   return (
     <DangerConfirm
       title="Confirm raw environment write"
@@ -35,6 +46,7 @@ export function MaskedDiffConfirm({ rows, error, busy, onConfirm, onCancel }: Ma
       busy={busy}
       onConfirm={onConfirm}
       onCancel={onCancel}
+      fallbackFocusRef={fallbackFocusRef}
     >
       <ul className="ac-masked-diff">
         {rows.map((row) => (

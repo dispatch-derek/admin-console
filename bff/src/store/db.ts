@@ -81,6 +81,35 @@ export function migrate(): void {
       envelope     TEXT NOT NULL,
       published_at TEXT
     );
+
+    -- F-002 customer-wide baseline system prompt (spec §4, REQ-F002-010/010a/010c/010d).
+    -- Console-OWNED data (boundary rule 3, 03-data-models.md): the engine stays authoritative
+    -- for the live workspace prompt; these tables hold only the baseline and the tracking
+    -- state needed to recompose and detect drift. NO 'current_prompt' column is stored — the
+    -- live prompt is always re-read from the engine (REQ-F002-010a).
+
+    -- Singleton: at most one logical baseline (one deployment == one customer). The fixed PK
+    -- ('singleton') plus upsert in the repo guarantees at-most-one row. No row / text NULL =
+    -- baseline never defined or cleared (REQ-F002-046).
+    CREATE TABLE IF NOT EXISTS baseline_prompt (
+      id         TEXT PRIMARY KEY,   -- fixed singleton key (repo always uses 'singleton')
+      text       TEXT,               -- the baseline; NULL = never defined / cleared
+      updated_at TEXT,               -- ISO-8601
+      updated_by TEXT                -- staff id (parent REQ-029c actor)
+    );
+
+    -- One row per workspace the console has applied to (opaque product handle PK).
+    -- remainder / applied_* are F-002-owned (co-written by F-003's editor per REQ-F002-010d).
+    -- composition_mode is added additively below (REQ-F002-010d) — schema-defined here but
+    -- semantically F-003-owned and read-only for F-002; deliberately NOT in this CREATE so a
+    -- fresh DB and an upgraded DB reach byte-identical shape via the same additive ALTER.
+    CREATE TABLE IF NOT EXISTS workspace_baseline_state (
+      workspace_id          TEXT PRIMARY KEY,  -- opaque product handle (parent REQ-021b)
+      remainder             TEXT,              -- stored remainder; NULL/'' = no per-ws portion
+      applied_composed_hash TEXT,              -- lowercase-hex SHA-256 of last-written composed (REQ-F002-010c)
+      applied_baseline_hash TEXT,              -- lowercase-hex SHA-256 of baseline at last apply (REQ-F002-010c)
+      applied_at            TEXT               -- ISO-8601
+    );
   `);
 
   // Additive column migrations for databases created before these columns existed. SQLite
@@ -91,6 +120,15 @@ export function migrate(): void {
     ['staff', 'locked_until', 'TEXT'],
     ['staff', 'last_totp_step', 'INTEGER'],
     ['login_challenges', 'attempts', 'INTEGER NOT NULL DEFAULT 0'],
+    // F-002 REQ-F002-010d — the shared composition_mode column. Added with a bare `TEXT`
+    // definition and NO SQL-level DEFAULT clause: NULL is a real, distinguishable state
+    // ("F-003 has not tracked this workspace"), NOT a stand-in for 'append'. Every existing
+    // row therefore stays NULL after this ALTER, and F-002 stays byte-identical to rev 3.
+    // F-002 is the schema-definer but NEVER writes/defaults/normalizes this column (that is
+    // F-003's ownership); it only reads it null-safely. Forward-compatible with F-003 landing
+    // later: F-003 adds its own read/write/validate on the same column with no further
+    // migration to this column's default behavior. DO NOT change this to `TEXT DEFAULT ...`.
+    ['workspace_baseline_state', 'composition_mode', 'TEXT'],
   ];
   for (const [table, column, definition] of additive) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -109,6 +147,26 @@ export function migrate(): void {
     CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
       BEFORE DELETE ON audit_log
       BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+  `);
+}
+
+// Down-migration (rollback) for the F-002 baseline-prompt schema (REQ-F002-010/010d).
+// This codebase has no external migration runner: forward migrations are the idempotent
+// `migrate()` above, run at boot. rollbackF002() is the matching DOWN direction — it removes
+// exactly what the F-002 block of migrate() adds, and is what an operator runs to revert the
+// F-002 schema change. It is idempotent (DROP ... IF EXISTS) and tested up→down→up.
+//
+// Scope: it drops BOTH F-002 tables. Dropping workspace_baseline_state necessarily drops the
+// composition_mode column with it (SQLite cannot DROP a single column pre-3.35 without a
+// table rebuild, and there is no partial-rollback requirement here — the whole F-002 schema
+// is one unit). Because F-002 is greenfield (no data in any environment yet), this rollback
+// destroys no production data today. Once real baseline/tracking data exists, running this is
+// destructive to console-owned tracking state (NOT to engine prompts, which are never stored
+// here) and must be gated on the operator confirmation described in the F-002 runbook.
+export function rollbackF002(): void {
+  db.exec(`
+    DROP TABLE IF EXISTS workspace_baseline_state;
+    DROP TABLE IF EXISTS baseline_prompt;
   `);
 }
 
