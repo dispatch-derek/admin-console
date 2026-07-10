@@ -5,6 +5,7 @@ import { useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { Input, Button } from '../../design-system';
 import type { Workspace } from '../../api/types';
 
 interface CreateWorkspaceProps {
@@ -32,24 +33,21 @@ export function CreateWorkspace({ onCreated, onCancel }: CreateWorkspaceProps) {
   }
 
   return (
-    <form className="create-workspace" onSubmit={submit}>
+    <form className="ac-create-workspace" onSubmit={submit}>
       <h2>New workspace</h2>
-      <label className="field">
-        <span>Display name</span>
-        <input
-          type="text"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-        />
-      </label>
+      <Input
+        label="Display name"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+      />
       <ErrorBanner message={error} />
-      <div className="modal-actions">
-        <button type="button" onClick={onCancel} disabled={busy}>
+      <div className="ac-modal-actions">
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>
           Cancel
-        </button>
-        <button type="submit" disabled={busy || displayName.trim() === ''}>
+        </Button>
+        <Button variant="cta" type="submit" disabled={busy || displayName.trim() === ''}>
           Create
-        </button>
+        </Button>
       </div>
     </form>
   );

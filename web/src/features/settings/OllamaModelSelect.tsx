@@ -8,14 +8,20 @@
 import { useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import { validateModelFreeText } from '../../components/validation';
+import { Input, Select } from '../../design-system';
 
 interface OllamaModelSelectProps {
   value: string;
   onChange: (value: string) => void;
   id?: string;
+  label?: string;
 }
 
-export function OllamaModelSelect({ value, onChange, id }: OllamaModelSelectProps) {
+// F-001 REQ-F001-016/021: rendered on DS form primitives — the discovered-model dropdown is the DS
+// `Select`, and both the loading placeholder and the Ollama-unreachable free-text fallback are the DS
+// `Input` (which carries the label→control association and the validation `error`). The non-blocking
+// "model list unavailable" notice stays a token-styled status line.
+export function OllamaModelSelect({ value, onChange, id, label }: OllamaModelSelectProps) {
   const [models, setModels] = useState<string[] | null>(null);
   const [available, setAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -44,24 +50,24 @@ export function OllamaModelSelect({ value, onChange, id }: OllamaModelSelectProp
   }, []);
 
   if (loading) {
-    return <input id={id} type="text" value={value} disabled placeholder="Loading models…" />;
+    return <Input id={id} label={label} type="text" value={value} disabled placeholder="Loading models…" />;
   }
 
   if (!available) {
     const err = value.trim() === '' ? null : validateModelFreeText(value);
     return (
-      <div className="ollama-fallback">
-        <input
+      <div className="ac-ollama-fallback">
+        <Input
           id={id}
+          label={label}
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          aria-invalid={err ? true : undefined}
+          error={err}
         />
-        <p className="warning" role="status">
+        <p className="ac-warning" role="status">
           Live Ollama model list unavailable — enter the model name manually.
         </p>
-        {err && <p className="field-error">{err}</p>}
       </div>
     );
   }
@@ -69,7 +75,7 @@ export function OllamaModelSelect({ value, onChange, id }: OllamaModelSelectProp
   const options = models ?? [];
   const hasCurrent = value === '' || options.includes(value);
   return (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select id={id} label={label} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">(inherit / none)</option>
       {!hasCurrent && <option value={value}>{value} (current)</option>}
       {options.map((name) => (
@@ -77,6 +83,6 @@ export function OllamaModelSelect({ value, onChange, id }: OllamaModelSelectProp
           {name}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

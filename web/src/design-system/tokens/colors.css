@@ -1,0 +1,118 @@
+/* Admin Console — Color tokens
+   Source of truth: frontend/src/index.css (:root + [data-theme="light"])
+   and tailwind.config.js theme.extend.colors.
+   Dark is the default theme; light overrides live under [data-theme="light"]. */
+
+:root {
+  /* ---- Raw brand + neutral scale (from tailwind.config.js) ---- */
+  --alm-black-900: #141414;
+  --alm-ink: #0e0f0f;          /* app background */
+  --alm-surface: #1b1b1e;      /* raised panel  */
+  --alm-surface-2: #27282a;    /* input / chat input */
+  --alm-accent: #3d4147;       /* gradient top / neutral accent */
+  --alm-sidebar: #25272c;
+  --alm-sidebar-button: #31353a;
+  --alm-secondary: #2c2f36;    /* button hover fill */
+  --alm-outline: #4e5153;
+  --alm-modal-border: #3f3f42;
+  --alm-dark-input: #18181b;
+
+  /* ---- Brand cyan (the Admin Console accent) ---- */
+  --alm-cyan-100: #c2e7fe;
+  --alm-cyan-300: #7cd4fd;     /* CTA / call-to-action */
+  --alm-cyan-400: #46c8ff;     /* primary button */
+  --alm-cyan-450: #36bffa;     /* home primary */
+  --alm-cyan-500: #0ba5ec;     /* teal / light-theme primary */
+  --alm-cyan-700: #065986;     /* royalblue */
+
+  /* ---- Semantic status (from tailwind palette) ---- */
+  --alm-danger: #f04438;
+  --alm-error: #b42318;
+  --alm-warn: #854708;
+  --alm-warn-text: #fec84b;
+  --alm-success: #05603a;
+  --alm-success-text: #a6f4c5;
+  --alm-purple: #4a1fb8;
+  --alm-magenta: #9e165f;
+
+  /* ================= SEMANTIC THEME ALIASES (dark default) ================= */
+  --theme-loader: #ffffff;
+  --theme-bg-primary: #0e0f0f;
+  --theme-bg-secondary: #1b1b1e;
+  --theme-bg-sidebar: #0e0f0f;
+  --theme-bg-container: #0e0f0f;
+  --theme-bg-chat: #1b1b1e;
+  --theme-bg-chat-input: #27282a;
+
+  --theme-text-primary: #ffffff;
+  --theme-text-secondary: rgba(255, 255, 255, 0.6);
+  --theme-placeholder: #57585a;
+
+  --theme-sidebar-item-hover: #3f3f42;
+  --theme-sidebar-item-selected: rgba(255, 255, 255, 0.05);
+  --theme-sidebar-border: rgba(255, 255, 255, 0.1);
+
+  --theme-modal-border: #3f3f42;
+  --theme-settings-input-bg: #0e0f0f;
+  --theme-settings-input-placeholder: rgba(255, 255, 255, 0.5);
+  --theme-settings-input-text: #ffffff;
+  --theme-chat-input-border: #525355;
+  --theme-action-menu-bg: #27282a;
+
+  --theme-button-primary: #46c8ff;
+  --theme-button-primary-hover: #434343;
+  --theme-button-cta: #7cd4fd;
+
+  /* toggle switch */
+  --theme-toggle-off: #71717a;   /* zinc-500 */
+  --theme-toggle-on: #4ade80;    /* green-400 */
+
+  /* status badge fills (dark) */
+  --theme-badge-info-bg: rgba(2, 132, 199, 0.2);
+  --theme-badge-info-text: #38bdf8;
+  --theme-badge-success-bg: rgba(22, 163, 74, 0.2);
+  --theme-badge-success-text: #4ade80;
+  --theme-badge-warn-bg: rgba(202, 138, 4, 0.2);
+  --theme-badge-warn-text: #facc15;
+  --theme-badge-danger-bg: rgba(220, 38, 38, 0.2);
+  --theme-badge-danger-text: #f87171;
+}
+
+/* ============================= LIGHT THEME ============================= */
+[data-theme="light"] {
+  --theme-loader: #000000;
+  --theme-bg-primary: #ffffff;
+  --theme-bg-secondary: #ffffff;
+  --theme-bg-sidebar: #edf2fa;
+  --theme-bg-container: #f9fbfd;
+  --theme-bg-chat: #ffffff;
+  --theme-bg-chat-input: #eaeaea;
+
+  --theme-text-primary: #0e0f0f;
+  --theme-text-secondary: #7a7d7e;
+  --theme-placeholder: #9ca3af;
+
+  --theme-sidebar-item-hover: #c8efff;
+  --theme-sidebar-item-selected: #ffffff;
+  --theme-sidebar-border: #d3d4d4;
+
+  --theme-modal-border: #d3d3d3;
+  --theme-settings-input-bg: #edf2fa;
+  --theme-settings-input-placeholder: rgba(0, 0, 0, 0.5);
+  --theme-settings-input-text: #0e0f0f;
+  --theme-chat-input-border: #cccccc;
+  --theme-action-menu-bg: #eaeaea;
+
+  --theme-button-primary: #0ba5ec;
+  --theme-button-primary-hover: #dedede;
+  --theme-button-cta: #7cd4fd;
+
+  --theme-badge-info-bg: rgba(2, 132, 199, 0.12);
+  --theme-badge-info-text: #0369a1;
+  --theme-badge-success-bg: rgba(5, 150, 105, 0.12);
+  --theme-badge-success-text: #047857;
+  --theme-badge-warn-bg: rgba(202, 138, 4, 0.12);
+  --theme-badge-warn-text: #a16207;
+  --theme-badge-danger-bg: rgba(220, 38, 38, 0.12);
+  --theme-badge-danger-text: #b91c1c;
+}

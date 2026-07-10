@@ -7,6 +7,7 @@ import * as api from '../api/client';
 import { ApiError } from '../api/errors';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { EnrollMfa } from './EnrollMfa';
+import { Input, Button } from '../design-system';
 import { isSessionResult, type LoginStage, type StageOrSession, type Staff } from '../api/types';
 
 type Phase = 'credentials' | 'setPassword' | 'mfa' | 'enroll' | 'recovery';
@@ -80,7 +81,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 
   if (phase === 'enroll' && stage) {
     return (
-      <div className="auth-screen">
+      <div className="ac-auth-screen">
         <EnrollMfa
           challengeId={stage.challengeId}
           secret={stage.secret}
@@ -93,142 +94,126 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
   }
 
   return (
-    <div className="auth-screen">
-      <div className="auth-panel">
+    <div className="ac-auth-screen">
+      <div className="ac-auth-panel">
         <h1>Admin Console</h1>
 
         {phase === 'credentials' && (
           <form onSubmit={submitCredentials}>
-            <label className="field">
-              <span>Username</span>
-              <input
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Password</span>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
+            <Input
+              label="Username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <Input
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
             <ErrorBanner message={error} />
-            <button type="submit" disabled={busy || !username || !password}>
+            <Button variant="login" type="submit" disabled={busy || !username || !password}>
               Sign in
-            </button>
-            <button
-              type="button"
-              className="link-button"
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => {
                 setError(null);
                 setPhase('recovery');
               }}
             >
               Use a recovery code
-            </button>
+            </Button>
           </form>
         )}
 
         {phase === 'setPassword' && (
           <form onSubmit={submitSetPassword}>
             <h2>Set a new password</h2>
-            <label className="field">
-              <span>New password</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
-            </label>
+            <Input
+              label="New password"
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
             <ErrorBanner message={error} />
-            <button type="submit" disabled={busy || newPassword === ''}>
+            <Button variant="login" type="submit" disabled={busy || newPassword === ''}>
               Set password
-            </button>
+            </Button>
           </form>
         )}
 
         {phase === 'mfa' && (
           <form onSubmit={submitMfa}>
             <h2>Enter your authenticator code</h2>
-            <label className="field">
-              <span>6-digit code</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-              />
-            </label>
+            <Input
+              label="6-digit code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
             <ErrorBanner message={error} />
-            <button type="submit" disabled={busy || code.trim() === ''}>
+            <Button variant="login" type="submit" disabled={busy || code.trim() === ''}>
               Verify
-            </button>
-            <button
-              type="button"
-              className="link-button"
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => {
                 setError(null);
                 setPhase('recovery');
               }}
             >
               Use a recovery code
-            </button>
+            </Button>
           </form>
         )}
 
         {phase === 'recovery' && (
           <form onSubmit={submitRecovery}>
             <h2>Sign in with a recovery code</h2>
-            <label className="field">
-              <span>Username</span>
-              <input
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Password</span>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Recovery code</span>
-              <input
-                type="text"
-                value={recoveryCode}
-                onChange={(e) => setRecoveryCode(e.target.value)}
-              />
-            </label>
+            <Input
+              label="Username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <Input
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <Input
+              label="Recovery code"
+              type="text"
+              value={recoveryCode}
+              onChange={(e) => setRecoveryCode(e.target.value)}
+            />
             <ErrorBanner message={error} />
-            <button
+            <Button
+              variant="login"
               type="submit"
               disabled={busy || !username || !password || recoveryCode.trim() === ''}
             >
               Sign in
-            </button>
-            <button
-              type="button"
-              className="link-button"
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => {
                 setError(null);
                 setPhase('credentials');
               }}
             >
               Back
-            </button>
+            </Button>
           </form>
         )}
       </div>

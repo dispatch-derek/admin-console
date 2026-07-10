@@ -1,0 +1,14 @@
+{
+  "name": "admin-console-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-browser E2E smoke suite for the admin-console web frontend (F-001 design-system migration). Runs against a production `vite preview` build with /api/* mocked via Playwright route interception -- no live BFF/upstream/auth stack.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}
+

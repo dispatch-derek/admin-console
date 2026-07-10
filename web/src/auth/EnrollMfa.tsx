@@ -6,6 +6,8 @@ import { useState } from 'react';
 import * as api from '../api/client';
 import { ApiError } from '../api/errors';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { AcknowledgeCheckbox } from '../components/AcknowledgeCheckbox';
+import { Input, Button } from '../design-system';
 import type { Staff } from '../api/types';
 
 interface EnrollMfaProps {
@@ -42,68 +44,61 @@ export function EnrollMfa({ challengeId, secret, qr, otpauthUri, onComplete }: E
   // Recovery-code reveal stage: shown once, must be acknowledged before entering the console.
   if (recoveryCodes && staff) {
     return (
-      <div className="auth-panel">
+      <div className="ac-auth-panel">
         <h2>Save your recovery codes</h2>
         <p>
           These one-time recovery codes let you sign in if you lose your authenticator. They are
           shown only once. Store them somewhere safe.
         </p>
-        <ul className="recovery-codes">
+        <ul className="ac-recovery-codes">
           {recoveryCodes.map((rc) => (
             <li key={rc}>
               <code>{rc}</code>
             </li>
           ))}
         </ul>
-        <label className="field checkbox">
-          <input
-            type="checkbox"
-            checked={acknowledged}
-            onChange={(e) => setAcknowledged(e.target.checked)}
-          />
-          <span>I have saved these recovery codes</span>
-        </label>
-        <button type="button" disabled={!acknowledged} onClick={() => onComplete(staff)}>
+        <AcknowledgeCheckbox checked={acknowledged} onChange={setAcknowledged}>
+          I have saved these recovery codes
+        </AcknowledgeCheckbox>
+        <Button variant="login" disabled={!acknowledged} onClick={() => onComplete(staff)}>
           Continue to console
-        </button>
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="auth-panel">
+    <div className="ac-auth-panel">
       <h2>Set up two-factor authentication</h2>
       <p>Scan this QR code with your authenticator app, then enter the 6-digit code it shows.</p>
       {qr ? (
-        <img className="mfa-qr" src={qr} alt="TOTP enrollment QR code" />
+        <img className="ac-mfa-qr" src={qr} alt="TOTP enrollment QR code" />
       ) : (
         <p>QR code unavailable — use the secret below for manual entry.</p>
       )}
       {secret && (
-        <p className="mfa-secret">
+        <p className="ac-mfa-secret">
           Manual entry secret: <code>{secret}</code>
         </p>
       )}
       {otpauthUri && (
-        <p className="mfa-uri">
+        <p className="ac-mfa-uri">
           <code>{otpauthUri}</code>
         </p>
       )}
       <form onSubmit={confirm}>
-        <label className="field">
-          <span>Authenticator code</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-        </label>
+        <Input
+          label="Authenticator code"
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
         <ErrorBanner message={error} />
-        <button type="submit" disabled={busy || code.trim() === ''}>
+        <Button variant="login" type="submit" disabled={busy || code.trim() === ''}>
           Confirm code
-        </button>
+        </Button>
       </form>
     </div>
   );

@@ -8,7 +8,7 @@ interface ErrorBannerProps {
 export function ErrorBanner({ message }: ErrorBannerProps) {
   if (!message) return null;
   return (
-    <div role="alert" className="error-banner">
+    <div role="alert" className="ac-error-banner">
       {message}
     </div>
   );

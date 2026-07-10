@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { Select, Button } from '../../design-system';
 import type { User, Workspace } from '../../api/types';
 
 export function MembershipPanel() {
@@ -82,44 +83,45 @@ export function MembershipPanel() {
   const addable = allUsers.filter((u) => !memberIds.has(u.id));
 
   return (
-    <section className="membership-panel">
+    <section className="ac-membership-panel">
       <ErrorBanner message={error} />
 
-      <label className="field">
-        <span>Workspace</span>
-        <select value={workspaceId} onChange={(e) => selectWorkspace(e.target.value)}>
-          <option value="">— select —</option>
-          {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>
-              {ws.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        label="Workspace"
+        value={workspaceId}
+        onChange={(e) => selectWorkspace(e.target.value)}
+      >
+        <option value="">— select —</option>
+        {workspaces.map((ws) => (
+          <option key={ws.id} value={ws.id}>
+            {ws.displayName}
+          </option>
+        ))}
+      </Select>
 
       {workspaceId && (
         <>
-          <div className="add-member">
-            <select value={addUserId} onChange={(e) => setAddUserId(e.target.value)}>
+          <div className="ac-add-member">
+            <Select value={addUserId} onChange={(e) => setAddUserId(e.target.value)}>
               <option value="">— select user —</option>
               {addable.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.username}
                 </option>
               ))}
-            </select>
-            <button type="button" disabled={busy || !addUserId} onClick={add}>
+            </Select>
+            <Button variant="solid" disabled={busy || !addUserId} onClick={add}>
               Add member
-            </button>
+            </Button>
           </div>
 
-          <ul className="member-list">
+          <ul className="ac-member-list">
             {members.map((m) => (
               <li key={m.id}>
-                <span>{m.username}</span>
-                <button type="button" disabled={busy} onClick={() => remove(m.id)}>
+                <span className="ac-doc-title">{m.username}</span>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => remove(m.id)}>
                   Remove
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

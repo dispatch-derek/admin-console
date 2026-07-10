@@ -19,6 +19,7 @@ import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { DangerConfirm } from '../../components/DangerConfirm';
 import { SecretField } from './SecretField';
+import { Button, Input, Select, Toggle } from '../../design-system';
 import type {
   SettingCategory,
   SettingControl,
@@ -176,7 +177,7 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
   }
 
   if (loadError) return <ErrorBanner message={loadError} />;
-  if (!view) return <p className="page-loading">Loading…</p>;
+  if (!view) return <p className="ac-page-loading">Loading…</p>;
 
   const allVerified = verified !== null && Object.values(verified).every(Boolean);
 
@@ -198,16 +199,15 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
       );
     } else if (control.type === 'boolean') {
       const current = draftHas ? Boolean(draft[control.id]) : Boolean(control.value);
+      // A boolean setting is a genuine on/off switch → DS `Toggle` (role="switch"). This differs
+      // from the §8 DangerConfirm acknowledgement, which stays a native checkbox (role="checkbox").
       field = (
-        <label className="field checkbox">
-          <input
-            type="checkbox"
-            checked={current}
-            disabled={control.readOnly}
-            onChange={(e) => setValue(control.id, e.target.checked)}
-          />
-          <span>{label}</span>
-        </label>
+        <Toggle
+          label={label}
+          enabled={current}
+          disabled={control.readOnly}
+          onChange={(next) => setValue(control.id, next)}
+        />
       );
     } else {
       const current = draftHas
@@ -219,53 +219,52 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
       // otherwise it degrades to validated free-text (the accepted provider enum values are not
       // grounded today, REQ-036b/064a — the dropdown is a forward hook).
       const asDropdown = control.type === 'select' && (control.options?.length ?? 0) > 0;
-      field = (
-        <label className="field">
-          <span>
-            {label}
-            {control.type === 'select' && <em className="hint"> (provider selector)</em>}
-          </span>
-          {asDropdown ? (
-            <select
-              id={control.id}
-              value={current}
-              disabled={control.readOnly}
-              onChange={(e) => setValue(control.id, e.target.value)}
-            >
-              {!control.options!.some((o) => o.value === current) && (
-                <option value={current}>{current || '— select —'}</option>
-              )}
-              {control.options!.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              id={control.id}
-              type={control.type === 'number' ? 'number' : 'text'}
-              value={current}
-              readOnly={control.readOnly}
-              onChange={(e) =>
-                setValue(
-                  control.id,
-                  control.type === 'number' && e.target.value !== ''
-                    ? Number(e.target.value)
-                    : e.target.value,
-                )
-              }
-            />
-          )}
-        </label>
-      );
+      const fieldLabel = control.type === 'select' ? `${label} (provider selector)` : label;
+      if (asDropdown) {
+        field = (
+          <Select
+            id={control.id}
+            label={fieldLabel}
+            value={current}
+            disabled={control.readOnly}
+            onChange={(e) => setValue(control.id, e.target.value)}
+          >
+            {!control.options!.some((o) => o.value === current) && (
+              <option value={current}>{current || '— select —'}</option>
+            )}
+            {control.options!.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        );
+      } else {
+        field = (
+          <Input
+            id={control.id}
+            label={fieldLabel}
+            type={control.type === 'number' ? 'number' : 'text'}
+            value={current}
+            readOnly={control.readOnly}
+            onChange={(e) =>
+              setValue(
+                control.id,
+                control.type === 'number' && e.target.value !== ''
+                  ? Number(e.target.value)
+                  : e.target.value,
+              )
+            }
+          />
+        );
+      }
     }
 
     return (
-      <div key={control.id} className="control-row">
+      <div key={control.id} className="ac-control-row">
         {field}
         {status !== undefined && (
-          <span className={status ? 'verify-ok' : 'verify-pending'}>
+          <span className={status ? 'ac-verify-ok' : 'ac-verify-pending'}>
             {status
               ? 'Saved'
               : control.secret
@@ -313,28 +312,28 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
       : null;
 
     return (
-      <section key={category.id} className="settings-category">
-        {categories.length > 1 && <h3 className="category-title">{category.label}</h3>}
+      <section key={category.id} className="ac-settings-category">
+        {categories.length > 1 && <h3 className="ac-category-title">{category.label}</h3>}
         {topControls.map(renderControl)}
 
         {groups.length > 0 && (
-          <div className="provider-groups">
+          <div className="ac-provider-groups">
             {groups.map((group) => {
               const stateKey = `${category.id}:${group.key}`;
               const open = openGroups[stateKey] ?? group.key === activeKey;
               return (
-                <div key={group.key} className={`provider-group${group.key === activeKey ? ' active' : ''}`}>
+                <div key={group.key} className={`ac-provider-group${group.key === activeKey ? ' active' : ''}`}>
                   <button
                     type="button"
-                    className="provider-group-header"
+                    className="ac-provider-group-header"
                     aria-expanded={open}
                     onClick={() => setOpenGroups((s) => ({ ...s, [stateKey]: !open }))}
                   >
-                    <span className="provider-group-caret">{open ? '▾' : '▸'}</span>
-                    <span className="provider-group-name">{group.label}</span>
-                    {group.key === activeKey && <span className="badge badge-active">Active</span>}
+                    <span className="ac-provider-group-caret">{open ? '▾' : '▸'}</span>
+                    <span className="ac-provider-group-name">{group.label}</span>
+                    {group.key === activeKey && <span className="ac-badge ac-badge-active">Active</span>}
                   </button>
-                  <div className={`provider-group-body${open ? '' : ' collapsed'}`}>
+                  <div className={`ac-provider-group-body${open ? '' : ' collapsed'}`}>
                     {group.controls.map(renderControl)}
                   </div>
                 </div>
@@ -347,26 +346,25 @@ export function SettingsPage({ categoryIds }: SettingsPageProps = {}) {
   };
 
   return (
-    <div className="settings-page">
+    <div className="ac-settings-page">
       {categories.map(renderCategory)}
 
       <ErrorBanner message={saveError} />
       {verified !== null &&
         (allVerified ? (
-          <p className="success">All changes saved.</p>
+          <p className="ac-success">All changes saved.</p>
         ) : (
-          <p className="warning">Some changes could not be confirmed — see the fields above.</p>
+          <p className="ac-warning">Some changes could not be confirmed — see the fields above.</p>
         ))}
 
-      <div className="settings-actions">
-        <button
-          type="button"
-          className="primary-button"
+      <div className="ac-settings-actions">
+        <Button
+          variant="cta"
           disabled={busy || changedIds.length === 0}
           onClick={onSave}
         >
           Save changes ({changedIds.length})
-        </button>
+        </Button>
       </div>
 
       {confirming && (

@@ -9,6 +9,7 @@ import { ErrorBanner } from '../../components/ErrorBanner';
 import { DangerConfirm } from '../../components/DangerConfirm';
 import { CreateWorkspace } from './CreateWorkspace';
 import { WorkspaceSettings } from './WorkspaceSettings';
+import { Button } from '../../design-system';
 import type { Workspace } from '../../api/types';
 
 export function WorkspaceList() {
@@ -50,33 +51,29 @@ export function WorkspaceList() {
   }
 
   return (
-    <div className="workspaces-view">
-      <div className="list-column">
-        <div className="list-header">
-          <button type="button" className="primary-button" onClick={() => setCreating(true)}>
+    <div className="ac-workspaces-view">
+      <div className="ac-list-column">
+        <div className="ac-list-header">
+          <Button variant="cta" onClick={() => setCreating(true)}>
             New workspace
-          </button>
+          </Button>
         </div>
         <ErrorBanner message={error} />
-        <ul className="entity-list">
+        <ul className="ac-entity-list">
           {workspaces.map((ws) => (
             <li key={ws.id} className={ws.id === selectedId ? 'selected' : undefined}>
-              <button type="button" className="link-button" onClick={() => setSelectedId(ws.id)}>
+              <Button variant="ghost" onClick={() => setSelectedId(ws.id)}>
                 {ws.displayName}
-              </button>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={() => setDeleteTarget(ws)}
-              >
+              </Button>
+              <Button variant="danger" onClick={() => setDeleteTarget(ws)}>
                 Delete
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="detail-column">
+      <div className="ac-detail-column">
         {creating && (
           <CreateWorkspace
             onCreated={(ws) => {

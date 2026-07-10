@@ -1,0 +1,88 @@
+.track {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  transition: background-color 0.2s ease;
+}
+
+.track:focus-visible {
+  outline: 0.125rem solid var(--theme-button-primary);
+  outline-offset: 0.125rem;
+}
+
+.trackSm {
+  width: 1.25rem;
+  height: 0.75rem;
+}
+
+.trackMd {
+  width: 1.75rem;
+  height: 1rem;
+}
+
+.trackLg {
+  width: 2.25rem;
+  height: 1.1875rem;
+}
+
+.knob {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  border-radius: var(--radius-full);
+  background: var(--theme-loader);
+  transition: transform 0.2s ease;
+}
+
+.knobSm {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.knobMd {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.knobLg {
+  width: 0.9375rem;
+  height: 0.9375rem;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--theme-text-primary);
+}
+
+.labelLg {
+  font-size: var(--fs-base);
+}
+
+.description {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  color: var(--theme-text-secondary);
+  max-width: 32.5rem;
+}
+
+.default {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.horizontal {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  max-width: 43.75rem;
+}

@@ -36,7 +36,7 @@ export function MaskedDiffConfirm({ rows, error, busy, onConfirm, onCancel }: Ma
       onConfirm={onConfirm}
       onCancel={onCancel}
     >
-      <ul className="masked-diff">
+      <ul className="ac-masked-diff">
         {rows.map((row) => (
           <li key={row.key}>
             <code>{row.key}</code> →{' '}

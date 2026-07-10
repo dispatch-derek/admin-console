@@ -16,6 +16,7 @@ import { MultiUserGate } from './features/users/MultiUserGate';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { RawEnvEditor } from './features/raweditor/RawEnvEditor';
 import { DiagnosticsPage } from './features/diagnostics/DiagnosticsPage';
+import { SidebarItem, PageHeader, Button } from './design-system';
 
 type View =
   | 'llm'
@@ -104,47 +105,43 @@ function Console() {
   const { staff, loading, login, logout } = useAuth();
   const [view, setView] = useState<View>('llm');
 
-  if (loading) return <div className="app-loading">Loading…</div>;
+  if (loading) return <div className="ac-app-loading">Loading…</div>;
   if (!staff) return <LoginPage onAuthenticated={login} />;
 
   const meta = PAGE_META[view];
 
   return (
-    <div className="app">
-      <aside className="app-sidebar">
-        <div className="app-brand">AnythingLLM Admin Console</div>
-        <nav className="sidebar-nav">
+    <div className="ac-app">
+      <aside className="ac-app-sidebar">
+        <div className="ac-app-brand">AnythingLLM Admin Console</div>
+        <nav className="ac-sidebar-nav">
           {NAV.map((section) => (
-            <div key={section.label} className="sidebar-section">
-              <div className="sidebar-section-label">{section.label}</div>
+            <div key={section.label} className="ac-sidebar-section">
+              <div className="ac-sidebar-section-label">{section.label}</div>
               {section.items.map((item) => (
-                <button
+                <SidebarItem
                   key={item.id}
-                  type="button"
-                  className={view === item.id ? 'sidebar-item active' : 'sidebar-item'}
+                  className="ac-sidebar-item"
+                  label={item.label}
+                  active={view === item.id}
                   onClick={() => setView(item.id)}
-                >
-                  {item.label}
-                </button>
+                />
               ))}
             </div>
           ))}
         </nav>
-        <div className="sidebar-footer">
-          <span className="app-user">{staff.username}</span>
-          <button type="button" className="link-button" onClick={() => void logout()}>
+        <div className="ac-sidebar-footer">
+          <span className="ac-app-user">{staff.username}</span>
+          <Button variant="ghost" size="sm" onClick={() => void logout()}>
             Sign out
-          </button>
+          </Button>
         </div>
       </aside>
 
-      <main className="app-main">
-        <header className="page-header">
-          <h1>{meta.title}</h1>
-          <p className="page-description">{meta.description}</p>
-        </header>
+      <main className="ac-app-main">
+        <PageHeader className="ac-page-header" title={meta.title} description={meta.description} />
 
-        <div className="page-body">
+        <div className="ac-page-body">
           {SETTINGS_VIEWS.has(view) && <SettingsPage categoryIds={[view]} />}
           {view === 'workspaces' && <WorkspaceList />}
           {view === 'raw' && <RawEnvEditor />}

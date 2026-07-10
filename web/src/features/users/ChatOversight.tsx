@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../../api/client';
 import { ApiError } from '../../api/errors';
 import { ErrorBanner } from '../../components/ErrorBanner';
+import { Select, Button } from '../../design-system';
 import type { Workspace } from '../../api/types';
 
 const PAGE_SIZE = 20;
@@ -55,22 +56,23 @@ export function ChatOversight() {
   }, [load, workspace]);
 
   return (
-    <section className="chat-oversight">
+    <section className="ac-chat-oversight">
       <ErrorBanner message={error} />
 
-      <label className="field">
-        <span>Workspace filter</span>
-        <select value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
-          <option value="">All workspaces</option>
-          {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>
-              {ws.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        label="Workspace filter"
+        value={workspace}
+        onChange={(e) => setWorkspace(e.target.value)}
+      >
+        <option value="">All workspaces</option>
+        {workspaces.map((ws) => (
+          <option key={ws.id} value={ws.id}>
+            {ws.displayName}
+          </option>
+        ))}
+      </Select>
 
-      <ol className="chat-list">
+      <ol className="ac-chat-list">
         {chats.map((chat, i) => (
           <li key={offset + i}>
             <pre>{JSON.stringify(chat, null, 2)}</pre>
@@ -78,21 +80,21 @@ export function ChatOversight() {
         ))}
       </ol>
 
-      <div className="pager">
-        <button
-          type="button"
+      <div className="ac-pager">
+        <Button
+          variant="ghost"
           disabled={offset === 0}
           onClick={() => load(Math.max(0, offset - PAGE_SIZE), workspace)}
         >
           Previous
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="ghost"
           disabled={!hasMore}
           onClick={() => load(offset + PAGE_SIZE, workspace)}
         >
           Next
-        </button>
+        </Button>
       </div>
     </section>
   );

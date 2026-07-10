@@ -11,6 +11,7 @@ import { ErrorBanner } from '../../components/ErrorBanner';
 import { SetNotSetBadge } from '../../components/SetNotSetBadge';
 import { AdvancedModeGate } from './AdvancedModeGate';
 import { MaskedDiffConfirm, type RawWriteRow } from './MaskedDiffConfirm';
+import { Button, Table, Input } from '../../design-system';
 import type { RawEnvEntry } from '../../api/types';
 
 // Secret keys are exactly those the BFF reports as set/notSet (it withholds their value).
@@ -82,58 +83,47 @@ export function RawEnvEditor() {
   }
 
   return (
-    <div className="raw-editor">
+    <div className="ac-raw-editor">
       <AdvancedModeGate advanced={advanced} onChange={setAdvanced} />
       <ErrorBanner message={loadError} />
-      {result && <p className="success">{result}</p>}
+      {result && <p className="ac-success">{result}</p>}
 
-      <table className="entity-table">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Current state</th>
-            <th>New value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={entry.key}>
-              <td>
-                <code>{entry.key}</code>
-              </td>
-              <td>
-                {isSecretEntry(entry) ? (
-                  <SetNotSetBadge set={entry.state === 'set'} />
-                ) : entry.state === 'value' ? (
-                  <code>{entry.value}</code>
-                ) : (
-                  <em>not returned / unknown</em>
-                )}
-              </td>
-              <td>
-                <input
-                  type={isSecretEntry(entry) ? 'password' : 'text'}
-                  value={drafts[entry.key] ?? ''}
-                  disabled={!advanced}
-                  placeholder={isSecretEntry(entry) ? 'new value (write-only)' : ''}
-                  onChange={(e) =>
-                    setDrafts((d) => ({ ...d, [entry.key]: e.target.value }))
-                  }
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Table columns={['Key', 'Current state', 'New value']}>
+        {entries.map((entry) => (
+          <Table.Row key={entry.key}>
+            <Table.Cell>
+              <code>{entry.key}</code>
+            </Table.Cell>
+            <Table.Cell>
+              {isSecretEntry(entry) ? (
+                <SetNotSetBadge set={entry.state === 'set'} />
+              ) : entry.state === 'value' ? (
+                <code>{entry.value}</code>
+              ) : (
+                <em>not returned / unknown</em>
+              )}
+            </Table.Cell>
+            <Table.Cell>
+              <Input
+                type={isSecretEntry(entry) ? 'password' : 'text'}
+                value={drafts[entry.key] ?? ''}
+                disabled={!advanced}
+                placeholder={isSecretEntry(entry) ? 'new value (write-only)' : ''}
+                onChange={(e) => setDrafts((d) => ({ ...d, [entry.key]: e.target.value }))}
+              />
+            </Table.Cell>
+          </Table.Row>
+        ))}
+      </Table>
 
-      <div className="raw-actions">
-        <button
-          type="button"
+      <div className="ac-raw-actions">
+        <Button
+          variant="solid"
           disabled={!advanced || rows.length === 0 || busy}
           onClick={() => setConfirming(true)}
         >
           Review & write ({rows.length})
-        </button>
+        </Button>
       </div>
 
       {confirming && (

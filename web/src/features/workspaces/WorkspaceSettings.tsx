@@ -18,6 +18,7 @@ import {
 } from '../../components/validation';
 import { OllamaModelSelect } from '../settings/OllamaModelSelect';
 import { KnowledgePanel } from './KnowledgePanel';
+import { Button, Input, Select, Textarea } from '../../design-system';
 import type { WorkspaceSettings as WS } from '../../api/types';
 
 interface WorkspaceSettingsProps {
@@ -194,191 +195,158 @@ export function WorkspaceSettings({ workspaceId }: WorkspaceSettingsProps) {
   const modelField = (
     field: 'llmModel' | 'agentLlmModel',
     providerField: 'llmProvider' | 'agentLlmProvider',
+    label: string,
   ) => {
     const effectiveProvider = form[providerField] ?? '';
     if (effectiveProvider === 'ollama') {
       return (
-        <OllamaModelSelect id={field} value={form[field] ?? ''} onChange={(v) => set(field, v)} />
+        <OllamaModelSelect
+          id={field}
+          label={label}
+          value={form[field] ?? ''}
+          onChange={(v) => set(field, v)}
+        />
       );
     }
     return (
-      <input
+      <Input
         id={field}
+        label={label}
         type="text"
         value={form[field] ?? ''}
         onChange={(e) => set(field, e.target.value)}
-        aria-invalid={errors[field] ? true : undefined}
+        error={errors[field]}
       />
     );
   };
 
   return (
-    <div className="workspace-settings">
+    <div className="ac-workspace-settings">
       <h2>{original.displayName}</h2>
       <form onSubmit={save}>
-        <label className="field">
-          <span>Display name</span>
-          <input
-            id="displayName"
-            type="text"
-            value={form.displayName ?? ''}
-            onChange={(e) => set('displayName', e.target.value)}
-            aria-invalid={errors.displayName ? true : undefined}
-          />
-          {errors.displayName && <span className="field-error">{errors.displayName}</span>}
-        </label>
+        <Input
+          id="displayName"
+          label="Display name"
+          type="text"
+          value={form.displayName ?? ''}
+          onChange={(e) => set('displayName', e.target.value)}
+          error={errors.displayName}
+        />
 
-        <label className="field">
-          <span>Response mode</span>
-          {outOfRangeMode && (
-            <span className="readonly-note">
-              Current value <code>{original.responseMode}</code> is read-only; pick chat or query to
-              change it.
-            </span>
-          )}
-          <select
-            id="responseMode"
-            value={responseModeChoice}
-            onChange={(e) => setResponseModeChoice(e.target.value)}
-          >
-            {outOfRangeMode && <option value="">— keep current —</option>}
-            {RESPONSE_MODES.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
+        {outOfRangeMode && (
+          <p className="ac-readonly-note">
+            Current value <code>{original.responseMode}</code> is read-only; pick chat or query to
+            change it.
+          </p>
+        )}
+        <Select
+          id="responseMode"
+          label="Response mode"
+          value={responseModeChoice}
+          onChange={(e) => setResponseModeChoice(e.target.value)}
+        >
+          {outOfRangeMode && <option value="">— keep current —</option>}
+          {RESPONSE_MODES.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
 
-        <label className="field">
-          <span>Temperature (0–2, blank = inherit)</span>
-          <input
-            id="temperature"
-            type="text"
-            value={form.temperature ?? ''}
-            onChange={(e) => set('temperature', e.target.value)}
-            aria-invalid={errors.temperature ? true : undefined}
-          />
-          {errors.temperature && <span className="field-error">{errors.temperature}</span>}
-        </label>
+        <Input
+          id="temperature"
+          label="Temperature (0–2, blank = inherit)"
+          type="text"
+          value={form.temperature ?? ''}
+          onChange={(e) => set('temperature', e.target.value)}
+          error={errors.temperature}
+        />
 
-        <label className="field">
-          <span>History window (integer ≥ 0)</span>
-          <input
-            id="historyWindow"
-            type="text"
-            value={form.historyWindow ?? ''}
-            onChange={(e) => set('historyWindow', e.target.value)}
-            aria-invalid={errors.historyWindow ? true : undefined}
-          />
-          {errors.historyWindow && <span className="field-error">{errors.historyWindow}</span>}
-        </label>
+        <Input
+          id="historyWindow"
+          label="History window (integer ≥ 0)"
+          type="text"
+          value={form.historyWindow ?? ''}
+          onChange={(e) => set('historyWindow', e.target.value)}
+          error={errors.historyWindow}
+        />
 
-        <label className="field">
-          <span>Retrieval threshold (0–1, blank = inherit)</span>
-          <input
-            id="retrievalThreshold"
-            type="text"
-            value={form.retrievalThreshold ?? ''}
-            onChange={(e) => set('retrievalThreshold', e.target.value)}
-            aria-invalid={errors.retrievalThreshold ? true : undefined}
-          />
-          {errors.retrievalThreshold && (
-            <span className="field-error">{errors.retrievalThreshold}</span>
-          )}
-        </label>
+        <Input
+          id="retrievalThreshold"
+          label="Retrieval threshold (0–1, blank = inherit)"
+          type="text"
+          value={form.retrievalThreshold ?? ''}
+          onChange={(e) => set('retrievalThreshold', e.target.value)}
+          error={errors.retrievalThreshold}
+        />
 
-        <label className="field">
-          <span>Retrieval top N (integer ≥ 1)</span>
-          <input
-            id="retrievalTopN"
-            type="text"
-            value={form.retrievalTopN ?? ''}
-            onChange={(e) => set('retrievalTopN', e.target.value)}
-            aria-invalid={errors.retrievalTopN ? true : undefined}
-          />
-          {errors.retrievalTopN && <span className="field-error">{errors.retrievalTopN}</span>}
-        </label>
+        <Input
+          id="retrievalTopN"
+          label="Retrieval top N (integer ≥ 1)"
+          type="text"
+          value={form.retrievalTopN ?? ''}
+          onChange={(e) => set('retrievalTopN', e.target.value)}
+          error={errors.retrievalTopN}
+        />
 
-        <label className="field">
-          <span>Retrieval mode (blank = inherit)</span>
-          <input
-            id="retrievalMode"
-            type="text"
-            value={form.retrievalMode ?? ''}
-            onChange={(e) => set('retrievalMode', e.target.value)}
-            aria-invalid={errors.retrievalMode ? true : undefined}
-          />
-          {errors.retrievalMode && <span className="field-error">{errors.retrievalMode}</span>}
-        </label>
+        <Input
+          id="retrievalMode"
+          label="Retrieval mode (blank = inherit)"
+          type="text"
+          value={form.retrievalMode ?? ''}
+          onChange={(e) => set('retrievalMode', e.target.value)}
+          error={errors.retrievalMode}
+        />
 
-        <label className="field">
-          <span>LLM provider (blank = inherit)</span>
-          <input
-            id="llmProvider"
-            type="text"
-            value={form.llmProvider ?? ''}
-            onChange={(e) => set('llmProvider', e.target.value)}
-          />
-        </label>
+        <Input
+          id="llmProvider"
+          label="LLM provider (blank = inherit)"
+          type="text"
+          value={form.llmProvider ?? ''}
+          onChange={(e) => set('llmProvider', e.target.value)}
+        />
 
-        <label className="field">
-          <span>LLM model (blank = inherit)</span>
-          {modelField('llmModel', 'llmProvider')}
-          {errors.llmModel && <span className="field-error">{errors.llmModel}</span>}
-        </label>
+        {modelField('llmModel', 'llmProvider', 'LLM model (blank = inherit)')}
 
-        <label className="field">
-          <span>Agent LLM provider (blank = inherit)</span>
-          <input
-            id="agentLlmProvider"
-            type="text"
-            value={form.agentLlmProvider ?? ''}
-            onChange={(e) => set('agentLlmProvider', e.target.value)}
-          />
-        </label>
+        <Input
+          id="agentLlmProvider"
+          label="Agent LLM provider (blank = inherit)"
+          type="text"
+          value={form.agentLlmProvider ?? ''}
+          onChange={(e) => set('agentLlmProvider', e.target.value)}
+        />
 
-        <label className="field">
-          <span>Agent LLM model (blank = inherit)</span>
-          {modelField('agentLlmModel', 'agentLlmProvider')}
-          {errors.agentLlmModel && <span className="field-error">{errors.agentLlmModel}</span>}
-        </label>
+        {modelField('agentLlmModel', 'agentLlmProvider', 'Agent LLM model (blank = inherit)')}
 
-        <label className="field">
-          <span>System prompt (blank = inherit)</span>
-          <textarea
-            id="systemPrompt"
-            value={form.systemPrompt ?? ''}
-            onChange={(e) => set('systemPrompt', e.target.value)}
-          />
-        </label>
+        <Textarea
+          id="systemPrompt"
+          label="System prompt (blank = inherit)"
+          value={form.systemPrompt ?? ''}
+          onChange={(e) => set('systemPrompt', e.target.value)}
+        />
 
-        <label className="field">
-          <span>No-results message (blank = inherit)</span>
-          <input
-            id="noResultsMessage"
-            type="text"
-            value={form.noResultsMessage ?? ''}
-            onChange={(e) => set('noResultsMessage', e.target.value)}
-          />
-        </label>
+        <Input
+          id="noResultsMessage"
+          label="No-results message (blank = inherit)"
+          type="text"
+          value={form.noResultsMessage ?? ''}
+          onChange={(e) => set('noResultsMessage', e.target.value)}
+        />
 
-        <label className="field">
-          <span>Avatar filename (blank = inherit)</span>
-          <input
-            id="avatar"
-            type="text"
-            value={form.avatar ?? ''}
-            onChange={(e) => set('avatar', e.target.value)}
-          />
-          <span className="readonly-note">Binary avatar upload is not available in v1.</span>
-        </label>
+        <Input
+          id="avatar"
+          label="Avatar filename (blank = inherit)"
+          type="text"
+          value={form.avatar ?? ''}
+          onChange={(e) => set('avatar', e.target.value)}
+          hint="Binary avatar upload is not available in v1."
+        />
 
         <ErrorBanner message={saveError} />
-        {saved && !saveError && <p className="success">Saved.</p>}
-        <button type="submit" disabled={busy || hasErrors}>
+        {saved && !saveError && <p className="ac-success">Saved.</p>}
+        <Button variant="cta" type="submit" disabled={busy || hasErrors}>
           Save changes
-        </button>
+        </Button>
       </form>
 
       <KnowledgePanel
