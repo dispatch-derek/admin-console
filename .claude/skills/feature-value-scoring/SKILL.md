@@ -1,23 +1,32 @@
 ---
 name: feature-value-scoring
 description: >
-  Use this skill whenever a task involves scoring, ranking, or prioritizing feature ideas
-  against the feature-value-scoring workbook (feature-value-scoring.xlsx), writing research
-  scores into it, or generating feature briefs intended to feed it. Triggers include: "score
-  this feature", "prioritize the backlog", "run the prioritization", "fill in the scoring
-  sheet", "research this feature idea", "gather evidence for this brief", "scan for feature
-  opportunities", "design considerations for this feature", or any reference to
-  priority_score, weighted value, the Scoring sheet, or a Feature ID matching F-###.
+  Use this skill whenever a task involves scoring, ranking, or prioritizing feature ideas OR
+  customer-reported defects / internally-found bugs against the feature-value-scoring workbook
+  (feature-value-scoring.xlsx), writing research scores into it, or generating feature briefs
+  intended to feed it. Triggers include: "score this feature", "prioritize the backlog", "run
+  the prioritization", "fill in the scoring sheet", "research this feature idea", "gather
+  evidence for this brief", "scan for feature opportunities", "design considerations for this
+  feature", "log this bug/defect", "triage this defect", "what's the severity of", or any
+  reference to priority_score, weighted value, item_type, severity, the Scoring sheet, a
+  Feature ID matching F-###, or a Defect ID matching D-###.
   Do NOT use for general product strategy discussion that doesn't read or write the workbook.
 ---
 
 # Feature Value Scoring
 
-Shared contract for scoring feature ideas. The workbook is the single source of truth;
-its **Data Dictionary sheet is the authoritative schema** — parse it for column positions,
-`field_id`s, types, and allowed values. Never hard-code column letters.
+Shared contract for scoring feature ideas **and** tracking defects/bugs in the same workbook.
+The workbook is the single source of truth; its **Data Dictionary sheet is the authoritative
+schema** — parse it for column positions, `field_id`s, types, and allowed values. Never
+hard-code column letters.
 
-## Scoring model
+## Item Type — the fork in the model
+
+Every row's `item_type` (column V; `Feature` or `Defect`) selects which scoring path applies.
+Legacy rows without it are `Feature`. This is the one field every role must read first —
+everything below forks on it.
+
+## Scoring model — Feature rows
 
 ```
 weighted_value = reach*w1 + user_value*w2 + business_value*w3
@@ -29,8 +38,32 @@ priority_score = weighted_value * confidence_mult * risk_factor / effort * 20   
   against the anchors, never intuition about what "a 4" means.
 - Confidence map: 1→0.50, 2→0.65, 3→0.80, 4→0.90, 5→1.00. Risk map: 1→1.00 … 5→0.60.
   Both live on Config; read them, don't assume.
+
+## Scoring model — Defect rows (severity fast-track)
+
+```
+priority_score = MIN(100, severity_base * reach_factor * confidence_mult)   # 0-100, rounded
+```
+
+- `severity_base` is a **Config lookup** from `severity` (1–5, Rubric anchors: 1=cosmetic …
+  5=critical/blocking, industry Sev1). `reach_factor` is a **Config lookup** from `reach`
+  (share of customers who hit the bug) — a secondary multiplier here, not a primary weighted
+  dimension like it is for Features. `confidence_mult` is the **same** Confidence map Features
+  use, driven by `confidence` (strength of the repro/evidence).
+- **Deliberately bypassed for Defects:** `weighted_value` (blank), `strategic_alignment` (doesn't
+  apply to a bug), and the `effort` divisor (severity should not get cheaper-to-fix bugs
+  discounted below more-severe expensive ones). `effort`/`risk` may still be filled for
+  fix-planning purposes but never feed this formula.
+- Both formulas land in the **same** `priority_score`/`rank` columns, so a critical customer-
+  reported bug can outrank a nice-to-have feature in one shared ranked list — that's the point
+  of keeping Feature and Defect rows in one sheet rather than a parallel one.
+
+## Shared mechanics (both item types)
+
 - Columns Q–U (weighted_value, confidence_mult, risk_factor, priority_score, rank) are
   **formulas — never write to them**. After edits via openpyxl, run recalc before reading values.
+- `rank` (U) is computed across the whole column regardless of `item_type` — Features and
+  Defects are ranked against each other, not in separate pools.
 
 ## Role: DISCOVER (evidence gathering for brief authoring — signals only)
 
@@ -64,20 +97,31 @@ Hard rules:
 
 ## Role: RESEARCH (filling scores from evidence)
 
-**May write:** `reach`, `user_value`, `business_value`, `time_sensitivity`, `confidence`,
-`evidence_sources`, `rationale_notes`, `scored_by`, `date_scored`, and `status` (to `Scored`).
+**Feature rows may write:** `reach`, `user_value`, `business_value`, `time_sensitivity`,
+`confidence`, `evidence_sources`, `rationale_notes`, `scored_by`, `date_scored`, and `status`
+(to `Scored`).
 
-**Must never write:** `strategic_alignment`, `effort`, `risk` (human-owned), or any formula column.
+**Defect rows may write:** `reach`, `confidence`, `evidence_sources`, `rationale_notes`,
+`scored_by`, `date_scored`, and `status` (to `Scored`). `reach` here means share of customers
+who hit the bug; `confidence` means strength of the repro/evidence.
+
+**Must never write (either item type):** `strategic_alignment`, `effort`, `risk` (human-owned),
+`item_type`, `defect_source`, `severity` (human/triage-owned for Defects), or any formula column.
 
 Procedure:
-1. Read the feature brief at `brief_ref`. No brief → set `status = Idea`, write nothing else, report.
-2. Gather evidence: support tickets, usage analytics, competitor moves, benchmarks, interviews.
+1. Feature: read the brief at `brief_ref`. No brief → set `status = Idea`, write nothing else,
+   report. Defect: read the defect/bug report at `brief_ref` (repro steps, ticket refs). No
+   report and no inline repro info → set `status = Reported`, write nothing else, report.
+2. Gather evidence: support tickets, usage analytics, competitor moves, benchmarks, interviews
+   (Feature); support tickets, occurrence counts, repro confirmations (Defect).
 3. **Re-verify, don't inherit.** Treat the brief's Existing Evidence section as leads to
    re-check, not established fact — especially entries tagged `[agent-discovery ...]`, which
    are this agent's own earlier output. Signals go stale between drafting and scoring;
    trusting your own prior report is grading your own homework. Cite the re-verified state
    (fresh counts, fresh dates) in `evidence_sources`, not the brief's snapshot.
-4. Score the five permitted dimensions against the Rubric anchors.
+4. Score the permitted dimensions against the Rubric anchors (five for Feature; `reach` and
+   `confidence` for Defect — `severity` is not in this role's write list even though it's an
+   input, because severity is a human triage judgment call, not an evidence-gathering one).
 5. `evidence_sources` is mandatory — every score traces to a citation. No citation → cap
    `confidence` at 2.
 6. Never inflate value scores to offset thin evidence. Honest value + low confidence is the
@@ -86,16 +130,21 @@ Procedure:
 
 ## Role: PRIORITIZE (ranking scored rows)
 
-**May write:** `status` only (`Scored` → `Prioritized` | `Deferred` | `Rejected`). Everything
-else is read-only.
+**May write:** `status` only. Feature: `Scored` → `Prioritized` | `Deferred` | `Rejected`.
+Defect: `Scored` → `Prioritized` | `Deferred` | `Rejected` (a "won't fix" call belongs to the
+human reviewing the flag, not an auto-write — see below). Everything else is read-only.
 
 Procedure:
 1. Gate: if `Config!B9` ≠ "OK", halt and report broken weights. Do not rank.
-2. Rank all `Scored` rows by `priority_score`, but treat it as a starting order, not a verdict.
+2. Rank all `Scored` rows by `priority_score`, **regardless of item_type** — Feature and Defect
+   rows share one rank, but treat it as a starting order, not a verdict.
 3. **Flag for human review instead of deciding:**
    - rows within ±10% of the funding cut line (inside model noise)
-   - `strategic_alignment` ≥ 4 with low rank (strategic bet buried by the effort divisor)
+   - `strategic_alignment` ≥ 4 with low rank (strategic bet buried by the effort divisor;
+     Feature rows only, since Defects don't score this dimension)
    - `risk` = 5 regardless of rank (one-way door; needs sign-off)
+   - `severity` = 5 regardless of rank (critical/blocking defect; a Sev1 landing outside the
+     top of the list is worth a human's eyes even though the formula already weights it heavily)
    - `date_scored` > 90 days old (recommend re-score, don't rank stale data)
 4. Rationale per placement must cite `evidence_sources`, never the score alone.
    Good: "ranked 3rd: 42 support tickets + competitor launch establish reach and urgency,
@@ -135,11 +184,32 @@ Hard rules:
 4. **Conditional.** Only dispatched when the feature has a user-facing component. Backend,
    API-only, or infrastructure features skip this role entirely.
 
+## Role: LOG (recording a defect/bug — human-authored, no agent dispatch)
+
+There is no discovery/brief pipeline in front of a Defect row the way there is for Features —
+a defect is already known the moment someone hits it. Logging is a direct, human (or
+support-intake) write, not a role an agent performs:
+
+1. Create the row: `feature_id` (`D-###` pattern), `feature_name`, `item_type = Defect`,
+   `defect_source` (`Customer-Reported` | `Internal`), `status = Reported`.
+2. Populate `brief_ref` with a path/link to the bug report, ticket, or repro write-up —
+   whatever the fix pipeline (`/fix-defect-or-bug`) will need to reproduce it.
+3. Leave scoring dimensions (`reach`, `confidence`, `severity`) for the human triager or the
+   RESEARCH role to fill next, advancing `status` to `Triaged` once enough is known to score,
+   then `Scored` once scored.
+4. Never pre-fill `severity` optimistically to "get it moving" — an unscored `Reported` row is
+   honest signal that triage hasn't happened yet, same principle as DISCOVER's "no signal is a
+   finding" rule for Features.
+
 ## Invariants (all roles)
 
-- One row per feature; `feature_id` pattern `F-###` is the join key to briefs.
+- One row per feature/defect; `feature_id` pattern `F-###` (Feature) or `D-###` (Defect) is the
+  join key to briefs and bug reports respectively.
 - Preserve provenance: never blank `scored_by`, `evidence_sources`, or `rationale_notes`.
 - Schema changes go Data Dictionary first, then this skill — if they disagree, the
   Data Dictionary wins and this file is stale; say so.
-- Known model behavior: cheap safe items can outrank strategic bets (effort divides).
+- Known model behavior (Feature): cheap safe items can outrank strategic bets (effort divides).
   This is intentional; the strategic-alignment review flag is the counterweight.
+- Known model behavior (Defect): severity dominates the fast-track formula by design — a
+  low-reach Sev1 still ranks near the top, because blocking/data-loss defects shouldn't wait
+  for a critical mass of affected customers before getting fixed.
