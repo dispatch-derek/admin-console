@@ -30,7 +30,7 @@ Arguments: `$ARGUMENTS`
 1. Confirm the workbook exists and load it.
 2. Parse the **Data Dictionary sheet** into a field map (`field_id` → column, type, allowed
    values, owner). Use this map for every subsequent read/write. If parsing fails, halt.
-3. Read Config: weights B4:B8, weight check B9, confidence map A12:B16, risk map D12:E16.
+3. Read Config: weights B4:B8, weight check B9, confidence map A12:B21, risk map D12:E21.
 4. **Gate:** if `Config!B9` ≠ "OK", halt and report the broken weights. Do not proceed.
 5. Snapshot: copy the workbook to `./.prioritization-runs/{ISO-timestamp}/input.xlsx`
    before any mutation (skip on --dry-run).
@@ -73,8 +73,8 @@ Enforce on return, before accepting any write:
   `defect_source`, `item_type`, `strategic_alignment`, `effort`, `risk`, or formula columns →
   reject the row, log a contract violation, leave the row unmodified. (`severity` is
   human/triage-owned — see the skill's LOG role — never agent-scored.)
-- `evidence_sources` non-empty. Empty with `confidence` > 2 → reject.
-- All scores are integers 1–5.
+- `evidence_sources` non-empty. Empty with `confidence` > 4 → reject.
+- All scores are integers 1–10 (`severity` is human-owned and stays 1–5; agents never write it).
 - `scored_by = "Market Research Agent"`, `date_scored` = today (ISO), `status = "Scored"`.
 
 Apply accepted writes via openpyxl, then run `recalc.py` and verify zero formula errors.
@@ -103,9 +103,10 @@ Require from it:
    point of the shared formula output, not an oversight.
 2. Per-row rationale citing `evidence_sources` — reject any rationale that references only
    the numeric score.
-3. Review flags per the skill: ±10% of cut line, `strategic_alignment ≥ 4` with low rank
-   (Feature only), `risk = 5`, `severity = 5` (Defect only), `date_scored > 90` days.
-4. Recommended status per row: `Prioritized | Deferred | Rejected`, with `risk = 5` or
+3. Review flags per the skill: ±10% of cut line, `strategic_alignment ≥ 8` with low rank
+   (Feature only), `risk ≥ 9`, `severity = 5` (Defect only; severity stays 1–5),
+   `date_scored > 90` days.
+4. Recommended status per row: `Prioritized | Deferred | Rejected`, with `risk ≥ 9` or
    `severity = 5` rows always recommended-pending-signoff, never auto-Prioritized. A `Won't
    Fix` call on a Defect is the human's to make when resolving its flag, never an agent
    recommendation.

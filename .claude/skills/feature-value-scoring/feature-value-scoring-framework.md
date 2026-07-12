@@ -29,7 +29,7 @@ reader — human or agent — where the authoritative version of each thing live
 ## The one-paragraph summary
 
 Every row is a Feature or a Defect (`item_type`), and the two fork onto different formulas
-that land in the same `priority_score`/`rank`. Features: eight dimensions scored 1–5 against
+that land in the same `priority_score`/`rank`. Features: eight dimensions scored 1–10 against
 rubric anchors, five combine into a weighted value, confidence and risk apply as multiplicative
 discounts, effort divides. Defects: severity drives a fast-track score directly (reach as a
 secondary multiplier, confidence as the same discount), bypassing weighted value, strategic

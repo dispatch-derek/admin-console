@@ -31,13 +31,16 @@ everything below forks on it.
 ```
 weighted_value = reach*w1 + user_value*w2 + business_value*w3
                + strategic_alignment*w4 + time_sensitivity*w5     # weights: Config!B4:B8
-priority_score = weighted_value * confidence_mult * risk_factor / effort * 20   # 0-100
+priority_score = MIN(100, weighted_value * confidence_mult * risk_factor / effort * 20)  # 0-100
 ```
 
-- All eight input dimensions are integers 1–5, anchored on the **Rubric sheet**. Always score
-  against the anchors, never intuition about what "a 4" means.
-- Confidence map: 1→0.50, 2→0.65, 3→0.80, 4→0.90, 5→1.00. Risk map: 1→1.00 … 5→0.60.
-  Both live on Config; read them, don't assume.
+- All eight input dimensions are integers **1–10**, anchored on the **Rubric sheet** (even
+  scores carry the pre-2026-07 5-point anchors; odd scores are the judgment calls between
+  them). Always score against the anchors, never intuition about what "an 8" means.
+- Confidence map: 1→0.45, 2→0.50, 3→0.58, 4→0.65, 5→0.73, 6→0.80, 7→0.85, 8→0.90, 9→0.95,
+  10→1.00. Risk map: 1→1.00 … 10→0.60. Both live on Config; read them, don't assume.
+- The MIN(100, …) cap exists because effort=1 (hours-to-a-day) is finer than the old scale's
+  minimum; it binds only for very-low-effort, very-high-value rows.
 
 ## Scoring model — Defect rows (severity fast-track)
 
@@ -45,9 +48,10 @@ priority_score = weighted_value * confidence_mult * risk_factor / effort * 20   
 priority_score = MIN(100, severity_base * reach_factor * confidence_mult)   # 0-100, rounded
 ```
 
-- `severity_base` is a **Config lookup** from `severity` (1–5, Rubric anchors: 1=cosmetic …
-  5=critical/blocking, industry Sev1). `reach_factor` is a **Config lookup** from `reach`
-  (share of customers who hit the bug) — a secondary multiplier here, not a primary weighted
+- `severity_base` is a **Config lookup** from `severity` (**deliberately still 1–5** — unlike
+  every other dimension, severity kept its 5-point scale in the 2026-07 migration for industry
+  Sev1–Sev4 alignment; Rubric anchors: 1=cosmetic … 5=critical/blocking, industry Sev1).
+  `reach_factor` is a **Config lookup** from `reach` (1–10; share of customers who hit the bug) — a secondary multiplier here, not a primary weighted
   dimension like it is for Features. `confidence_mult` is the **same** Confidence map Features
   use, driven by `confidence` (strength of the repro/evidence).
 - **Deliberately bypassed for Defects:** `weighted_value` (blank), `strategic_alignment` (doesn't
@@ -123,7 +127,7 @@ Procedure:
    `confidence` for Defect — `severity` is not in this role's write list even though it's an
    input, because severity is a human triage judgment call, not an evidence-gathering one).
 5. `evidence_sources` is mandatory — every score traces to a citation. No citation → cap
-   `confidence` at 2.
+   `confidence` at 4.
 6. Never inflate value scores to offset thin evidence. Honest value + low confidence is the
    correct encoding; the multiplier carries the uncertainty.
 7. Set `scored_by = Market Research Agent` (or `Hybrid` if revising human scores), ISO date.
@@ -140,9 +144,9 @@ Procedure:
    rows share one rank, but treat it as a starting order, not a verdict.
 3. **Flag for human review instead of deciding:**
    - rows within ±10% of the funding cut line (inside model noise)
-   - `strategic_alignment` ≥ 4 with low rank (strategic bet buried by the effort divisor;
+   - `strategic_alignment` ≥ 8 with low rank (strategic bet buried by the effort divisor;
      Feature rows only, since Defects don't score this dimension)
-   - `risk` = 5 regardless of rank (one-way door; needs sign-off)
+   - `risk` ≥ 9 regardless of rank (one-way door; needs sign-off)
    - `severity` = 5 regardless of rank (critical/blocking defect; a Sev1 landing outside the
      top of the list is worth a human's eyes even though the formula already weights it heavily)
    - `date_scored` > 90 days old (recommend re-score, don't rank stale data)
