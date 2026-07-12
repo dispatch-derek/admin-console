@@ -137,6 +137,9 @@ Procedure:
 **May write:** `status` only. Feature: `Scored` → `Prioritized` | `Deferred` | `Rejected`.
 Defect: `Scored` → `Prioritized` | `Deferred` | `Rejected` (a "won't fix" call belongs to the
 human reviewing the flag, not an auto-write — see below). Everything else is read-only.
+`Cancelled` is likewise never this role's to write — it is a human-only terminal call (see
+Invariants). Downstream transitions (`In Progress`, `Implemented`, `Fixed`, `Verified`) belong
+to `/implement-spec` and `/fix-defect-or-bug`, never to this role.
 
 Procedure:
 1. Gate: if `Config!B9` ≠ "OK", halt and report broken weights. Do not rank.
@@ -217,3 +220,12 @@ support-intake) write, not a role an agent performs:
 - Known model behavior (Defect): severity dominates the fast-track formula by design — a
   low-reach Sev1 still ranks near the top, because blocking/data-loss defects shouldn't wait
   for a critical mass of affected customers before getting fixed.
+- Implementation write-back: `/implement-spec` advances Feature rows `Prioritized` →
+  `In Progress` at intake and → `Implemented` only on a fully green completion; `/fix-defect-or-bug`
+  does the same for Defect rows (`In Progress` → `Fixed` → `Verified`). A run that stops or
+  escalates leaves the row at `In Progress` — the status must reflect what actually happened.
+- `Cancelled` is a human-only terminal status for either item_type, settable at any point after
+  logging: the item was valid to log but later judged not worth doing. No agent role ever writes
+  it, no pipeline proceeds past it (a Cancelled row is not scorable, rankable, implementable, or
+  fixable without the human first reversing the status), and Cancelled rows are exempt from
+  staleness/re-score flags.

@@ -52,9 +52,14 @@ Arguments: `$ARGUMENTS`
 6. Rows of either type with `status = Scored` → carry forward to Phase 4 checks.
 7. Rows already `Prioritized | Deferred | Rejected | Won't Fix` → left untouched unless
    `date_scored` is > 90 days old, in which case add to the **STALE list** for the report.
-8. **Defect rows with `status` in `In Progress | Fixed | Verified`** → out of scope entirely;
-   these are mid- or post-fix, owned by `/fix-defect-or-bug`. Count them for the report but
-   do not classify, score, or flag them.
+8. **Rows of either type with `status` in `In Progress | Implemented | Fixed | Verified`** →
+   out of scope entirely; these are mid- or post-implementation, owned by `/implement-spec`
+   (Features) or `/fix-defect-or-bug` (Defects). Count them for the report but do not
+   classify, score, or flag them.
+9. **Rows of either type with `status = Cancelled`** → out of scope entirely and exempt from
+   the staleness check (a human killed the item; there is nothing to re-score). Count them
+   for the report but never touch, flag, or resurrect them — reversing a cancellation is a
+   human edit to the row, never this pipeline's.
 
 ## Phase 3 — Research scoring (subagent dispatch)
 
@@ -128,8 +133,10 @@ Write `./.prioritization-runs/{ISO-timestamp}/report.md` and summarize inline:
    Defect rows awaiting triage (direct-edit instruction), listed separately.
 4. **HUMAN-GATE leftovers** — rows still missing human-owned scores (which field, per row).
 5. **STALE list** — previously prioritized rows overdue for re-scoring.
-6. **IN-FLIGHT count** — Defect rows in `In Progress | Fixed | Verified`, out of this
-   command's scope (owned by `/fix-defect-or-bug`); count only, not itemized.
+6. **IN-FLIGHT & CANCELLED counts** — rows of either type in
+   `In Progress | Implemented | Fixed | Verified` (out of this command's scope, owned by
+   `/implement-spec` or `/fix-defect-or-bug`) and rows in `Cancelled` (human-killed,
+   terminal); counts only, not itemized.
 7. **Contract violations** — any rejected agent writes from Phase 3, verbatim.
 8. Config used: weights, maps, cut line, dry-run status, snapshot path.
 

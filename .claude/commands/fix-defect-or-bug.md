@@ -36,6 +36,8 @@ Arguments: `$ARGUMENTS`
 4. **Triage gate:** `status` must be `Scored` or `Prioritized` to proceed, unless
    `--skip-triage-gate` was passed AND `severity` is set. Otherwise stop and tell the user to
    run triage/`/prioritize-features` first, or supply `--skip-triage-gate` with a severity.
+   `status = Cancelled` → always STOP, even with `--skip-triage-gate`: a human cancelled the
+   item and only a human edit to the row reverses that — never rewrite the status yourself.
 5. Pull `feature_name`, `brief_ref`, `severity`, `defect_source`, `reach`, `confidence`,
    `evidence_sources`, `rationale_notes`. No repro information anywhere (`brief_ref`
    unresolvable and nothing inline) → STOP and ask the user for repro steps; never guess.

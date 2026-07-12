@@ -14,12 +14,15 @@ reader — human or agent — where the authoritative version of each thing live
    (DISCOVER, RESEARCH, PRIORITIZE, BRIEF, DESIGN, LOG), their write permissions, procedures,
    and invariants. If this file and the Data Dictionary disagree, the Data Dictionary wins and
    the skill is stale — agents must say so.
-3. **The four commands** — pipeline orchestration and gate enforcement:
+3. **The five commands** — pipeline orchestration and gate enforcement:
    - `/scan-opportunities` — top-of-funnel discovery, human triage, Idea rows only (Feature only)
    - `/write-feature-brief` — brief authoring with optional discovery dispatch; never scores
      (Feature only — Defects are logged directly, see skill's LOG role)
    - `/prioritize-features` — research scoring, human gate, ranking, flags; never writes briefs;
      ranks Feature and Defect rows together
+   - `/implement-spec` — implements a Feature's spec end-to-end; workbook touchpoints are
+     status only (`In Progress` at intake, `Implemented` on green completion); never scores
+     or ranks (Feature only)
    - `/fix-defect-or-bug` — reproduce, fail a regression test, fix, verify, and review a Defect
      row; never scores or ranks (Defect only)
 4. **`feature-value-scoring-user-guide.md`** — explanation and rationale for humans.
@@ -38,7 +41,8 @@ argument. Either way the result opens a human conversation rather than closing i
 separated so no actor both frames a feature and evaluates it: discovery reports signals without
 framing, the brief-writer frames without scoring, the research agent scores without inheriting
 its own prior evidence unverified, the prioritizer ranks without deciding flagged items, and
-humans own strategy, effort, risk, severity, and every flag.
+humans own strategy, effort, risk, severity, every flag, and the `Cancelled` call (the
+human-only terminal status for an item later judged not worth doing).
 
 ## Maintenance rule
 

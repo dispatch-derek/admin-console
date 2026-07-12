@@ -8,9 +8,29 @@ subagents. You are the orchestrator: you delegate and pass reports between
 agents; you never write specs, tests, code, or docs yourself, and you never
 resolve disputes by weakening tests.
 
-## Phase 0 — Specification (spec-writer) [skip if input is already a formal spec]
+## Phase 0 — Workbook intake (feature-value-scoring.xlsx) [skip if no workbook row]
+1. Resolve the `feature_id`: an explicit `F-###` in $ARGUMENTS, else the
+   `F-###` prefix of the spec/feature-request filename
+   (`specs/F-002-customer-system-prompt.md` → `F-002`). No id resolvable →
+   skip this phase AND the Phase 12 write-back; note the omission in the
+   final report. Never block implementation on workbook hygiene.
+2. Load `./feature-value-scoring.xlsx`; parse the **Data Dictionary sheet**
+   into a field map and read the row via it — never hard-code columns. No
+   matching row → same skip-and-note as step 1.
+3. Confirm `item_type = Feature`. A Defect row → stop, point to
+   `/fix-defect-or-bug`.
+4. **Status gate:** `Cancelled` → STOP; a human cancelled this item and only
+   a human edit to the row reverses that — never proceed, never rewrite the
+   status yourself. `Deferred | Rejected` → stop and confirm with me before
+   proceeding. `In Progress | Implemented` → stop and ask (likely a
+   duplicate or resumed run). Otherwise (`Prioritized` normally; anything
+   earlier in the lifecycle only with my explicit go-ahead) proceed.
+5. Write `status = "In Progress"` now (openpyxl, recalc, verify zero formula
+   errors) so `/prioritize-features` excludes the row while it's worked.
+
+## Phase 0.25 — Specification (spec-writer) [skip if input is already a formal spec]
 If $ARGUMENTS is a formal spec (numbered requirements, error handling,
-non-goals), skip Phase 0 but still run Phase 0.5. Otherwise delegate to
+non-goals), skip this phase but still run Phase 0.5. Otherwise delegate to
 spec-writer to formalize it. Hold its open questions — they go to me in
 Phase 0.5 step 3, combined with the review findings.
 
@@ -112,10 +132,20 @@ Ask me first. If yes: release-agent verifies green, bumps version, builds
 locally, drafts release/PR_DESCRIPTION.md — and stops. Push/tag/publish are
 mine.
 
-## Phase 12 — Final report
-Summarize: requirements coverage, suite status (spec/unit/e2e), review
-verdicts with accepted findings, performance verdict, iteration counts per
-phase, files created, ambiguity rulings made, and remaining human actions.
+## Phase 12 — Workbook write-back & final report
+1. [Only if Phase 0 found a workbook row] If the pipeline completed fully
+   green — no failing or skipped tests, no unresolved BLOCK verdicts, no
+   pending escalations — update the row via the field map: `status` →
+   `"Implemented"`, and append to `rationale_notes`:
+   `[implement-spec YYYY-MM-DD] implemented per <spec path>; <branch/PR ref>;
+   full suite green.` Append, never overwrite prior provenance. Recalc,
+   verify zero formula errors. If the run stopped or escalated anywhere,
+   leave `status = "In Progress"` and say so — the row must reflect what
+   actually happened, and `Cancelled` is never yours to write.
+2. Summarize: requirements coverage, suite status (spec/unit/e2e), review
+   verdicts with accepted findings, performance verdict, iteration counts per
+   phase, files created, ambiguity rulings made, the workbook status
+   transition (or why none), and remaining human actions.
 
 Orchestrator rules:
 - Never bypass role separation, even to save time.
