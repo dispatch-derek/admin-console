@@ -1,0 +1,47 @@
+# F-005: Per-Customer Feature Toggle Console
+
+## Problem
+Operators using the admin console currently have no way to control which features of the shared application codebase are active for the current customer's instance. Each customer runs their own dedicated device and install of the application, and the admin console itself runs on that same instance, alongside the customer-facing app it governs — an operator's session is inherently scoped to whichever single customer install they are currently on, not a remote fleet managed from a central control plane. There is no mechanism today for an admin-console user to see what features exist on that instance, or to turn any of them on or off for that customer. This gap will become acute once the not-yet-built customer-facing web application ships: features will be built into the shared codebase, but operators will have no way to withhold a feature from that customer's install for whom it isn't ready, nor to enable it selectively once it is. The absence of this capability is a gap in operational control over per-customer configuration, not a missing feature within the customer-facing app itself.
+
+(feeds: user_value)
+
+## Affected Users
+The directly affected users are internal employees — admin-console operators — not end customers themselves. Every operator who manages a customer's instance is affected: because each customer has their own device and install, and the admin console runs co-located on that same instance, an operator working on a given install is scoped entirely to that one customer's toggles by construction — there is no cross-customer or fleet-wide view from a single admin-console session. Because the customer-facing web application does not yet exist, no operator currently has occasion to hit this gap; it becomes universal to that workflow the moment the customer-facing app ships and any feature within it needs to be controlled per customer install. Frequency of use going forward is expected to track the pace at which the customer-facing app adds features and the pace of customer onboarding/rollout, both currently unknown quantities.
+
+(feeds: reach)
+
+## Business Rationale
+Two distinct business arguments support this capability. First, go-to-market control: because the customer-facing app is built on a shared codebase, any feature merged into that codebase becomes technically available to every customer unless something withholds it — without a toggle, the team cannot ship incrementally or stage feature availability by customer readiness, which constrains how the product can be rolled out commercially. Second, billing foundation: which features are enabled for a given customer is intended to become an input to how that customer is charged. Without a record of per-customer feature enablement, usage- or feature-based invoicing has no data source to draw from. Both arguments are falsifiable going forward — if the team ships the customer-facing app without incident using uniform feature availability across all customers, or if billing proceeds on a flat-rate basis with no need for per-feature enablement data, the rationale would not hold.
+
+(feeds: business_value)
+
+## Timing
+Hard, blocking dependency: this admin-console toggle capability must exist before any feature in the customer-facing web application can be turned on for any customer — the customer-facing app's features cannot be safely exposed without it. The team's go-to-market target for the customer-facing app is October of this year, so this capability needs to be in place ahead of that date to avoid becoming the blocker for that launch.
+
+(feeds: time_sensitivity)
+
+## Existing Evidence
+No usage or support-ticket evidence exists — the customer-facing app has not shipped, so there is no analytics, ticket, or interview data to point to. This brief is based on a forward-looking leadership decision (the product owner and their business partner) that per-customer feature control is a must-have to govern what customers can access within the shared codebase, made ahead of any observed customer demand signal. There are no ticket queries, dashboards, or customer complaints to cite; any evidence gathered at scoring time will need to come from architectural review of the shared codebase and the planned billing system, not from historical usage records.
+
+(feeds: confidence)
+
+## Proposed Direction
+Sketched at a high level, this would take the shape of a new section within the admin console — running on the same instance as the customer-facing app it governs — where an operator sees a list of the features available in the shared codebase and toggles each one on or off for that instance's customer. Because the admin console and the customer-facing app are co-located on the same install, toggle state naturally lives and is read locally rather than being synced from a remote control plane managing multiple tenants. The exact storage mechanism, the granularity of what counts as a "feature," and how the customer-facing app consumes toggle state at runtime are implementation details left open at this stage. Given the co-located, single-install architecture today could plausibly evolve toward centralized fleet management later, the shape chosen here should avoid foreclosing that direction — but this brief does not prescribe how.
+
+## Design Considerations
+*(ux-designer agent read, non-binding — informs but does not set Effort/Risk)*
+
+- **complexity_read:** Low design novelty, high design-system fit. The Proposed Direction maps cleanly onto patterns already in the console: a new left-sidebar section/view (a "Customer-wide" section already exists as a natural home for per-customer scoping), rendered as a roster of features driven by the existing DS `Toggle` (already `role="switch"`, keyboard-operable, dual-theme-resolved) plus the established list/table + `PageHeader`/`ErrorBanner`/loading/empty scaffolding seen elsewhere in the console. No net-new interaction pattern is required — it is essentially a labeled-toggle list. The genuinely undesigned surface is not the control but the surrounding semantics the brief explicitly leaves open (immediate-apply vs batched save, per-feature descriptions/metadata to render, what "feature" granularity the list shows, empty state when no features are defined yet, and how success/failure of a toggle is reflected back); those are where new design decisions concentrate rather than in the toggle itself.
+- **ux_risk_read:** Low-to-moderate. Accessibility exposure is contained because the reused `Toggle` and list scaffolding already carry switch semantics, focus/keyboard handling, and non-color-only status conventions, so this feature mostly inherits rather than invents accessibility surface. The interaction pattern is highly reversible at the control level (a toggle flips back), but the operator-facing risk is blast-radius comprehension: an operator can enable/disable a customer-facing capability for a live instance without necessarily seeing its downstream consequence, and the single-tenant-at-a-time context means it may be non-obvious which customer the change binds to — so confirmation/consequence framing and a clear "which customer am I acting on" affordance (patterns like `DangerConfirm`/`AcknowledgeCheckbox` exist if wanted) are the main usability questions worth validating, alongside how state actually propagates, which the direction leaves open.
+
+## Out of Scope
+This feature is not a fleet-wide or bulk toggle across multiple customers simultaneously — since each customer has their own device, install, and co-located admin console, there is no single session from which an operator can act on more than one customer's toggles at once. It is not a customer-facing settings surface; end customers do not see or interact with this toggle interface themselves. It is not the billing/invoicing system itself — it is a data source that a future billing capability may consume, not the billing logic. It is not the customer-facing web application or any of the individual features that application will contain; those are separate, later efforts that this capability unblocks but does not include.
+
+## Open Questions
+- What is the intended granularity of a "feature" toggle — an entire module, an individual feature flag, or something finer-grained — and does that match how features will actually be built in the customer-facing app?
+- Do toggle changes take effect immediately for a live customer instance, or do they require a restart, redeploy, or cache invalidation?
+- Is an audit trail needed (who toggled what, for which customer, and when), given this will eventually feed billing?
+- What is the relationship between this toggle's data model and the future billing/invoicing system's data model — does billing consume this data directly, or is a separate reconciliation step expected?
+- Should there be a default state for newly added features (on or off) when they are first introduced to the shared codebase, before any operator has explicitly set them?
+- Are there existing feature-flagging mechanisms elsewhere in the shared codebase that this should align with or replace, or is this a wholly new system?
+- Should this be designed as a stepping stone toward eventual fleet management software (centralized control across many customer installs), and if so, what would need to be true of its data model/interfaces today to avoid a costly rework later? Flagging for the spec-writer to weigh explicitly rather than deciding here.
