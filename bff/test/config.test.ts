@@ -35,6 +35,8 @@ const OPTIONAL_KEYS = [
   'EVENT_BUS_URL',
   'DB_PATH',
   'COOKIE_INSECURE',
+  'FEATURE_CATALOG_MANIFEST_PATH',
+  'CUSTOMER_LABEL',
 ];
 
 let snapshot: Record<string, string | undefined>;
@@ -183,6 +185,52 @@ describe('config.ts — dbPath', () => {
     process.env['DB_PATH'] = '/tmp/somewhere/console.db';
     const { config } = await loadConfig();
     expect(config.dbPath).toBe('/tmp/somewhere/console.db');
+  });
+});
+
+describe('config.ts — featureCatalogPath (F-005, REQ-F005-058/044)', () => {
+  it('is undefined when FEATURE_CATALOG_MANIFEST_PATH is unset', async () => {
+    const { config } = await loadConfig();
+    expect(config.featureCatalogPath).toBeUndefined();
+  });
+
+  it('is undefined when FEATURE_CATALOG_MANIFEST_PATH is an empty string (falsy, treated as unset)', async () => {
+    process.env['FEATURE_CATALOG_MANIFEST_PATH'] = '';
+    const { config } = await loadConfig();
+    expect(config.featureCatalogPath).toBeUndefined();
+  });
+
+  it('honors an explicit FEATURE_CATALOG_MANIFEST_PATH', async () => {
+    process.env['FEATURE_CATALOG_MANIFEST_PATH'] = '/etc/admin-console/feature-catalog.json';
+    const { config } = await loadConfig();
+    expect(config.featureCatalogPath).toBe('/etc/admin-console/feature-catalog.json');
+  });
+});
+
+describe('config.ts — customerLabel (F-005, REQ-F005-060 amends -048/027)', () => {
+  it('REQ-F005-060 — falls back to the fixed neutral literal "this install" when CUSTOMER_LABEL is unset, never an engine-derived value', async () => {
+    process.env['ANYTHINGLLM_BASE_URL'] = 'http://engine.local:3001/';
+    delete process.env['CUSTOMER_LABEL'];
+    const { config } = await loadConfig();
+    expect(config.customerLabel).toBe('this install');
+    // The point of the ruling: no engine address/origin ever leaks into the fallback label.
+    expect(config.customerLabel).not.toBe('http://engine.local:3001');
+    expect(config.customerLabel).not.toContain('engine.local');
+  });
+
+  it('REQ-F005-060 — falls back to "this install" when CUSTOMER_LABEL is an empty string (falsy), never the engine base URL', async () => {
+    process.env['ANYTHINGLLM_BASE_URL'] = 'http://engine.local:3001';
+    process.env['CUSTOMER_LABEL'] = '';
+    const { config } = await loadConfig();
+    expect(config.customerLabel).toBe('this install');
+    expect(config.customerLabel).not.toBe('http://engine.local:3001');
+    expect(config.customerLabel).not.toContain('engine.local');
+  });
+
+  it('honors an explicit CUSTOMER_LABEL, taking precedence over the "this install" fallback', async () => {
+    process.env['CUSTOMER_LABEL'] = 'Acme Corp — prod install';
+    const { config } = await loadConfig();
+    expect(config.customerLabel).toBe('Acme Corp — prod install');
   });
 });
 

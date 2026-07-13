@@ -9,7 +9,10 @@ export interface AuditEntry {
   actor: string | null; // staff id, or 'system'/'anonymous' for pre-auth events
   action: string; // method+route or auth event name
   outcome: 'success' | 'failure';
-  target?: Record<string, unknown> | null; // opaque identifiers
+  // Opaque identifier(s), always an object; JSON-stringified into the column. Every service passes
+  // the identifier as a Record (e.g. { id }, { keys }, { featureKey }) so the audit row and its
+  // paired domain event represent the same identifier the same way.
+  target?: Record<string, unknown> | null;
   detail?: unknown; // json; carries the `verified` result (scalar or per-control-id map)
 }
 
@@ -19,12 +22,13 @@ export function recordAudit(entry: AuditEntry): void {
   const ts = new Date().toISOString();
   const detail = entry.detail === undefined ? null : redactSecrets(entry.detail);
   const target = entry.target ?? null;
+  const targetColumn = target === null ? null : JSON.stringify(target);
 
   auditRepo.insert({
     ts,
     actor: entry.actor,
     action: entry.action,
-    target: target === null ? null : JSON.stringify(target),
+    target: targetColumn,
     outcome: entry.outcome,
     detail: detail === null ? null : JSON.stringify(detail),
   });

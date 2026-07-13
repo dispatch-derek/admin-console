@@ -29,16 +29,10 @@
 // since Modal renders in place with no portal), and `fieldRef` scopes the initial-focus query to just
 // the typed-token/checkbox control, rather than relying on a ref Modal/Input don't expose.
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-  type RefObject,
-} from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ErrorBanner } from './ErrorBanner';
 import { AcknowledgeCheckbox } from './AcknowledgeCheckbox';
+import { useModalFocusTrap } from './useModalFocusTrap';
 import { Modal, Button, Input } from '../design-system';
 
 interface DangerConfirmProps {
@@ -63,21 +57,6 @@ interface DangerConfirmProps {
   // trigger in the same commit that closed this dialog. Optional: when omitted (or when the opener
   // is still valid, as on cancel/escape) the opener-focus path is used as before.
   fallbackFocusRef?: RefObject<HTMLElement>;
-}
-
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-// A focus target is usable only if it is still connected to the document and not disabled. Focusing
-// a detached or disabled element is a silent no-op per the HTML spec (focus would fall through to
-// <body>). Landmark elements (headings, sections) have no `disabled` property, so that check is a
-// no-op for them.
-function isFocusable(el: Element | null | undefined): el is HTMLElement {
-  return (
-    el instanceof HTMLElement &&
-    document.contains(el) &&
-    (el as Partial<HTMLButtonElement>).disabled !== true
-  );
 }
 
 export function DangerConfirm({
@@ -107,66 +86,21 @@ export function DangerConfirm({
   // checkbox — jumping straight to a checkbox skips past the title/consequence a screen-reader user
   // needs to hear first.
   const fieldRef = useRef<HTMLDivElement>(null);
-  const returnFocusRef = useRef<Element | null>(null);
 
-  // Capture the opener, move focus into the dialog on open, and restore focus to the opener on any
-  // close (unmount) — cancel, escape, or a successful confirm all unmount this conditionally-rendered
-  // component, so the cleanup covers every path.
-  useEffect(() => {
-    returnFocusRef.current = document.activeElement;
-    const typedField = fieldRef.current?.querySelector<HTMLElement>('input:not([type="checkbox"])');
-    const heading = modalRef.current?.querySelector<HTMLElement>('h3');
-    if (typedField) typedField.focus();
-    else if (heading) heading.focus();
-    else modalRef.current?.focus();
-    // Captured now (not read fresh in the cleanup below): by the time cleanup runs, the caller may
-    // have already cleared its own ref target (e.g. unmounted the landmark), so the value at EFFECT
-    // SETUP time — when the dialog opened and the landmark was known-good — is what we want.
-    const fallbackAtOpen = fallbackFocusRef?.current ?? null;
-    return () => {
-      // Prefer the element that opened the dialog (correct for cancel/escape, where nothing about
-      // the trigger changed). But a successful confirm can disable or unmount the opener in the SAME
-      // commit that closes this dialog (apply/save trigger becomes disabled, a list row is removed).
-      // A disabled/detached element cannot take focus, so fall back to the caller's stable landmark
-      // rather than letting focus drop to <body>.
-      const opener = returnFocusRef.current;
-      if (isFocusable(opener)) {
-        opener.focus();
-        return;
-      }
-      if (isFocusable(fallbackAtOpen)) fallbackAtOpen.focus();
-    };
-  }, [fallbackFocusRef]);
+  const { handleKeyDown } = useModalFocusTrap(modalRef, {
+    onCancel,
+    // Scope initial focus to the typed-token field (so we land on the real control, not Modal's own
+    // header close-button); in toggle mode there is no typed field, so the hook falls back to the
+    // dialog heading. Deliberately excludes the checkbox — a screen-reader user should hear the
+    // title/consequence before the acknowledge control.
+    initialFocus: () => fieldRef.current?.querySelector<HTMLElement>('input:not([type="checkbox"])'),
+    // A successful confirm can disable or unmount the opener in the same commit that closes this
+    // dialog; fall back to the caller's stable landmark rather than dropping focus to <body>.
+    resolveFallback: () => fallbackFocusRef?.current ?? null,
+  });
 
   // Typed-token mode requires an exact match; toggle mode requires the checkbox.
   const armed = expectedToken !== undefined ? typed === expectedToken : acknowledged;
-
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      onCancel();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-
-    const root = modalRef.current;
-    if (!root) return;
-    const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (!first || !last) return;
-
-    const active = document.activeElement;
-    if (e.shiftKey) {
-      if (active === first || !root.contains(active)) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (active === last || !root.contains(active)) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
 
   return (
     <div ref={modalRef} tabIndex={-1} onKeyDown={handleKeyDown}>

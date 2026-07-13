@@ -110,6 +110,36 @@ export function migrate(): void {
       applied_baseline_hash TEXT,              -- lowercase-hex SHA-256 of baseline at last apply (REQ-F002-010c)
       applied_at            TEXT               -- ISO-8601
     );
+
+    -- F-005 per-customer feature-toggle overrides (spec §4, REQ-F005-012..015; design
+    -- docs/design/08-F005-feature-toggle-console.md §2). Console-OWNED data (boundary rule 3): this
+    -- feature makes NO engine call — the store is the sole system of record.
+    --
+    -- ONE row per feature the operator has EXPLICITLY set (an override). The declared feature catalog
+    -- (§5) is NEVER copied here as authoritative (REQ-F005-013): effective state is always computed
+    -- from the CURRENT catalog + this override, never a cached snapshot. A feature with no row = "no
+    -- override" → resolves to its catalog default (REQ-F005-017).
+    --
+    -- PK = the stable global catalog featureKey (REQ-F005-015/016/018), NOT an install-local surrogate
+    -- id — the minimal forward-compat measure so this install's override set is a clean single-tenant
+    -- slice a future central plane could aggregate without a data migration (REQ-F005-050). No tenant id.
+    --
+    -- feature_key is an OPAQUE string matched BYTE-FOR-BYTE (REQ-F005-018/028): plain TEXT PRIMARY KEY,
+    -- deliberately NO COLLATE NOCASE and no normalization, so keys differing only in case/bytes are
+    -- distinct rows. The repo writes it via INSERT ... ON CONFLICT(feature_key) DO UPDATE (last-writer-
+    -- wins upsert, REQ-F005-021), which this exact PK supports.
+    --
+    -- NO foreign key to any catalog table — there IS no catalog table (the catalog is an in-memory,
+    -- deployment-provided manifest, never persisted). An override whose key later leaves the catalog is
+    -- an ORPHAN: it is RETAINED here (never auto-deleted), just excluded from the active list and counts
+    -- (REQ-F005-014/025). History/audit is NOT in this table — it lives in the existing append-only
+    -- audit_log (parent REQ-093/093a), reused verbatim with no schema change for this feature.
+    CREATE TABLE IF NOT EXISTS feature_toggle_state (
+      feature_key TEXT PRIMARY KEY,   -- stable global catalog featureKey; opaque, matched literally (REQ-F005-015/016/018)
+      enabled     INTEGER NOT NULL,   -- 0/1 explicit operator override (REQ-F005-012)
+      updated_at  TEXT NOT NULL,      -- ISO-8601 of the override write
+      updated_by  TEXT NOT NULL       -- staff id (parent REQ-029c actor)
+    );
   `);
 
   // Additive column migrations for databases created before these columns existed. SQLite
@@ -167,6 +197,28 @@ export function rollbackF002(): void {
   db.exec(`
     DROP TABLE IF EXISTS workspace_baseline_state;
     DROP TABLE IF EXISTS baseline_prompt;
+  `);
+}
+
+// Down-migration (rollback) for the F-005 feature-toggle schema (REQ-F005-012). Same convention as
+// rollbackF002 above: this codebase has no external migration runner, so the DOWN direction is a
+// documented function that removes exactly what the F-005 block of migrate() adds. It is idempotent
+// (DROP … IF EXISTS) and tested up→down→up. It touches ONLY feature_toggle_state; audit_log,
+// workspace_map, and every other table are left intact — F-005 added no column, index, or trigger
+// anywhere else, and reuses audit_log verbatim with no schema change.
+//
+// DATA-LOSS NOTE — this is the feature's one IRREVERSIBLE step. Dropping feature_toggle_state destroys
+// all operator-set enablement overrides (the console's SYSTEM OF RECORD for "which features are enabled
+// for this customer," REQ-F005-001), INCLUDING retained orphan rows kept for audit/billing lineage
+// (REQ-F005-014). There is no engine copy to recover from (F-005 makes no engine call, REQ-F005-003):
+// once dropped, effective state silently reverts to catalog defaults for every feature. The audit_log
+// history of who-set-what survives (it is a separate append-only table), but the live override state
+// does not. On a store that holds real overrides, back up the SQLite file first and gate the drop on
+// explicit human confirmation (see docs/F-005-migration-runbook.md). Greenfield today: no environment
+// holds F-005 overrides yet, so running this now destroys nothing.
+export function rollbackF005(): void {
+  db.exec(`
+    DROP TABLE IF EXISTS feature_toggle_state;
   `);
 }
 

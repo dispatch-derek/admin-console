@@ -17,6 +17,7 @@ import { SettingsPage } from './features/settings/SettingsPage';
 import { RawEnvEditor } from './features/raweditor/RawEnvEditor';
 import { DiagnosticsPage } from './features/diagnostics/DiagnosticsPage';
 import { BaselinePromptPage } from './features/baseline-prompt/BaselinePromptPage';
+import { FeatureTogglesPage } from './features/featureToggles/FeatureTogglesPage';
 import { SidebarItem, PageHeader, Button } from './design-system';
 
 type View =
@@ -31,6 +32,7 @@ type View =
   | 'membership'
   | 'oversight'
   | 'baseline'
+  | 'featureToggles'
   | 'agentSkills'
   | 'raw'
   | 'diagnostics'
@@ -69,7 +71,10 @@ const NAV: NavSection[] = [
   },
   {
     label: 'Customer-wide',
-    items: [{ id: 'baseline', label: 'Baseline Prompt' }],
+    items: [
+      { id: 'baseline', label: 'Baseline Prompt' },
+      { id: 'featureToggles', label: 'Feature Toggles' },
+    ],
   },
   {
     label: 'Agent Skills',
@@ -102,6 +107,10 @@ const PAGE_META: Record<View, { title: string; description: string }> = {
   baseline: {
     title: 'Customer-wide Baseline Prompt',
     description: 'Define one baseline system prompt and fan it out to every workspace.',
+  },
+  featureToggles: {
+    title: 'Feature Toggles',
+    description: 'Enable or disable declared features for this customer’s install.',
   },
   agentSkills: { title: 'Agent Skills', description: 'API keys and configuration for @agent tool-use skills.' },
   raw: { title: 'Raw Env Editor', description: 'Advanced: edit environment keys directly, bypassing curated controls.' },
@@ -155,6 +164,7 @@ function Console() {
           {SETTINGS_VIEWS.has(view) && <SettingsPage categoryIds={[view]} />}
           {view === 'workspaces' && <WorkspaceList />}
           {view === 'baseline' && <BaselinePromptPage />}
+          {view === 'featureToggles' && <FeatureTogglesPage />}
           {view === 'raw' && <RawEnvEditor />}
           {view === 'diagnostics' && <DiagnosticsPage />}
           {(view === 'users' || view === 'invites' || view === 'membership' || view === 'oversight') && (
