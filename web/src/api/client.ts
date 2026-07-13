@@ -12,6 +12,8 @@ import type {
   BaselinePrompt,
   BaselineStatusView,
   DocumentRef,
+  FeatureToggle,
+  FeatureToggleListView,
   EnrollResult,
   Invite,
   LoginStage,
@@ -317,6 +319,27 @@ export function getBaselinePreview(mode: OperatorMode): Promise<BaselinePreview>
 
 export function applyBaselinePrompt(body: BaselineApplyRequest): Promise<BaselineApplyResult> {
   return request('/api/baseline-prompt/apply', { method: 'POST', body });
+}
+
+// --- Per-customer feature toggles (F-005, §7.2) -----------------------------------------------
+// The opaque featureKey is percent-encoded into the single path segment (REQ-F005-028), matching
+// the existing encodeURIComponent(id) idiom above; the BFF decodes it once and matches literally.
+
+export function listFeatureToggles(): Promise<FeatureToggleListView> {
+  return request('/api/feature-toggles');
+}
+
+export function setFeatureToggle(featureKey: string, enabled: boolean): Promise<FeatureToggle> {
+  return request(`/api/feature-toggles/${encodeURIComponent(featureKey)}`, {
+    method: 'PUT',
+    body: { enabled },
+  });
+}
+
+export function clearFeatureToggleOverride(featureKey: string): Promise<FeatureToggle> {
+  return request(`/api/feature-toggles/${encodeURIComponent(featureKey)}/override`, {
+    method: 'DELETE',
+  });
 }
 
 export { ApiError };

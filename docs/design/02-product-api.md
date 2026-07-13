@@ -174,6 +174,54 @@ even for curated-category or provider-selector keys (break-glass changes) — be
 writes are opaque, unmapped `{key,value}` pairs (REQ-078f, N-4); bus consumers watching
 provider/setting changes must ALSO subscribe to `admin.raw_env.written`.
 
+## Feature toggles (§7.2, F-005)
+
+Per-customer feature enablement state (REQ-F005-001/019/021/023). The console persists
+operator-set overrides in the BFF-owned store only; the feature catalog is a deployment-provided,
+read-only manifest. All routes emit NO engine call (REQ-F005-003).
+
+| Method / path | Req | Resp | Engine call | Mutates → event |
+|---|---|---|---|---|
+| `GET /api/feature-toggles` | — | `FeatureToggleListView` (features[], counts, customerLabel) | none (console-store read only) | no (REQ-F005-019) |
+| `PUT /api/feature-toggles/:featureKey` | `{ enabled: boolean }` | `FeatureToggle` | none (store-only write) | yes (store) → `admin.feature_toggle.changed` when effective state changes (REQ-F005-021/037) |
+| `DELETE /api/feature-toggles/:featureKey/override` | — | `FeatureToggle` | none (store-only write) | yes (store) → `admin.feature_toggle.changed` when effective state changes (REQ-F005-023/037) |
+
+**FeatureKey encoding contract (REQ-F005-028):** The `featureKey` is an opaque string whose
+structure the console never parses; it may contain reserved URL characters. Callers MUST
+percent-encode the `featureKey` when composing the path segment (e.g. `a/b c` → `a%2Fb%20c`).
+The BFF decodes the segment exactly once and matches the result byte-for-byte against the
+catalog (no normalization, no case folding). A malformed percent-sequence (e.g. `%E0%A4%A`)
+returns **400** ("malformed feature key"); a valid encoding of an absent catalog key returns
+**404** (REQ-F005-030).
+
+**Feature catalog (REQ-F005-016/044/053/058):** The console reads a deployment-provided JSON
+manifest at path given by the **`FEATURE_CATALOG_MANIFEST_PATH`** environment variable:
+`{ "features": [ { featureKey, displayName, description?, category?, defaultEnabled? } ] }`.
+Each entry's `defaultEnabled` (when omitted) is coerced to `false` (REQ-F005-016) and is never
+a validation failure (REQ-F005-053). The load-posture is split:
+- **Absent path or missing file:** Empty catalog, normal start (REQ-F005-053a).
+- **Present but unreadable/invalid:** BFF refuses to start with a clear error naming the path
+  and the failure (REQ-F005-053b).
+
+**Customer label (REQ-F005-027/060):** The response carries a human-readable label identifying
+which customer/install this console governs, sourced from the **`CUSTOMER_LABEL`** environment
+variable (optional; falls back to the fixed literal `"this install"` when unset, ensuring no
+engine-internal addresses leak into the product payload or DOM — REQ-F005-003/039).
+
+**Validation & error mapping (REQ-F005-030):** 
+- `PUT` with non-boolean `enabled` → **400** ("enabled must be true or false")
+- `PUT`/`DELETE` for a `featureKey` absent from the catalog → **404** ("unknown feature")
+- `DELETE` for a catalog-present feature with no override row → **200** idempotent success
+  (not 404; REQ-F005-023)
+- Store write that cannot be confirmed → **500** ("could not confirm the change was saved")
+- Unauthenticated → **401** (parent REQ-012)
+
+**Override rows (REQ-F005-012):** Each `PUT` upserts a row; effective state is `override` (if
+present) else `defaultEnabled` (REQ-F005-017). A `DELETE` removes the row, reverting to default
+(REQ-F005-023). Every accepted set/clear is audited with action `feature_toggle.set` /
+`feature_toggle.clear` (REQ-F005-038/059), including effective-state-unchanged and idempotent
+cases; an event emits only on an effective-state delta (REQ-F005-037).
+
 ## Health
 
 `GET /health → { ok: true }`, no session (REQ-024).

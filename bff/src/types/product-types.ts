@@ -452,3 +452,49 @@ export interface BaselineApplyResult {
   divergedCount: number; // (REQ-F002-047)
   items: BaselineApplyResultItem[]; // per-workspace legibility (REQ-F002-022a)
 }
+
+// --- F-005 Per-Customer Feature Toggle Console product types (§7.1, REQ-F005-016) ---
+// Product vocabulary only; F-005 makes NO engine call so no engine field name exists here
+// (REQ-F005-003/029). The catalog is a deployment-declared manifest the console only reads.
+
+/**
+ * An entry in the feature catalog, declared by the shared codebase's deployment manifest.
+ * The `featureKey` is the stable, opaque identifier (matched byte-for-byte); `defaultEnabled`
+ * is the feature's default state when no operator override exists. A missing `defaultEnabled`
+ * in the manifest is coerced to `false` at load time (REQ-F005-016).
+ */
+export interface FeatureCatalogEntry {
+  featureKey: string; // stable, opaque identifier (REQ-F005-016); matched byte-for-byte
+  displayName: string;
+  description: string | null;
+  category: string | null; // optional grouping
+  defaultEnabled: boolean; // catalog-declared default; missing → coerced false (REQ-F005-016)
+}
+
+/**
+ * A feature's current state as reported by the API. Combines catalog metadata with override
+ * state: `enabled` is the effective state (override if present, else `defaultEnabled`),
+ * and `hasOverride` indicates whether an operator has explicitly set this feature.
+ * If no override exists, `updatedAt` and `updatedBy` are null.
+ */
+export interface FeatureToggle {
+  featureKey: string;
+  displayName: string;
+  description: string | null;
+  category: string | null;
+  defaultEnabled: boolean;
+  enabled: boolean; // effective state (override ?? default, REQ-F005-017)
+  hasOverride: boolean; // whether an explicit operator override exists (REQ-F005-020)
+  updatedAt: string | null; // ISO-8601 of the override write; null if no override
+  updatedBy: string | null; // staff id of the override write; null if none
+}
+
+/**
+ * The response body of GET /api/feature-toggles: the complete feature roster with counts
+ * and a customer/install label identifying whom this console governs.
+ */
+export interface FeatureToggleListView {
+  customerLabel: string; // which install/customer this console governs (REQ-F005-027)
+  features: FeatureToggle[];
+  counts: { enabled: number; disabled: number; total: number };
+}

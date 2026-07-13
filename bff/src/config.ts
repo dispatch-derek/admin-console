@@ -27,9 +27,10 @@ const webOrigins = (process.env['WEB_ORIGINS'] ?? '').split(',').map((s) => s.tr
 // we default to the common Vite/CRA localhost origins for convenience.
 const DEV_DEFAULT_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
 const corsOrigins = webOrigins.length ? webOrigins : isProduction ? [] : DEV_DEFAULT_ORIGINS;
+const anythingLLMBaseUrl = requireEnv('ANYTHINGLLM_BASE_URL').replace(/\/$/, ''); // REQ-001
 
 export const config = {
-  anythingLLMBaseUrl: requireEnv('ANYTHINGLLM_BASE_URL').replace(/\/$/, ''), // REQ-001
+  anythingLLMBaseUrl, // REQ-001
   anythingLLMApiKey: requireEnv('ANYTHINGLLM_API_KEY'), // REQ-001, REQ-013
   port: parseInt(process.env['PORT'] ?? '3002', 10), // REQ-020
   // REQ-019a: required ONLY at first boot (empty staff store). Once an account exists they
@@ -49,4 +50,13 @@ export const config = {
   corsOrigins, // REQ-095 — the effective allowlist handed to @fastify/cors (never `true`)
   eventBusMode: process.env['EVENT_BUS_MODE'] ?? 'inproc', // 04c
   eventBusUrl: process.env['EVENT_BUS_URL'],
+  // F-005 (REQ-F005-058/044): deployment-provided feature-catalog manifest path. Optional — unset or
+  // empty means "no manifest configured" → empty catalog, normal start (REQ-F005-053a). A present-
+  // but-broken file is fail-closed by the catalog loader itself (REQ-F005-053b), not here.
+  featureCatalogPath: process.env['FEATURE_CATALOG_MANIFEST_PATH'] || undefined,
+  // F-005 (REQ-F005-060, amends -048; constrains -027): human-readable customer/install label shown
+  // on the toggle surface. Falls back to the FIXED NEUTRAL LITERAL "this install" when CUSTOMER_LABEL
+  // is unset — never any engine-derived value (ANYTHINGLLM_BASE_URL, origin, host, port), which would
+  // leak the engine's internal address into the product payload/DOM (REQ-F005-003/039 take precedence).
+  customerLabel: process.env['CUSTOMER_LABEL'] || 'this install',
 } as const;

@@ -24,7 +24,9 @@ export type AdminEventName =
   | 'admin.raw_env.written'
   // F-002 customer-wide baseline system prompt (§9, REQ-F002-035).
   | 'admin.baseline_prompt.updated'
-  | 'admin.baseline_prompt.applied';
+  | 'admin.baseline_prompt.applied'
+  // F-005 per-customer feature toggle console (§9, REQ-F005-037).
+  | 'admin.feature_toggle.changed';
 
 // Common envelope (REQ-029c). `verified` is a boolean for single-delta events, EXCEPT
 // admin.instance.setting_changed whose `verified` is a per-control-id MAP (REQ-029f).
@@ -58,6 +60,18 @@ export interface BaselineAppliedPayload {
   appliedBaselineHash: string;
   appliedWorkspaceIds: string[];
   failedOrDivergedWorkspaceIds: string[];
+}
+
+// admin.feature_toggle.changed payload (REQ-F005-037). Emitted ONLY after a store-confirmed write
+// whose EFFECTIVE state actually changes; an effective-state-unchanged write (override created equal
+// to the default, idempotent re-write, clear of an override equal to the default) is still persisted
+// + audited but emits NO event. This is a console-store write, not an engine mutation, so `verified`
+// is store-confirmed scalar `true` (deviation mirrors F-002 REQ-F002-035, REQ-F005-021). target: {
+// featureKey }. Ordering falls to F-004's reserved __unkeyed__ key (REQ-F005-052).
+export interface FeatureToggleChangedPayload {
+  enabled: boolean; // new effective state
+  previous: boolean; // prior effective state
+  hasOverride: boolean; // whether an override row exists after the write
 }
 
 // admin.instance.setting_changed payload (REQ-029c/029f/101, MIN-3): `verified` is a

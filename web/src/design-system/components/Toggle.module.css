@@ -1,12 +1,25 @@
 .track {
   position: relative;
   flex-shrink: 0;
+  box-sizing: border-box;
   border-radius: var(--radius-full);
   transition: background-color 0.2s ease;
+  /* Reset native <button> chrome so the switch renders as a bare track (the track's box, colors, and
+     cursor come from the size classes + the inline style set in Toggle.tsx). A visible 1px track
+     boundary gives the low-contrast off-state track a ≥3:1 edge vs the row bg (WCAG 1.4.11). */
+  appearance: none;
+  border: 0.0625rem solid var(--theme-text-primary);
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
 }
 
 .track:focus-visible {
-  outline: 0.125rem solid var(--theme-button-primary);
+  /* --theme-text-primary is white on the dark surface and near-black on the light surface, so the
+     focus ring clears 3:1 vs the surface in BOTH themes — unlike the primary-button token, which was
+     ~2.76:1 on the light bg (WCAG 1.4.11 focus indicator). */
+  outline: 0.125rem solid var(--theme-text-primary);
   outline-offset: 0.125rem;
 }
 
@@ -29,7 +42,12 @@
   position: absolute;
   top: 0.125rem;
   left: 0.125rem;
+  box-sizing: border-box;
   border-radius: var(--radius-full);
+  /* Knob boundary: the white knob on the bright-green on-track is only ~1.74:1, so a dark knob
+     border gives the knob a ≥3:1 edge vs the track (WCAG 1.4.11). --alm-ink is theme-invariant
+     near-black, so it stays dark against the bright-green on-track in either theme. */
+  border: 0.0625rem solid var(--alm-ink);
   background: var(--theme-loader);
   transition: transform 0.2s ease;
 }

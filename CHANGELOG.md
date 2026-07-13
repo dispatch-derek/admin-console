@@ -5,6 +5,115 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [F-005 — Per-Customer Feature Toggle Console]
+
+### Added
+
+- **Feature-toggle console section:** A new customer-wide section (`features/feature-toggles/`)
+  where staff operators can view and toggle per-customer feature enablement state. Each feature
+  appears as a switch (DS `Toggle`), labeled with `displayName` and optional `description`,
+  showing whether it is operator-set or using the declared default (REQ-F005-020/032).
+
+- **Three BFF routes (all store-only, no engine call):**
+  - `GET /api/feature-toggles` — list all declared features with their effective state, counts,
+    and customer/install label (REQ-F005-019).
+  - `PUT /api/feature-toggles/:featureKey` — set a feature enabled/disabled, persisting to the
+    store and emitting `admin.feature_toggle.changed` on effective-state delta (REQ-F005-021/037).
+  - `DELETE /api/feature-toggles/:featureKey/override` — remove an override, reverting to the
+    catalog default; idempotent success when no override exists (REQ-F005-023).
+
+- **Feature catalog manifest:** A deployment-provided JSON manifest (`FEATURE_CATALOG_MANIFEST_PATH`
+  env var) declaring the available features with display metadata and defaults. The console reads
+  it at startup (never mutates it), coerces missing `defaultEnabled` to `false`, and rejects a
+  present-but-invalid manifest with a clear startup error (split load posture, REQ-F005-053).
+
+- **Per-customer context affordance:** The toggles surface displays the operator's customer/
+  install label (from `CUSTOMER_LABEL` env var, falling back to the fixed literal `"this install"`
+  when unset, ensuring no engine-internal addresses leak into the product payload; REQ-F005-060)
+  so the operator knows which customer a change binds to (REQ-F005-027).
+
+- **Store-layer feature-toggle state:** One new table (`feature_toggle_state`) persists operator
+  overrides: `feature_key` (PK), `enabled` (0/1), `updated_at`, `updated_by` (REQ-F005-012).
+
+- **Audit trail & event catalog:** Every set/clear is recorded in the audit log with action
+  `feature_toggle.set` / `feature_toggle.clear`, including effective-state-unchanged and
+  idempotent cases (REQ-F005-038/059). A new event type `admin.feature_toggle.changed` emits
+  only on effective-state delta (REQ-F005-037).
+
+- **DS `Toggle` accessible-name binding (additive F-001 contract extension, REQ-F005-054):**
+  The design-system `Toggle` now binds its label programmatically via `aria-labelledby` (and
+  its optional description via `aria-describedby`), so the switch element announces its label
+  as its accessible name — benefiting all `Toggle` consumers, not just F-005. Rendered as a
+  native `<button type="button">` for keyboard operability and semantic clarity.
+
+- **Per-row "Reset to default" action (REQ-F005-055):** Each feature row with `hasOverride:true`
+  shows a "Reset to default" button; invoking it routes through a confirmation dialog (with copy
+  noting whether the customer-visible state will change) and, on confirm, calls the `DELETE`
+  route. An effective-state-unchanged reset (override equals default) is confirmed and audited
+  but emits no event (REQ-F005-056).
+
+- **Confirmation copy asserts immediate effect (REQ-F005-057):** The toggle confirmation dialog
+  copy states that the change takes effect **immediately** in the customer-facing app, not merely
+  neutral decision-only wording. This pins a forward constraint on the customer app: toggle
+  consumption must be near-real-time (partially narrowing REQ-F005-009).
+
+- **Empty state:** When the catalog declares zero features (expected until the customer-facing
+  app ships), the surface renders "No features are defined for this install yet" instead of an
+  error (REQ-F005-024).
+
+### Changed
+
+- **Opaque `featureKey` path-segment encoding contract (REQ-F005-028):** Callers percent-encode
+  the `featureKey` (RFC 3986); the BFF decodes once and matches byte-for-byte against the
+  catalog. A malformed percent-sequence → 400; an undeclared key → 404 (never a routing error).
+  This makes every declared feature (however exotic its key) reachable without the console ever
+  parsing the key's structure.
+
+- **Store-confirmed writes (REQ-F005-021):** A `PUT`/`DELETE` reads the row back and confirms it
+  matches the intended value before success is reported. This is a console-store deviation from
+  the engine-oriented parent REQ-028, mirroring F-002's baseline-store convention (F-002 REQ-F002-035).
+
+- **Effective-state-unchanged writes are persisted & audited (REQ-F005-037/038):** A `PUT` whose
+  `enabled` equals the feature's current effective state still upserts the override row (refreshing
+  `updated_at`/`updated_by` for idempotence tracking) and is audited; however, NO event emits
+  (aligning with emit-only-on-actual-delta, parent REQ-029). The event stream is therefore a
+  partial record of operator actions — the audit log is the complete history (REQ-F005-038).
+
+### Web UI
+
+- **New feature-toggles section** (`web/src/features/featureToggles/`) composed of:
+  - `FeatureTogglesPage` — the main page component (customer-wide, not workspace-scoped).
+  - `FeatureToggleRow` — renders each feature with its switch, effective-state indicator,
+    provenance badge (default vs. operator-set), and per-row "Reset to default" affordance.
+  - `ToggleConfirm` — lightweight (non-typed) confirmation dialog naming the feature and customer,
+    asserting immediate effect in the customer app, with a "state will not change" note when
+    applicable (REQ-F005-034/056/057).
+  - `EmptyFeaturesState` — empty-state UI ("No features are defined for this install yet").
+  - `useModalFocusTrap` — shared hook (in `web/src/components/`) managing focus into/out of the
+    confirm dialog, moving focus into the dialog on open and returning to the trigger on close,
+    with a focusability check to handle cases where the trigger is disabled/removed in the same
+    React render commit.
+
+- **Three new API client methods** (`web/src/api/client.ts`):
+  - `listFeatureToggles()` — `GET /api/feature-toggles`, returns `FeatureToggleListView`.
+  - `setFeatureToggle(featureKey, enabled)` — `PUT /api/feature-toggles/:featureKey`, returns `FeatureToggle`.
+  - `clearFeatureToggleOverride(featureKey)` — `DELETE /api/feature-toggles/:featureKey/override`,
+    returns `FeatureToggle`.
+
+### Non-Goals
+
+- F-005 makes no engine call and touches no engine state (REQ-F005-003).
+- The customer-facing app and its runtime toggle-consumption mechanism are deferred (REQ-F005-009).
+- Catalog authoring, fleet-wide bulk toggling, and orphan-feature visibility are deferred (REQ-F005-008/004/025).
+
+### Spec & Design
+
+- **Specification:** `specs/F-005-per-customer-feature-toggle-console.md` (rev 6, fully ruled).
+- **Architecture design:** `docs/design/08-F005-feature-toggle-console.md`.
+- **UX design:** `docs/design/ux/F-005-feature-toggle-console.md`.
+- **Migration runbook:** `docs/F-005-migration-runbook.md` (covers the new `feature_toggle_state`
+  table and catalog manifest setup).
+
 ## [F-001 — Adhere to a Design System]
 
 ### Added

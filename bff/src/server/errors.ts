@@ -127,3 +127,28 @@ export function errorHandler(
     .status(status)
     .send({ message: status >= 500 ? 'Internal server error' : error.message } satisfies ErrorBody);
 }
+
+// Fastify's router throws FST_ERR_BAD_URL for a path segment that is not valid percent-encoding
+// (e.g. a truncated escape `%E0%A4%A`). That failure happens DURING routing — before dispatch — so
+// it never reaches setErrorHandler(errorHandler) above and would otherwise leak Fastify's raw
+// {error,code,statusCode,message} body (including the raw request path) instead of the product
+// {message} envelope every route guarantees (parent REQ-097/097a). Wired as Fastify's
+// `frameworkErrors` hook (index.ts) so we own the decode-failure response. For the opaque featureKey
+// routes this is the REQ-F005-028 "malformed feature key" 400 contract; any other route's malformed
+// URL still gets the {message} envelope rather than a leaked framework body.
+export function frameworkErrorHandler(
+  error: FastifyError,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): void {
+  if (error.code === 'FST_ERR_BAD_URL') {
+    const url = request.raw.url ?? request.url;
+    const message = url.startsWith('/api/feature-toggles/')
+      ? 'malformed feature key' // REQ-F005-028
+      : 'malformed URL';
+    reply.status(400).send({ message } satisfies ErrorBody);
+    return;
+  }
+  // Any other framework-level error falls through to the standard product error mapping.
+  errorHandler(error, request, reply);
+}

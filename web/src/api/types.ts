@@ -230,3 +230,25 @@ export interface BaselineApplyRequest {
   mode: OperatorMode;
   overrides?: { workspaceId: string; resolution: OverrideResolution }[];
 }
+
+// --- F-005 Per-Customer Feature Toggle Console (mirrored from product-types.ts §7.1) ------------
+// Product vocabulary ONLY (REQ-F005-029/039): no engine field names cross this boundary. The web
+// speaks exclusively to the /api/feature-toggles* product routes.
+
+export interface FeatureToggle {
+  featureKey: string;
+  displayName: string;
+  description: string | null;
+  category: string | null;
+  defaultEnabled: boolean;
+  enabled: boolean; // effective state (override ?? default, REQ-F005-017)
+  hasOverride: boolean; // explicit operator override exists (REQ-F005-020)
+  updatedAt: string | null; // ISO-8601 of override write; null if none
+  updatedBy: string | null; // staff id of override write; null if none
+}
+
+export interface FeatureToggleListView {
+  customerLabel: string;
+  features: FeatureToggle[];
+  counts: { enabled: number; disabled: number; total: number };
+}

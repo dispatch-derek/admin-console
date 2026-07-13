@@ -584,3 +584,260 @@ route table's abbreviated apply-body example omits `mode`. Per instruction, this
 resolved as prose-governs and every apply test includes `mode`; this is a documentation
 inconsistency in the spec, not a behavioral ambiguity, so no test was weakened or
 `SPEC-AMBIGUITY`-tagged for it.
+
+---
+
+# TEST_PLAN — F-005 Per-Customer Feature Toggle Console
+
+Spec: `specs/F-005-per-customer-feature-toggle-console.md` (Draft rev 5 — all open questions
+RATIFIED 2026-07-12; REQ-F005-053..057 are binding human rulings, treated as normal REQs)
+Parent spec: `specs/admin-console.md` (v1, rev 7). Grounding refs: `docs/governing-architecture.md`,
+`docs/design/03-data-models.md`, `docs/design/02-product-api.md`, `docs/design/05-web-architecture.md`,
+`docs/design/F-001/01-component-contracts.md`. Event bus: `specs/F-004-production-event-bus.md`.
+
+## Framework & harness choice
+
+Same two established suites as F-002 (see above): BFF `vitest` (node env) via `buildApp()` +
+`app.inject()`, and web `vitest` + `@testing-library/react` (jsdom) with colocated `*.test.tsx`
+files. This feature adds NO new framework.
+
+A migration test for the F-005 store table already exists —
+`bff/test/store/feature-toggle-migration.test.ts` — written by the migration agent and **left
+untouched** by this task (covers REQ-F005-012/014/015/018/021/025 at the schema/repository level:
+table shape, LWW upsert, byte-for-byte key matching, delete-is-idempotent, rollback/roundtrip). It is
+cited below wherever it already satisfies a REQ's *Test* clause so no test is duplicated.
+
+No F-005 implementation exists yet in either package: no `bff/src/routes/feature-toggles*`, no
+`bff/src/catalog/*` (or wherever the manifest loader lands), no `web/src/features/featureToggles/`.
+`buildApp()` does not register any `/api/feature-toggles*` route. Every test below is written
+strictly from the spec, BEFORE reading any implementation, and is expected to fail now (404 / missing
+route / undefined body / missing component module) — not on a syntax/import error in the test files
+themselves. Confirmed by running the full suites: BFF 49 failed / 16 passed across the 5 new F-005
+files (738 pre-existing BFF tests unaffected); web 3 failed (+ 1 failed-to-load suite) across the 2
+new F-005 web files (525 pre-existing web tests unaffected). No failure is a `SyntaxError`,
+`ReferenceError`, or "Cannot find module" **in a test file's own code** — the one legitimate
+"Cannot find module" case (`FeatureTogglesPage.test.tsx` failing to resolve
+`./FeatureTogglesPage`) is the explicitly-sanctioned "component module not found" RED signal.
+
+## Test files
+
+- `bff/test/store/feature-toggle-migration.test.ts` — PRE-EXISTING (migration agent, not touched).
+- `bff/test/routes/feature-toggles.helpers.ts` — NEW, shared test-only manifest-seeding helper (not
+  itself a suite; mirrors `web/src/test/fsScan.ts`'s role for F-001). See its header for the
+  SPEC-AMBIGUITY note on the manifest env var name / JSON shape.
+- `bff/test/routes/feature-toggles.routes.test.ts` — NEW. §7 route surface end-to-end: auth (401),
+  `GET` list view, `PUT` set, `DELETE` clear (incl. idempotent-success no-override case), the opaque
+  `featureKey` percent-encoding contract, request validation/error mapping, durability across a
+  restart, and the custody/scope non-functional assertions observable at the route level.
+- `bff/test/routes/feature-toggles.resolution.test.ts` — NEW. The spec's own self-identified
+  highest-risk areas (effective-state resolution REQ-F005-017, provenance REQ-F005-020,
+  orphan/new-feature handling REQ-F005-025/026), isolated into a dense, example-heavy file — mirrors
+  `baseline-prompt.resolution.test.ts`'s rationale for F-002.
+- `bff/test/routes/feature-toggles.catalog.test.ts` — NEW. REQ-F005-053's manifest load-failure
+  posture (unset / absent / malformed / schema-invalid / coercion-is-not-a-failure) and the
+  REQ-F005-016 `defaultEnabled` coercion boundary.
+- `bff/test/routes/feature-toggles.events.test.ts` — NEW. §9 events/audit: `admin.feature_toggle.
+  changed` effective-delta-only emission (REQ-F005-037), the `AdminEventName` union static scan, and
+  audit-is-the-complete-record (REQ-F005-038).
+- `bff/test/routes/feature-toggles.performance.test.ts` — NEW. REQ-F005-040 smoke-level perf at the
+  spec's N=500 features / ≤500 overrides sizing.
+- `web/src/design-system/components/Toggle.a11y-label.test.tsx` — NEW, additive (does not touch the
+  existing F-001 `Toggle.test.tsx`/`Toggle.unit.test.tsx`). REQ-F005-054's DS `Toggle`
+  accessible-name-binding extension.
+- `web/src/features/featureToggles/FeatureTogglesPage.test.tsx` — NEW. §8 web UI requirements
+  (REQ-F005-031..036/042/054..057) against the HTTP/DOM contract, with an explicit `vi.mock` factory
+  for the API client (see file header for the SPEC-AMBIGUITY note on client function names/component
+  path).
+
+## Traceability: requirement → planned test(s) → level
+
+Legend for **level**: `bff-http` = `app.inject()` route-contract test; `bff-unit-boundary` = store/
+migration/static-source-scan test below the HTTP layer; `web-component` = RTL component test against
+the HTTP/DOM contract; `e2e-deferred` = cannot be honestly executed without inventing implementation
+shape not pinned by the spec (real nav wiring, a real browser/visual-diff harness, a real load-test
+run) — Phase 6 (e2e) owns these, not faked here.
+
+| REQ | Requirement (short) | Test(s) | Level |
+|---|---|---|---|
+| REQ-F005-001 | Console persists+exposes per-feature overrides; view/set surface | `feature-toggles.routes.test.ts` GET+PUT flow | bff-http (full open→flip→reopen operator workflow is e2e-deferred) |
+| REQ-F005-002 | Single-install scope by construction | `feature-toggles.routes.test.ts` "custody & scope boundary" block | bff-http |
+| REQ-F005-003 | No engine read/write, no engine field/path | `feature-toggles.routes.test.ts` custody block (no engine adapter mocked or called anywhere in the F-005 bff suite) | bff-http (web-bundle static leakage scan, mirroring `web/src/leakage.test.ts`, is e2e-deferred — no F-005 web source exists yet to scan) |
+| REQ-F005-004 | No fleet-wide/multi-customer/bulk action | `feature-toggles.routes.test.ts` "no multi-customer selector/parameter" test | bff-http |
+| REQ-F005-005 | No customer-facing settings surface (non-goal) | implicit: every route requires staff auth (REQ-012 block) and no non-staff route exists | bff-http (implicit) |
+| REQ-F005-006 | Billing system itself is a non-goal | not independently tested (nothing to assert against a system this feature does not build) | not applicable |
+| REQ-F005-007 | The customer-facing app/features are a non-goal | not independently tested | not applicable |
+| REQ-F005-008 | Catalog authoring is a non-goal | `feature-toggles.resolution.test.ts` "no route to create/edit a catalog entry" | bff-http |
+| REQ-F005-009 | Customer-app consumption mechanism deferred | not independently tested; narrowed (not overridden) by REQ-F005-057 | traced via REQ-F005-057 |
+| REQ-F005-010 | No AnythingLLM engine flagging | same evidence as REQ-F005-003 | bff-http |
+| REQ-F005-011 | No cross-deployment/central-plane build this rev | realized minimally by REQ-F005-015 | traced via REQ-F005-015 |
+| REQ-F005-012 | Store table shape; no-row→no-override; write→exactly one row | `feature-toggle-migration.test.ts` (PRE-EXISTING) | bff-unit-boundary |
+| REQ-F005-013 | Catalog not copied as authoritative; effective always recomputed | `feature-toggles.resolution.test.ts` "REQ-F005-013" blocks (both directions: override-exists vs no-override) | bff-http |
+| REQ-F005-014 | Retained history; orphan override rows not deleted | `feature-toggles.resolution.test.ts` orphan-retained test; `feature-toggles.events.test.ts` audit+event-on-toggle tests; `feature-toggle-migration.test.ts` rollback-retention tests | bff-http + bff-unit-boundary |
+| REQ-F005-015 | PK = stable global featureKey, no tenant surrogate | `feature-toggle-migration.test.ts` PK/type assertions | bff-unit-boundary |
+| REQ-F005-016 | Catalog shape; `defaultEnabled` coercion; console can't author | `feature-toggles.resolution.test.ts` "catalog shape & coercion" block; `feature-toggles.catalog.test.ts` coercion-boundary test | bff-http |
+| REQ-F005-017 | Effective-state resolution (`override ?? default`) | `feature-toggles.resolution.test.ts` "REQ-F005-017" block | bff-http |
+| REQ-F005-018 | feature_key/featureKey shared identifier space; orphan definition | `feature-toggles.resolution.test.ts` orphan block; `feature-toggle-migration.test.ts` byte-for-byte match test | bff-http + bff-unit-boundary |
+| REQ-F005-019 | `GET` list view shape + count semantics | `feature-toggles.routes.test.ts` "GET /api/feature-toggles" block | bff-http |
+| REQ-F005-020 | State provenance (`hasOverride`) visible | `feature-toggles.routes.test.ts` provenance test; `FeatureTogglesPage.test.tsx` REQ-F005-033 test | bff-http + web-component |
+| REQ-F005-021 | `PUT` sets state; store-confirmed; idempotent re-write/LWW | `feature-toggles.routes.test.ts` PUT block; `feature-toggle-migration.test.ts` LWW-upsert test | bff-http + bff-unit-boundary |
+| REQ-F005-022 | Immediate-apply, per-feature (no batching) | `feature-toggles.routes.test.ts` sibling-independence tests (PUT and DELETE blocks) | bff-http |
+| REQ-F005-023 | `DELETE .../override` clears; idempotent-success no-override case | `feature-toggles.routes.test.ts` "DELETE" block (incl. the no-override-200 test) | bff-http |
+| REQ-F005-024 | Empty state (zero declared features) | `feature-toggles.routes.test.ts` empty-state test; `FeatureTogglesPage.test.tsx` empty-state test | bff-http + web-component |
+| REQ-F005-025 | Orphan overrides hidden from active list, not deleted | `feature-toggles.resolution.test.ts` orphan block | bff-http |
+| REQ-F005-026 | Newly-declared features appear at default, no auto-override | `feature-toggles.resolution.test.ts` newly-declared block | bff-http |
+| REQ-F005-027 | Customer/install label affordance | `feature-toggles.routes.test.ts` label test; `FeatureTogglesPage.test.tsx` label test | bff-http + web-component |
+| REQ-F005-028 | Opaque `featureKey` percent-encode/decode contract | `feature-toggles.routes.test.ts` "Opaque featureKey" block | bff-http |
+| REQ-F005-029 | Every route BFF-brokered, staff-authenticated | `feature-toggles.routes.test.ts` REQ-012 401 block | bff-http (web-side "browser calls only product routes" static scan is e2e-deferred, no F-005 web source yet) |
+| REQ-F005-030 | Validation & error mapping (400/404/500) | `feature-toggles.routes.test.ts` validation block; `feature-toggles.events.test.ts` no-event-on-rejected-write test | bff-http |
+| REQ-F005-031 | New nav-reachable section, not workspace-scoped | `FeatureTogglesPage.test.tsx` "not workspace-scoped" test (renders with zero route params) | web-component (top-level nav reachability itself is e2e-deferred — no `App.tsx` wiring exists to target without inventing its shape) |
+| REQ-F005-032 | DS `Toggle` reuse, `role="switch"`, keyboard-operable | `FeatureTogglesPage.test.tsx` switch-role tests; DS `Toggle.test.tsx`/`Toggle.unit.test.tsx` (EXISTING, keyboard-operability already pinned there) | web-component |
+| REQ-F005-033 | Non-color-only state+provenance encoding | `FeatureTogglesPage.test.tsx` "legible without color alone" test | web-component (grayscale/color-blind visual SIMULATION is e2e-deferred, needs real rendering) |
+| REQ-F005-034 | Confirmation names feature+customer before commit | `FeatureTogglesPage.test.tsx` confirm-dialog tests | web-component |
+| REQ-F005-035 | Success/failure reflection; verbatim error; no stranded optimistic state | `FeatureTogglesPage.test.tsx` failure-reflection test | web-component |
+| REQ-F005-036 | Loading & empty states | `FeatureTogglesPage.test.tsx` loading/empty tests | web-component |
+| REQ-F005-037 | `admin.feature_toggle.changed` — effective-delta-only emission | `feature-toggles.events.test.ts` event-emission block; `AdminEventName` union static scan | bff-http + bff-unit-boundary |
+| REQ-F005-038 | Audit = complete operator-action record (bus is not) | `feature-toggles.events.test.ts` audit block | bff-http |
+| REQ-F005-039 | Custody boundary restated (browser never calls engine/holds key) | `feature-toggles.routes.test.ts` custody block (implicit: every test only ever calls `/api/*` via `inject()`) | bff-http (bundle/API-key-leakage web scan is e2e-deferred) |
+| REQ-F005-040 | Perf: list render + toggle round trip, p95<1500ms, N=500/500 | `feature-toggles.performance.test.ts` | bff-http (smoke-level bound only; a statistically rigorous p95 over many samples is e2e/load-test-deferred) |
+| REQ-F005-041 | Durability across a restart; immediate GET reflection | `feature-toggles.routes.test.ts` "durability across a restart" test | bff-http |
+| REQ-F005-042 | A11y: switch semantics, dialog focus mgmt, ARIA live region | `FeatureTogglesPage.test.tsx` focus-management tests | web-component (focus-in/focus-return only; full keyboard-only-operator flow across the real app + AT-audible live-region announcement is e2e-deferred) |
+| REQ-F005-043 | (OQ) Feature granularity — RATIFIED flag-level, granularity-agnostic mechanism | traced via REQ-F005-016/017 (any granularity works mechanically) | traced, not independent |
+| REQ-F005-044 | (OQ) Catalog source = deployment manifest — RATIFIED | the manifest-file seeding mechanism itself (`feature-toggles.helpers.ts`) is the concrete realization exercised by every bff-http test | bff-http (mechanism, via helper) |
+| REQ-F005-045 | (OQ) Billing via read API + audit log, no shared schema — RATIFIED | traced via REQ-F005-038 (audit completeness) + REQ-F005-019 (read API) | traced, not independent |
+| REQ-F005-046 | (OQ) Immediate-apply, no batched save — RATIFIED | traced via REQ-F005-022 | traced, not independent |
+| REQ-F005-047 | (OQ) Lightweight non-typed confirmation — RATIFIED | traced via REQ-F005-034 (`FeatureTogglesPage.test.tsx` models this as `DangerConfirm`'s existing checkbox/toggle mode — SPEC-AMBIGUITY, see below) | traced, not independent |
+| REQ-F005-048 | (OQ) Config-driven customer label — RATIFIED | traced via REQ-F005-027 | traced, not independent |
+| REQ-F005-049 | (OQ) Off-by-default; hide orphans — RATIFIED | traced via REQ-F005-016 (coercion test) + REQ-F005-025 (orphan-hidden test) | traced, not independent |
+| REQ-F005-050 | (OQ) Minimal fleet-readiness measure sufficient — RATIFIED | traced via REQ-F005-015 | traced, not independent |
+| REQ-F005-051 | (OQ) Audit log/event stream sufficient depth — RATIFIED | traced via REQ-F005-038 | traced, not independent |
+| REQ-F005-052 | (OQ) `__unkeyed__` ordering, F-004 not extended — RATIFIED | not independently re-tested (F-004-OWNED ordering-key derivation is F-004's own test surface); noted in `feature-toggles.events.test.ts`'s header that F-005 adds no keying rule | not applicable here (F-004-owned) |
+| REQ-F005-053 | Manifest load-failure posture (split: absent=empty+start; broken=refuse) | `feature-toggles.catalog.test.ts` — all four *Test*-clause scenarios | bff-http |
+| REQ-F005-054 | DS `Toggle` programmatic accessible name = `displayName` | `Toggle.a11y-label.test.tsx` (DS-contract level); `FeatureTogglesPage.test.tsx` accessible-name tests (integration level) | web-component |
+| REQ-F005-055 | Per-row "Reset to default", gated on `hasOverride` | `FeatureTogglesPage.test.tsx` "Reset to default" block | web-component |
+| REQ-F005-056 | Effective-unchanged reset still confirmed, never silent | `FeatureTogglesPage.test.tsx` REQ-F005-056 test (web); `feature-toggles.events.test.ts` "provenance-only transition" test (bff: audited, zero events) | web-component + bff-http |
+| REQ-F005-057 | Confirm copy asserts immediate effect; forward constraint on customer app | `FeatureTogglesPage.test.tsx` REQ-F005-057 test (copy assertion) | web-component (the "forward requirement pinned on the future customer app" clause is a documentation/traceability point already satisfied by the spec text itself — not independently unit-testable) |
+
+Total REQ ids in scope: 57 (REQ-F005-001 through REQ-F005-057). Of these: 6 are true non-goals with
+nothing to assert against (004's siblings 005/006/007, plus 009/011 narrative-only — each traced to
+the REQ that operationalizes it where applicable); REQ-F005-043..052 (the open-questions section) are
+traced through the REQ ids that adopted each ratified default rather than independently tested, per
+the F-002 `TEST_PLAN.md` precedent above; REQ-F005-052 is explicitly F-004-owned. Every remaining REQ
+id has at least one concrete, executable test at the bff-http, bff-unit-boundary, or web-component
+level. E2E-deferred slices (Phase 6): full nav-reachability wiring (REQ-F005-031), grayscale/
+color-blind visual simulation (REQ-F005-033), full keyboard-only operator flow + AT-audible live-region
+announcement (REQ-F005-042), a statistically rigorous p95 load-test (REQ-F005-040), and the web-bundle
+engine-leakage/API-key static scans (REQ-F005-003/029/039) that need real F-005 web source to scan.
+
+## Design notes / how ambiguity was handled
+
+- **Catalog seeding & load timing.** REQ-F005-053's own *Test* clause frames manifest (re)load as a
+  STARTUP-time event ("the BFF starts... fails startup/readiness") and REQ-F005-013's *Test* clause
+  frames a catalog-default change as happening "e.g. a redeploy." Every bff-http test therefore seeds
+  the manifest file BEFORE calling `buildApp()`, and a "catalog changed mid-test" scenario is modeled
+  as an explicit `restart()` (close app, rewrite manifest, rebuild against the same DB file) rather
+  than a live/hot per-request reload — the most defensible reading of the spec's own language, though
+  not the only possible one (see SPEC-AMBIGUITY below).
+- **Session reuse across `restart()`.** The `restart()` helper reuses the ORIGINAL session cookie
+  against the rebuilt app instance rather than performing a second login+MFA round trip. A second real
+  MFA round trip moments after the first collides with this codebase's own (correct, pre-existing,
+  security-review-driven) TOTP anti-replay guard (`last_totp_step`, sec review H-1 —
+  `test/auth/mfa.service.test.ts`, `test/routes/auth.routes.test.ts` "TOTP replay prevention"), which
+  is not an F-005 concern to route around expensively (a real 30s wait would work but is needlessly
+  slow repeated across ~8 call sites; faking timers was tried and hangs Fastify's/better-sqlite3's own
+  real-timer internals). Reusing the cookie is both correct (a `SESSION_SECRET`-signed stateless
+  cookie legitimately survives a process restart with the same secret) and the realistic production
+  scenario this test wants to model.
+- **REQ-F005-052 (event ordering key)** is explicitly F-004-owned per the spec's own ratified
+  resolution ("F-004 §3 is NOT extended now"); `feature-toggles.events.test.ts` asserts event delivery
+  but does not re-derive or assert F-004's ordering-key function, which is that spec's own test
+  surface.
+- **Perf (REQ-F005-040)** follows the exact precedent of `baseline-prompt.performance.test.ts`: a
+  generous smoke-level latency assertion against a real (not mocked) in-process SQLite store at the
+  spec's own N=500/500 sizing, explicitly not a load-test. No skip/tag convention for perf tests exists
+  in this repo (no `.skip`/`describe.skip` perf convention found), so this is written as a normal test,
+  per the task's own fallback instruction.
+
+## SPEC-AMBIGUITY findings requiring human ruling
+
+**Status: ALL FIVE RULED — human ruling (2026-07-12).** Each item below is annotated
+**RULING → &lt;outcome&gt;** with what changed (or didn't) as a result. Four assumptions were
+CONFIRMED unchanged; one (confirm-dialog composition) was OVERRULED and the affected tests were
+updated accordingly (see "Post-ruling test update" below).
+
+1. **Manifest env var name and JSON shape (REQ-F005-044/053).** The spec pins the manifest's
+   *behavior* precisely (REQ-F005-053) but not (a) the BFF config env var name it reads for the
+   manifest path, or (b) the exact JSON shape of the manifest file (only that entries are
+   `FeatureCatalogEntry`-shaped, REQ-F005-016). This suite assumed `FEATURE_CATALOG_MANIFEST_PATH`
+   (matching the project's existing `DB_PATH`/`EVENT_BUS_URL` naming convention) and
+   `{ "features": FeatureCatalogEntry[] }`. Documented in `bff/test/routes/feature-toggles.helpers.ts`'s
+   header.
+   **RULING → CONFIRMED, now spec-pinned.** The assumed env var name and JSON shape are adopted as
+   the normative contract. No test change required.
+2. **Web API client function names / component path / confirmation-dialog composition
+   (REQ-F005-031..036/047/055).** Neither the client function names (`listFeatureToggles`,
+   `setFeatureToggle`, `clearFeatureToggleOverride`) nor the component path
+   (`web/src/features/featureToggles/FeatureTogglesPage.tsx`) are pinned by the spec — those remain
+   assumptions. The confirmation-dialog COMPOSITION choice, however, was submitted for ruling:
+   ~~this suite's original reading composed the existing `DangerConfirm` component in its
+   ALREADY-IMPLEMENTED checkbox/"I understand and want to proceed" acknowledgement mode~~.
+   **RULING → OVERRULED.** The ratified UX design doc (`docs/design/ux/F-005-feature-toggle-console.md`
+   rev 2, §4.1/§4.2/§8) is authoritative and wins: F-005 introduces a **new, dedicated `ToggleConfirm`
+   component** wrapping the design-system `Modal` — `DangerConfirm` is explicitly "deliberately not
+   reused" per that doc, because its typed-token/checkbox gate is reserved for irreversible ops, not a
+   highly-reversible toggle. `ToggleConfirm`'s footer is "ghost Cancel + PRIMARY (not danger) Confirm"
+   with **no arming mechanism** (no checkbox, no typed token) — Confirm is actionable as soon as the
+   dialog opens.
+   **Directory naming (`web/src/features/featureToggles/` vs. the UX doc's `feature-toggles/`
+   spelling) → CONFIRMED as this suite already had it**; the design doc is being corrected to match,
+   not the other way round. No file move needed.
+3. **Audit action-name strings (`feature_toggle.set` / `feature_toggle.clear`).** REQ-F005-038 only
+   specifies the audit entry's *content* (actor, action=route, target, new state, `hasOverride`,
+   `verified`, timestamp, outcome), not the literal `action` string. This suite assumed
+   `feature_toggle.set`/`feature_toggle.clear` (matching the existing `baseline_prompt.update`,
+   `settings.update`, `raw_env.write` dot-separated `resource.verb` convention).
+   **RULING → CONFIRMED, now spec-pinned.** No test change required.
+4. **REQ-F005-053's exact startup-failure mechanism (process exit vs. a rejected `buildApp()`
+   promise)** is not pinned beyond "refuses to start... fails startup/readiness." Mirroring
+   `bff/test/config.test.ts`'s own precedent for a load-time failure
+   (`await expect(loadConfig()).rejects.toThrow(...)`), `feature-toggles.catalog.test.ts` tolerates
+   either surfacing point (import-time throw or `buildApp()`-call-time throw) via a manual try/catch
+   around both, rather than asserting a specific throw site.
+   **RULING → the tolerant try/catch approach STANDS.** No test change required.
+5. **"Not a routing error" vs. exact status for a raw (unencoded) `/` inside a `:featureKey` path
+   segment (REQ-F005-028).** The spec pins the two REACHABLE-input outcomes precisely (malformed
+   percent-encoding → 400; well-formed encoding of an undeclared key → 404) but the THIRD case in its
+   own *Test* clause — "the same key sent raw (unencoded `/`) does not silently match a different
+   feature" — only pins the negative (must not silently succeed as if correctly encoded), not which
+   exact status code Fastify's own router produces for the resulting extra path segment. `feature-
+   toggles.routes.test.ts` asserts the loose, defensible bound (`statusCode !== 200`) rather than
+   guessing a specific code Fastify's routing layer (not F-005 code) would produce.
+   **RULING → the `statusCode !== 200` assertion STANDS.** No test change required.
+
+### Post-ruling test update (ambiguity #2, confirm-dialog composition)
+
+`web/src/features/featureToggles/FeatureTogglesPage.test.tsx` was updated to match the ratified
+`ToggleConfirm` design rather than `DangerConfirm`'s checkbox mode:
+- Removed every `within(dialog).getByRole('checkbox', { name: 'I understand and want to proceed' })`
+  click step — `ToggleConfirm` has no arming control at all.
+- Added a new test (REQ-F005-034/047) asserting the confirm dialog renders NO checkbox and NO
+  textbox, and that the non-Cancel Confirm button is enabled immediately on open — the "lightweight,
+  non-typed" gate is now asserted behaviorally rather than assumed via a specific `DangerConfirm` mode.
+- Broadened the REQ-F005-056 "state will not change" copy assertion to
+  `/will not change|no change/i` so it matches BOTH the spec's own *Test*-clause paraphrase and the
+  UX doc's suggested literal copy ("there is NO CHANGE to customer-visible state") without pinning one
+  exact string over the other.
+- Added an explicit "dialog stays open on failure" assertion to the REQ-F005-035 failure test, per the
+  UX doc §5 `ToggleConfirm` error-state description.
+- The header comment now cites the UX doc as authoritative for this choice and explicitly notes the
+  tests do NOT import `ToggleConfirm`'s module directly and do NOT assert its internal
+  structure/props — only the `role`/accessible-name/text contract the page renders, so they remain
+  valid regardless of `ToggleConfirm`'s internal composition.
+- Nothing else in the file changed: the `role="dialog"` query, the `findConfirmButton()` helper (picks
+  the non-Cancel button generically), the feature/customer-naming assertions, the immediate-effect
+  copy assertion (REQ-F005-057), and the focus-management assertions (REQ-F005-042) were already
+  composition-agnostic and needed no edits.
+- Re-run confirmed the file still fails for exactly one reason — "Failed to resolve import
+  './FeatureTogglesPage'. Does the file exist?" (component module not found, the same sanctioned RED
+  signal as before) — and the full web suite remains `2 failed | 48 passed` (files) /
+  `3 failed | 525 passed` (tests), identical to the pre-update baseline: no pre-existing test
+  regressed and no new compile/syntax error was introduced by the edit.
