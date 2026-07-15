@@ -951,9 +951,13 @@ describe('GET /api/diagnostics/env (REQ-074) — masked env-dump', () => {
   it('a secret-bearing key in the env-dump is redacted; a non-secret key passes through', async () => {
     const c = ctx!;
     const PLAINTEXT_SECRET = 'sk-plaintext-should-never-render-55aa';
-    envDumpMock.mockResolvedValue({
-      OpenAiKey: PLAINTEXT_SECRET,
-      DisableTelemetry: 'false',
+    // The masked env-dump reads GET /v1/system's `settings`. A plaintext secret here exercises
+    // our defensive redaction layer even in the (unexpected) case the engine returns a raw value.
+    getSystemMock.mockResolvedValue({
+      settings: {
+        OpenAiKey: PLAINTEXT_SECRET,
+        DisableTelemetry: 'false',
+      },
     });
 
     const res = await c.app.inject({
