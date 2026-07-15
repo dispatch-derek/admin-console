@@ -48,10 +48,10 @@ Arguments: `$ARGUMENTS`
 
 1. Offer discovery: "Want me to scan for existing signals before drafting?" Skip silently
    if the user already supplied rich evidence or declines.
-2. If accepted, dispatch the **research agent in DISCOVER role** (Task tool) with the raw
-   idea text and the DISCOVER section of the `feature-value-scoring` skill. It returns a
-   signal report: source / signal / magnitude / date / citation entries, or an explicit
-   "no signal found".
+2. If accepted, dispatch the **market-research-agent in DISCOVER role** (Task tool,
+   `subagent_type: market-research-agent`) with the raw idea text and the DISCOVER section
+   of the `feature-value-scoring` skill. It returns a signal report: source / signal /
+   magnitude / date / citation entries, or an explicit "no signal found".
 3. **Enforce signals-only on return:** reject and re-dispatch if the report contains
    recommendations, problem framing, urgency adjectives, solution language, or score-like
    phrasing. The discovery output feeds the brief-writer as raw material — if it arrives
@@ -66,8 +66,8 @@ Arguments: `$ARGUMENTS`
 
 ## Phase 3 — Draft (subagent dispatch)
 
-Dispatch the **brief-writer agent** (Task tool) with the gathered context, the BRIEF role
-section of the skill, and the template below. The template's sections map one-to-one onto
+Dispatch the **feature-brief-writer** (Task tool, `subagent_type: feature-brief-writer`) with
+the gathered context, the BRIEF role section of the skill, and the template below. The template's sections map one-to-one onto
 the scoring dimensions so the research agent finds what it needs where it expects it:
 
 ```markdown
@@ -124,7 +124,7 @@ and log if the agent editorializes toward numbers.
    section from the brief rather than leaving it empty.
 2. Otherwise offer it: "This looks user-facing — want a UX read before we finalize?" Skip
    silently if declined.
-3. If accepted, dispatch the **ux-designer agent** (Task tool) with the drafted Problem,
+3. If accepted, dispatch the **ux-designer** (Task tool, `subagent_type: ux-designer`) with the drafted Problem,
    Affected Users, and Proposed Direction sections, plus the DESIGN role section of the
    `feature-value-scoring` skill. It returns a complexity read and a UX risk read.
 4. **Enforce on return, same bar as Phase 2b:** reject and re-dispatch if the response

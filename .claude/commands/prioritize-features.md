@@ -63,10 +63,12 @@ Arguments: `$ARGUMENTS`
 
 ## Phase 3 — Research scoring (subagent dispatch)
 
-For each row in the RESEARCH queue, dispatch the **market-research agent** (Task tool) in the
-RESEARCH role, with: the feature's brief content (or the defect's `brief_ref`/inline repro
-info), the Rubric sheet anchors, the RESEARCH role section of the `feature-value-scoring`
-skill, the row's `item_type`, and the field map from Phase 1.
+For each row in the RESEARCH queue, dispatch the **market-research-agent** (Task tool,
+`subagent_type: market-research-agent`) in the RESEARCH role, with: the feature's brief
+content (or the defect's `brief_ref`/inline repro info), the Rubric sheet anchors, the
+RESEARCH role section of the `feature-value-scoring` skill, the row's `item_type`, and the
+field map from Phase 1. The agent is **advisory** — it returns proposed scores in its
+MARKET RESEARCH REPORT; this command applies every workbook write.
 
 Enforce on return, before accepting any write:
 - **Feature rows** — only permitted fields touched: `reach`, `user_value`, `business_value`,
@@ -99,9 +101,12 @@ Apply accepted writes via openpyxl, then run `recalc.py` and verify zero formula
 
 ## Phase 5 — Ranking (subagent dispatch)
 
-Dispatch the **prioritization agent** with: read-only extract of all complete `Scored` rows
-of both item types (all fields including calculated columns, post-recalc), the PRIORITIZE
-role section of the skill, and the cut line if provided.
+Dispatch the **feature-prioritizer** (Task tool, `subagent_type: feature-prioritizer`) with:
+read-only extract of all complete `Scored` rows of both item types (all fields including
+calculated columns, post-recalc), the PRIORITIZE role section of the skill, and the cut line
+if provided. The agent is **advisory and read-only** — it returns ranked placements and
+status recommendations in its PRIORITIZATION REPORT; this command applies the accepted
+`status` writes in Phase 6.
 
 Require from it:
 1. One ranked list by `priority_score`, Feature and Defect rows mixed together — that's the
