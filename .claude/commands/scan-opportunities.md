@@ -33,8 +33,9 @@ Arguments: `$ARGUMENTS`
 
 ## Phase 2 — Scan (subagent dispatch)
 
-Dispatch the **research agent in DISCOVER role** (Task tool) with: the focus and lookback
-arguments, the DISCOVER section of the skill, and the dedupe index as exclusion context.
+Dispatch the **market-research-agent in DISCOVER role** (Task tool,
+`subagent_type: market-research-agent`) with: the focus and lookback arguments, the DISCOVER
+section of the skill, and the dedupe index as exclusion context.
 
 Instruct it to look for *patterns without a proposal*: recurring ticket clusters, feature
 requests spread across accounts, churned-customer themes, competitor launches with no

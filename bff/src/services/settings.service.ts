@@ -331,9 +331,13 @@ export async function getVectorCount(): Promise<{ vectorCount: number }> {
   return { vectorCount: await adapter.vectorCount() };
 }
 
-// GET /api/diagnostics/env — masked env-dump (REQ-074/078a). The engine masks too; we redact
-// secret-bearing values defensively by key name before returning.
+// GET /api/diagnostics/env — masked env-dump (REQ-074/078a). Sourced from GET /v1/system, whose
+// `settings` object is the engine's masked view of the resolved environment (secrets returned as
+// booleans, never values) — the same source getRawEnv/getSettings use. NOTE: the engine's
+// /v1/system/env-dump endpoint is NOT a data source — it writes settings to file storage and
+// replies with the bare status text "OK" (a no-op outside production), so it returns no JSON to
+// dump. We layer redactEnvValues on top of `settings` for defense in depth.
 export async function getEnvDump(): Promise<Record<string, unknown>> {
-  const dump = await adapter.envDump();
-  return redactEnvValues(dump);
+  const { settings } = await adapter.getSystem();
+  return redactEnvValues(settings);
 }
