@@ -1,0 +1,17 @@
+{
+  "name": "admin-console-e2e-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real cross-process E2E suite for the F-004 outbox relay delivery service. Launches the actual relay entrypoint (bff/src/relay/index.ts) as a child process against a real temp SQLite outbox DB and real localhost HTTP stub peers -- no mocking of the transport, the DB, or the process boundary. Covers what no unit/spec-level test can: the entrypoint wiring, the drain loop across a real HTTP hop, GET /ready under real conditions, and crash/restart recovery.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.10.0",
+    "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}

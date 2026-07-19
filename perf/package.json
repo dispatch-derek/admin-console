@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Scope marker only — makes perf/**/*.ts resolve as ESM for tsx. Not a publishable package."
+}

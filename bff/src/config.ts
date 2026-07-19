@@ -1,6 +1,8 @@
 // Config via requireEnv (mirrors sibling bff/src/config.ts). See 04-cross-cutting.md §h.
 // Missing required vars throw at load → process exits at startup (REQ-001, REQ-019a).
 
+import { dbPath } from './store/db-path.js';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -29,6 +31,30 @@ const DEV_DEFAULT_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
 const corsOrigins = webOrigins.length ? webOrigins : isProduction ? [] : DEV_DEFAULT_ORIGINS;
 const anythingLLMBaseUrl = requireEnv('ANYTHINGLLM_BASE_URL').replace(/\/$/, ''); // REQ-001
 
+// F-004 EVENT_BUS_MODE production hard-refuse (REQ-F004-021/039/046). The grounded factory
+// (bus.ts) falls back to InProcessBus for any non-'bus' value — InProcessBus marks rows published
+// WITHOUT delivering them (zero subscribers), so once switched to `bus` mode those already-published
+// rows are excluded from the drain (REQ-F004-041) ⇒ silent, permanent event loss. So under
+// NODE_ENV=production the mode MUST be exactly 'bus'; anything else (unset, literal 'inproc', a typo)
+// makes the BFF refuse to boot. In development the same misconfig soft-defaults to 'inproc'.
+const EVENT_BUS_MODES = ['inproc', 'bus'] as const;
+const rawEventBusMode = process.env['EVENT_BUS_MODE'];
+let eventBusMode: (typeof EVENT_BUS_MODES)[number];
+if (isProduction) {
+  if (rawEventBusMode !== 'bus') {
+    throw new Error(
+      `EVENT_BUS_MODE must be 'bus' in production (got ${rawEventBusMode ?? 'unset'}); ` +
+        `any other value would mark events published without delivering them (silent loss).`,
+    );
+  }
+  eventBusMode = 'bus';
+} else {
+  eventBusMode =
+    rawEventBusMode && (EVENT_BUS_MODES as readonly string[]).includes(rawEventBusMode)
+      ? (rawEventBusMode as (typeof EVENT_BUS_MODES)[number])
+      : 'inproc';
+}
+
 export const config = {
   anythingLLMBaseUrl, // REQ-001
   anythingLLMApiKey: requireEnv('ANYTHINGLLM_API_KEY'), // REQ-001, REQ-013
@@ -40,7 +66,7 @@ export const config = {
   adminBootstrapToken: process.env['ADMIN_BOOTSTRAP_TOKEN'],
   sessionSecret: requireSecret('SESSION_SECRET'), // cookie signing (>= 32 chars)
   secretsKey: requireSecret('SECRETS_ENC_KEY'), // encrypt totp secrets at rest (>= 32 chars)
-  dbPath: process.env['DB_PATH'] ?? 'data/console.db',
+  dbPath, // shared, secret-free resolution (store/db-path.ts) so BFF + relay never diverge
   isProduction,
   // Session cookie Secure flag: default true (fail closed); an explicit dev-only opt-out via
   // COOKIE_INSECURE=1 allows plain-HTTP local dev. Production is ALWAYS secure (sec review M-1).
@@ -48,7 +74,7 @@ export const config = {
   corsMode: isProduction ? 'strict' : 'permissive', // REQ-095
   webOrigins, // REQ-095 strict allowlist (raw parsed value)
   corsOrigins, // REQ-095 — the effective allowlist handed to @fastify/cors (never `true`)
-  eventBusMode: process.env['EVENT_BUS_MODE'] ?? 'inproc', // 04c
+  eventBusMode, // 04c + F-004 REQ-F004-021/039/046 (validated above)
   eventBusUrl: process.env['EVENT_BUS_URL'],
   // F-005 (REQ-F005-058/044): deployment-provided feature-catalog manifest path. Optional — unset or
   // empty means "no manifest configured" → empty catalog, normal start (REQ-F005-053a). A present-

@@ -5,6 +5,101 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [F-004 — Production Event-Bus Delivery (Outbox Relay)]
+
+### Added
+
+- **Outbox relay process:** A new supervised background service (`bff/src/relay/index.ts`) drains
+  the durable `event_outbox` table and delivers `admin.*` domain events to peer endpoints over
+  HTTP with guaranteed at-least-once semantics, per-key ordering, and automatic poison isolation
+  (REQ-F004-001/010/014).
+
+- **Event delivery infrastructure:** The relay implements per-key-ordered delivery with skip-ahead
+  across keys (REQ-F004-016/042), exponential-backoff retry on transient failures (REQ-F004-013),
+  and immediate parking of permanent rejections (REQ-F004-047). Crashed/restarted relays backfill
+  the accumulated unpublished backlog oldest-first per-key order (REQ-F004-015/037).
+
+- **Multi-peer fan-out with stateful ack tracking:** The HTTP transport (`HttpPeerTransport`)
+  POSTs each event to N configured peers and acks only when every peer accepts (REQ-F004-050/051).
+  Per-`deliveryId` ack state is tracked in memory across re-drives, so a re-attempt re-POSTs only
+  the still-un-acked peers (REQ-F004-051(b)). Partial fan-out failures are isolated and marked
+  for operator visibility (REQ-F004-051(e)).
+
+- **Delivery-id stability:** Every delivery carries a stable, unique id (`<outbox-epoch>:<row-id>`)
+  in the `x-event-delivery-id` HTTP header, constant across retries and process restarts (same DB),
+  and distinct across DB resets. Peers must deduplicate on this id to achieve effectively-once
+  processing (REQ-F004-018/036/048).
+
+- **Health probe (`GET /ready`):** The relay serves an unauthenticated readiness endpoint (port
+  3003 by default) that reports 200 when healthy and 503 with a machine-readable reason when
+  degraded (backlog/lag over threshold, transport unreachable, store unwritable, REQ-F004-044).
+  Operators wire this into their health-check policy.
+
+- **Durable delivery bookkeeping:** Six new columns on `event_outbox` track delivery state —
+  `ordering_key` (per-key partition), `attempt_count`, `next_attempt_at` (backoff window),
+  `last_error` (diagnostics), `parked_at` (poison isolation), and `acked_at` (post-ack cap routing)
+  — plus a singleton `outbox_meta` table seeding the delivery-id epoch (REQ-F004-029/038/048).
+
+- **Ordering-key derivation:** A pure, total function (`deriveOrderingKey`) maps event names and
+  targets to stable partition keys scoped to 8 domain-event families, with explicit support for
+  singleton keys (`instance`, `baseline`) and independent events (`admin.feature_toggle.*`,
+  REQ-F004-029/031/038).
+
+- **Retention and pruning:** Published rows older than 7 days (configurable via
+  `EVENT_BUS_RETENTION_MS`) are automatically pruned every ~1 hour (configurable via
+  `EVENT_BUS_PRUNE_EVERY_CYCLES`). Unpublished and parked rows are never pruned (REQ-F004-019/035).
+
+- **Separate relay-scoped config:** The relay boots with `DB_PATH + EVENT_BUS_*` environment
+  variables only — no BFF secrets (`ANYTHINGLLM_*`, `SESSION_SECRET`, `SECRETS_ENC_KEY`) are
+  required, so the relay can be packaged as an independent supervised process without credential
+  leakage (REQ-F004-033/045).
+
+- **Transport-agnostic drainer + pluggable adapter:** The drain orchestration layer (polling,
+  per-key order, retry/backoff, park) is written once and imports only the `EventTransport`
+  interface, not HTTP or peer details (REQ-F004-049). Future broker adoption (Kafka, NATS, etc.)
+  will be a new `EventTransport` class plus one config branch, with zero churn to producers,
+  routes, or the outbox schema (REQ-F004-050/052).
+
+### Changed
+
+- **BFF hard-refuse on non-`bus` mode in production:** Under `NODE_ENV=production`, any
+  `EVENT_BUS_MODE` value other than `bus` (including the default `inproc`, typos, or unset)
+  causes the BFF to refuse to boot with a clear error naming the variable (REQ-F004-021/039).
+  This prevents silent event loss by enforcing the durable outbox path in production.
+
+- **Event emission unchanged:** The `emitAdminEvent` call site and the `AdminEventEnvelope`
+  contract are unchanged — no producer code needs modification (REQ-F004-004/005/006/022).
+  The relay handles delivery independently behind the `EventBus` seam.
+
+### Non-Goals
+
+- F-004 delivers the **wire protocol only** (HTTP-to-known-peers). Standing up the physical
+  message broker (Kafka, NATS, etc.) is an ops/platform concern outside this feature
+  (REQ-F004-008).
+- Downstream consumers of `admin.*` events (audit pipelines, alerting, cross-service automation)
+  are separate work; F-004 delivers reliably to the transport (REQ-F004-007).
+- The event contract itself (catalog, envelope shape, cardinality, redaction) is unchanged
+  (REQ-F004-004).
+
+### Known Limitations (see Security Review)
+
+- **No per-peer request timeout hardened (F1):** Default 10s timeout bounds slow peers, but a
+  hostile peer can stall that ordering key. Tunable via `EVENT_BUS_PEER_TIMEOUT_MS`.
+- **No HTTPS/TLS enforcement or auth on peer delivery (F2):** Events are POSTed over plain HTTP
+  with no HMAC/signature. Trusted-network / operator-controlled assumption; mitigate via HTTPS
+  and private networks.
+- **Unauthenticated `/ready` probe (F3):** Serves on `0.0.0.0` with no auth. Mitigate via
+  network policy / loopback binding.
+
+### Spec & Design
+
+- **Specification:** `specs/F-004-production-event-bus.md` (rev 11, binding).
+- **Architecture design:** `docs/design/09-F004-production-event-bus.md`.
+- **Migration runbook:** `migrations/NOTES-F004.md` (schema delta, backfill, deploy phasing).
+- **Security review:** `security/F-004-review.md` (pass with notes; two medium findings).
+- **Relay operator guide:** `bff/src/relay/README.md` (boot, config, `/ready`, troubleshoot).
+- **E2E test harness:** `tests/e2e/relay/README.md` (journey coverage, fixtures).
+
 ## [F-005 — Per-Customer Feature Toggle Console]
 
 ### Added

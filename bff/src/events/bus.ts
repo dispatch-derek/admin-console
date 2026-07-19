@@ -1,10 +1,12 @@
 // Abstract EventBus + interim implementations (04-cross-cutting.md §c, REQ-029/029d).
 // Every publish durably writes an event_outbox row (the durable record), so events
 // survive a crash between the verify result and delivery. Two impls behind EVENT_BUS_MODE.
+// F-004 adds the production relay that drains the outbox and delivers events over HTTP.
 
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { outboxRepo } from '../store/repositories/outbox.repo.js';
+import { deriveOrderingKey } from './ordering-key.js';
 import type { AdminEventEnvelope } from './catalog.js';
 
 export interface EventBus {
@@ -29,7 +31,10 @@ export class InProcessBus implements EventBus {
 // published — so events back-fill once the bus appears (04c, 06-risks).
 export class OutboxRelayBus implements EventBus {
   async publish(env: AdminEventEnvelope): Promise<void> {
-    outboxRepo.insert(env.timestamp, JSON.stringify(env));
+    // F-004 (REQ-F004-029): compute the per-key ordering key from the (parsed) envelope and
+    // persist it on the row so the relay enforces per-key order without re-deriving it each drain.
+    // INSERT path only — still no delivery here; the relay drains and delivers later.
+    outboxRepo.insert(env.timestamp, JSON.stringify(env), deriveOrderingKey(env));
   }
 }
 

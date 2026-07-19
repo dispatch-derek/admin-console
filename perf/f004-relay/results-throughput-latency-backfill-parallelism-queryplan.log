@@ -1,0 +1,42 @@
+F-004 outbox relay perf harness
+node v24.18.0, DB_PATH=/tmp/f004-perf-eRPBX9/console.db
+cwd=/home/derek/git/admin-console
+
+=== SECTION A: drain/delivery throughput (target >= 50 events/sec) ===
+  run 1/3: 5000 rows / 200 keys drained in 4462.2 ms over 25 ticks -> 1120.5 events/sec (remaining=0, peer requests=5000)
+  run 2/3: 5000 rows / 200 keys drained in 4022.7 ms over 25 ticks -> 1242.9 events/sec (remaining=0, peer requests=10000)
+  run 3/3: 5000 rows / 200 keys drained in 3977.6 ms over 25 ticks -> 1257.0 events/sec (remaining=0, peer requests=15000)
+  THROUGHPUT median=1242.9 ev/s, p95(min of samples)=1120.5 ev/s, max=1257.0 ev/s (n=3)
+  SPEC FLOOR: >= 50 events/sec  =>  PASS (worst observed run)
+
+=== SECTION B: end-to-end delivery latency (target p95 < 5000 ms) ===
+  2000 rows / 100 keys, tight poll loop, 20 ticks. Latency (ms) — median=372.0 p95=678.0 p99=691.0 min=48.0 max=691.0 (n=2000)
+  SPEC TARGET: p95 < 5000 ms  =>  PASS
+  [with production 1000ms poll cadence] 200 rows: median=8.0 p95=1026.0 max=1026.0 ms (n=200) — dominated by poll-interval queueing, not drain/deliver cost
+
+=== SECTION C: backfill bound (target >= 10,000 rows, no pathological stall, bounded RSS) ===
+  seeding 12000 rows across 300 ordering keys...
+  drained 12000/12000 rows in 34161.6 ms over 40 ticks -> 351.3 events/sec
+  remaining unpublished: 0 (expect 0)
+  RSS (MB): baseline=391.4 peak-during-drain=397.7 final=398.0 delta(peak-baseline)=6.2
+  RSS growth vs. total rows processed (bytes/row): 517.5
+  SPEC TARGET: clears >= 10,000-row backlog without stalling  =>  PASS
+  peer requests observed: 12000 (expect ~12000 for a single fast-acking peer, 1 POST/row)
+
+=== SECTION D: per-key ordering vs. cross-key parallelism ===
+  60 distinct keys, 1 row each, stub peer delay=300ms/request. Single runOnce() tick took 327.5 ms.
+  Fully-serial estimate would be ~18000 ms; fully-parallel estimate would be ~300-450 ms.
+  remaining unpublished after 1 tick: 0 (expect 0 if all dispatched concurrently)
+  VERDICT: PARALLEL (cross-key fan-out confirmed)
+
+=== SECTION E: selectEligible query plan + cost at scale ===
+  seeding 60000 published + 10000 unpublished rows across 500 keys...
+  EXPLAIN QUERY PLAN for selectEligible (verbatim SQL from outbox.repo.ts):
+    SCAN o
+    CORRELATED SCALAR SUBQUERY 1
+    SEARCH e USING INTEGER PRIMARY KEY (rowid<?)
+  Contains a table SCAN not covered by idx_outbox_eligible: no
+  Requires a temp B-tree (extra sort, e.g. for ORDER BY): no
+  outboxRepo.selectEligible(now, 500) latency (ms) over 30 calls at 70000 total rows / 10000 unpublished across 500 keys: median=966.4 p95=983.8 max=984.7
+  outboxRepo.selectEligible(now, 500) latency (ms) at 10 total rows / 10 unpublished: median=0.0 p95=0.1 max=0.1
+  Scale factor (large-table median / small-table median): 44778.1x for a 7000x larger table

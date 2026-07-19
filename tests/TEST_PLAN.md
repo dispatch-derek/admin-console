@@ -841,3 +841,415 @@ updated accordingly (see "Post-ruling test update" below).
   signal as before) — and the full web suite remains `2 failed | 48 passed` (files) /
   `3 failed | 525 passed` (tests), identical to the pre-update baseline: no pre-existing test
   regressed and no new compile/syntax error was introduced by the edit.
+
+---
+
+# TEST_PLAN — F-004 Production-Ready Event Bus (Outbox Relay)
+
+Spec: `specs/F-004-production-event-bus.md` (Draft rev 10 — final, review-gated; every
+`REQ-F004-###` is binding). Design: `docs/design/09-F004-production-event-bus.md`. Parent spec:
+`specs/admin-console.md` (v1, rev 7). Migration runbook (already implemented by a prior agent):
+`migrations/NOTES-F004.md`; migration test (PRE-EXISTING, not touched by this task):
+`bff/test/store/f004-outbox-migration.test.ts`.
+
+## Framework & harness choice
+
+Same established BFF suite as F-002/F-005: `vitest` (node env), real (tmp-file) SQLite via
+`bff/src/store/db.ts`, module-boundary `vi.mock` where isolation is wanted (mirrors
+`bff/test/events/bus.test.ts`), and the `vi.resetModules() + dynamic import()` pattern for
+load-time-throwing config modules (mirrors `bff/test/config.test.ts`). No new framework
+introduced. Run with `npm test` (= `vitest run`) from `bff/`.
+
+## What exists vs. what does not, as of this task
+
+**Already implemented** (a prior "migration" agent's work, grounded/read, not modified here):
+the `event_outbox` schema delta (`ordering_key`, `attempt_count`, `next_attempt_at`,
+`last_error`, `parked_at`, `acked_at`), the `outbox_meta` epoch singleton, the partial index, and
+the migration's own inline `deriveOrderingKeyForBackfill` — all in `bff/src/store/db.ts`, covered
+by `bff/test/store/f004-outbox-migration.test.ts`.
+
+**Does NOT exist yet** (this task's entire target surface, per `docs/design/09-F004-production-
+event-bus.md` §1.1's file table): `bff/src/relay/*` (the whole relay package — `index.ts`,
+`drainer.ts`, `transport.ts`, `http-peer-transport.ts`, `delivery-id.ts`, `backoff.ts`,
+`metrics.ts`, `ready.ts`, `config.ts`), `bff/src/events/ordering-key.ts`, the F-004 additions to
+`bff/src/store/repositories/outbox.repo.ts` (`selectEligible`/`markAcked`/`recordFailure`/`park`/
+`forcePublish`/`pruneShipped`/`getEpoch`), the F-004 edit to `bff/src/events/bus.ts`
+(`OutboxRelayBus.publish` computing `ordering_key`), and the F-004 edit to `bff/src/config.ts`
+(the `EVENT_BUS_MODE` production hard-refuse). Every test below targeting these is written
+strictly from the spec + design doc, BEFORE reading any relay implementation (none exists), and
+is **expected to fail now** (module-not-found / missing-method / wrong-throw-message) — not on a
+syntax/import error in the TEST files themselves. Confirmed by running the full suite (see
+"Suite status" below).
+
+## Interface-shape assumptions (NOT pinned verbatim by the spec — documented per file)
+
+The spec pins every requirement's **observable behavior** precisely; several internal module
+**call signatures** are left to the implementer (design doc names each file's *responsibility*,
+not always its literal exported API). Each test file's header comment states its own assumption
+inline; summarized here for a single reference point:
+
+| Module (does not exist yet) | Assumed export(s) | Rationale |
+|---|---|---|
+| `bff/src/events/ordering-key.ts` | `deriveOrderingKey(envelope): string` | design §1.1: "shared by the enqueue path" (`OutboxRelayBus.publish`), which holds the parsed envelope object |
+| `bff/src/relay/delivery-id.ts` | `composeDeliveryId(epoch, rowId): string` | design §2.3 pins the composed shape only |
+| `bff/src/relay/backoff.ts` | `backoffMs(attempt): number`, `MAX_ATTEMPTS: number` | design §1.1/§5: "capped-exponential backoff schedule + MAX_ATTEMPTS constant of record" |
+| `bff/src/relay/transport.ts` | `TransportError` (design §2.1, pinned shape), `createTransport({kind, peerUrls})` | design §1.1: "the EVENT_BUS_TRANSPORT factory" |
+| `bff/src/relay/http-peer-transport.ts` | `new HttpPeerTransport(peerUrls: string[])`, `.deliver()`, `.release()` | design §2.2 pins behavior, not the constructor literal |
+| `bff/src/relay/drainer.ts` | `createDrainer({transport}) -> { runOnce(), shutdown(timeoutMs) }` | the highest-risk assumption — design leaves poll cadence implementation-defined (REQ-F004-010/M8); `runOnce()`/`shutdown()` is the minimal seam that makes the spec's real-time-independent behavior deterministically testable without depending on a live poll loop. **If the real module exposes a different shape** (e.g. `start()`/`stop()`), the OBSERVABLE assertions in `drainer.test.ts` (DB row state transitions) are what is spec-load-bearing — only the call sites would need adjusting, not the assertions |
+| `bff/src/relay/metrics.ts` | `getRelayLagMs()`, `getBacklogCount()`, `recordDelivered/recordAttemptFailure/recordNeverDeliveredPark/recordPartiallyDeliveredPark/recordPostAckCap()`, `getCounters()` | design §1.1/§6 name the counters; recorder-function shape assumed since the drainer is the only place an outcome is known |
+| `bff/src/relay/ready.ts` | `buildReadyApp(deps) -> { inject() }` | mirrors this repo's own established Fastify `buildApp()`/`.inject()` convention |
+| `bff/src/relay/config.ts` (or an equivalent relay-scoped module) | `config` (a load-time const/throw, mirroring `bff/src/config.ts`'s own pattern) | design §5/§11 explicitly flags this split as an **open question**, not resolved by the spec — the module PATH itself is an assumption, not just its shape |
+| `bff/src/store/repositories/outbox.repo.ts` (edit) | `selectEligible(now, limit)`, `markAcked(id, iso)`, `recordFailure(id, next, err)`, `park(id, iso)`, `forcePublish(id, iso)`, `pruneShipped(before)`, `getEpoch()` | design §1.1's file table names these literally |
+| `bff/src/events/bus.ts` (edit) | `outboxRepo.insert(ts, envelope, orderingKey)` — third positional arg | design §1.1: "computes ordering_key ... and passes it to insert" |
+
+None of these are `SPEC-AMBIGUITY` in the blocking sense (hard rule 4) — the spec's *behavior* is
+unambiguous in every case above; only the internal call-shape needed inventing, exactly the same
+situation F-002/F-005's own `TEST_PLAN.md` sections documented for unpinned web API client
+function names / component paths (see those sections' "Design notes / how ambiguity was handled").
+
+## Test files created
+
+- `bff/test/relay/helpers.ts` — shared test-only support (NOT a test file itself): `makeEnvelope`/
+  `envJson`, the 21-event-name/8-family `CATALOG_FAMILY_CASES` fixture (grounded from
+  `bff/src/events/catalog.ts`), the scriptable `FakeTransport` double (REQ-F004-049's
+  transport-agnostic-swap proof), and raw `event_outbox` row seeding. Zero dependency on any
+  not-yet-built `bff/src/relay/*` module, so it never itself causes a cascading import failure.
+- `bff/test/events/ordering-key.test.ts` — 35 tests (`it.each` over the 21-case catalog fixture
+  expands most of this). §3 total derivation over all 8 families, trailing-dot prefix match (N6),
+  totality edge cases (N5), `__unkeyed__` independence.
+- `bff/test/events/bus.f004.test.ts` — 3 tests. `OutboxRelayBus.publish` byte-for-byte envelope +
+  computing/passing `ordering_key` to `insert()`.
+- `bff/test/store/repositories/outbox.repo.f004.test.ts` — 23 tests. `selectEligible` (the spec's
+  own two seeded eligibility scenarios verbatim, §3.4/REQ-F004-041), `markAcked`/`forcePublish`,
+  `recordFailure`, `park`, `pruneShipped`, `getEpoch`, `busy_timeout` proxy check.
+- `bff/test/relay/delivery-id.test.ts` — 5 tests. Epoch-qualified delivery id composition/
+  stability/uniqueness-across-reset.
+- `bff/test/relay/backoff.test.ts` — 5 tests. Capped-exponential shape, `MAX_ATTEMPTS` constant.
+- `bff/test/relay/transport.test.ts` — 7 tests. `TransportError` shape, `EVENT_BUS_TRANSPORT`
+  factory (`http` default; `broker`/out-of-set hard-refuse in ALL environments).
+- `bff/test/relay/http-peer-transport.test.ts` — 29 tests. Fan-out ack (resolve-only-on-full-2xx),
+  byte-for-byte envelope, delivery-id header carriage, stateful per-`deliveryId` re-drive
+  (re-POST only un-acked peers), eviction via `release()`. **Phase-2 addendum (REQ-F004-055, rev
+  11, §4.4 — RULED):** the full single-peer HTTP-status/network-failure -> permanent/transient
+  classification table (ack 2xx incl. 200/204; transient 500/502/503/408/429 + connection-refused
+  + DNS failure + socket reset; permanent 400/401/403/404/422 + 301/302) and the REQ-F004-051
+  fan-out composition rule (a permanent response from any not-yet-acked peer makes the WHOLE
+  `deliver()` reject permanent even against an already-acked or transient-failing peer; with no
+  permanent peer, a transient peer makes `deliver()` reject transient and re-drive re-POSTs only
+  the still-un-acked peer).
+- `bff/test/relay/drainer.test.ts` — 20 tests. THE priority file: basic delivery, crash/restart
+  backfill (never-zero, same-delivery-id redelivery), first-connection backfill (all rows, no
+  horizon), per-key ordering (skip-across / block-within), poison isolation (never-acked park vs
+  ever-acked force-publish vs immediate permanent-park), single-drainer/no-double-delivery,
+  graceful shutdown draining the SET of in-flight deliveries with abandon-preserves-
+  `attempt_count`. Built entirely against the `FakeTransport` double — the REQ-F004-049
+  swap-ability proof in practice.
+- `bff/test/relay/metrics.test.ts` — 10 tests. Live lag/backlog gauges (seeded-DB-driven,
+  deterministic), event counters incl. the never-vs-partially-delivered park split.
+- `bff/test/relay/ready.test.ts` — 10 tests. `/ready` 200/503 + reasons, the at-or-over threshold
+  boundary (rev-10) at both the backlog and lag edges.
+- `bff/test/relay/relay-config.test.ts` — 14 tests. Relay-scoped config requiring ONLY
+  `DB_PATH`+`EVENT_BUS_*` (not the BFF's secrets, REQ-F004-033), peer-list parsing, transport
+  selector, threshold defaults, the `EVENT_BUS_URL`-missing / `EVENT_BUS_TRANSPORT=broker`
+  hard-refuse postures.
+- `bff/test/config.f004.test.ts` — 6 tests. BFF-side `EVENT_BUS_MODE` production hard-refuse
+  (REQ-F004-021/039/046), isolated from the pre-existing `config.test.ts` (not edited).
+- `bff/test/relay/static-scans.test.ts` — 12 tests. No `web/` change, `listUnpublished` has no
+  non-repo caller, no transport-specific logic leaks into the orchestration layer, mutating
+  routes/services untouched, `EVENT_BUS_URL` never reaches a route response, relay never
+  references a second application's database. **Phase-2 addendum (REQ-F004-055/049):** neither
+  `drainer.ts` nor `transport.ts` (the seam/factory) contains any of the REQ-F004-055 HTTP-status
+  classification tokens (408/429/403/404/422, `>= 500`/`>= 400` range-check idioms, a
+  `status/100`-bucketing idiom) — that table is HttpPeerTransport-internal only.
+- `bff/test/relay/consumer-contract.test.ts` — 4 tests. Self-contained reference `Consumer` +
+  two transport doubles proving dedupe + cross-key-reorder-tolerance is broker-swap-invariant —
+  runs GREEN today (validates the contract itself, independent of the not-yet-built relay).
+- `bff/test/relay/perf.test.ts` — 2 tests. Smoke-level backlog-drain-to-zero + cross-key
+  parallel-dispatch-in-one-tick, explicitly NOT a rigorous load test (same convention as
+  `bff/test/routes/{baseline-prompt,feature-toggles}.performance.test.ts`).
+
+**Total: 16 files (1 shared helper + 15 test files), 185 test cases** as actually collected by
+`vitest run` (163 from the original pass + 22 from the REQ-F004-055 Phase-2 addendum below; see
+"Suite status" for the exact pass/fail/skip breakdown).
+
+## Phase-2 addendum (REQ-F004-055, rev 11 — HTTP status -> permanent/transient classification, RULED)
+
+The spec's rev 11 (`specs/F-004-production-event-bus.md` §4.4) resolved the one genuine
+`SPEC-AMBIGUITY` this suite originally flagged (HttpPeerTransport's concrete HTTP-status ->
+classification mapping) as a new binding requirement, **REQ-F004-055**:
+
+- **Ack:** 2xx.
+- **Transient** (retry w/ backoff to the max-attempt bound, then park — REQ-F004-013/014):
+  connection-refused / timeout / DNS failure / socket reset (network-level); ALL 5xx; 408; 429.
+- **Permanent** (immediate park, no backoff — REQ-F004-047/051(d)): all other 4xx; any 3xx; any
+  other unexpected non-2xx.
+- **Fan-out composition** (REQ-F004-051): a permanent response from any not-yet-acked peer ->
+  the whole `deliver()` rejects permanent (immediate park), even against an already-acked or
+  transient-failing peer; with no permanent peer, a not-yet-acked transient peer -> `deliver()`
+  rejects transient (re-drive re-POSTs only the still-un-acked peers).
+
+**Tests added** (both to already-existing files, matching the established structure — no new
+files needed):
+
+- `bff/test/relay/http-peer-transport.test.ts` — **+19 test cases**: a single-peer classification
+  table (`it.each` over 200/204 ack; 500/502/503/408/429 transient + connection-refused + DNS
+  failure + a fast, deterministic socket-reset double (`startResetPeer()`, destroys the TCP
+  socket on connect rather than waiting out a real response timeout) + 400/401/403/404/422/301/302
+  permanent) and 4 fan-out composition tests (permanent-wins regardless of peer order, permanent
+  wins even over an already-acked peer, transient-only re-drives only the un-acked peer).
+- `bff/test/relay/static-scans.test.ts` — **+3 test cases**: a new `describe` block asserting
+  neither `drainer.ts` nor `transport.ts` contains any REQ-F004-055 HTTP-status classification
+  token (the table is HttpPeerTransport-internal, kept out of the seam per REQ-F004-049), plus the
+  explicit pre-implementation RED-signal test.
+
+**Testing-practicality note (not a spec gap):** an actual network-level *timeout* (as opposed to
+connection-refused/DNS-failure/socket-reset, all three of which fail fast and deterministically)
+is not independently exercised with a real elapsed-timeout wait, because HttpPeerTransport's
+concrete per-request timeout value is not spec-pinned and waiting out an unknown real timeout
+would make the suite slow/flaky. The other three network-level transient cases the REQ-F004-055
+table names are each covered by a fast, deterministic double instead — the same testing-practicality
+tradeoff already documented for REQ-F004-020's `busy_timeout`/`SQLITE_BUSY` scenario above.
+
+Suite re-run after this addendum: `Test Files 13 failed | 46 passed | 1 skipped (60)` — identical
+file-level counts to before (no regression, no new failing file — both touched files were already
+counted as "failed" for their pre-existing module-resolution RED signal). `Tests 36 failed | 953
+passed | 134 skipped (1123)` (was `35 failed | 953 passed | 113 skipped (1101)`): +22 new test
+cases total, of which +1 is a new genuine failing assertion (the new explicit
+pre-implementation-state flag added to `static-scans.test.ts`) and +21 cleanly self-skip via
+`describe.skipIf`/`it.skipIf` until `HttpPeerTransport`/`drainer.ts`/`transport.ts` exist. `tsc
+--noEmit -p bff` still exits 0.
+
+## Suite status as of this run
+
+Run from `bff/`: `npm test` (= `vitest run`).
+
+```
+Test Files  13 failed | 46 passed | 1 skipped (60)
+     Tests  35 failed | 953 passed | 113 skipped (1101)
+```
+
+- All **47 pre-existing BFF test files** (~938 pre-existing test cases: 1101 total minus this
+  task's 163 new) **pass/skip exactly as before** — this task added 15 new test files and did not
+  edit any pre-existing test file, so there is zero regression risk to the existing green baseline.
+  `bff/test/store/f004-outbox-migration.test.ts` (the migration agent's pre-existing file) also
+  still passes unchanged.
+- The **13 new files that touch not-yet-built `bff/src/relay/*` (or not-yet-added methods on
+  existing modules)** are the ones showing as "failed" — every failure is a clean, informative
+  assertion mismatch (missing method / module-not-found / wrong-throw-message), confirmed by
+  manual inspection of the full run: **zero** failures are a `SyntaxError`, a
+  `ReferenceError` in the TEST file's own code, or an uncaught exception that crashed test
+  collection — every file was fully collected and every one of its `it()`/`it.each` cases ran
+  (verified via `--reporter=verbose`; each failing file also enumerates its skipped-via-
+  `describe.skipIf`/`it.skipIf` cases, e.g. `drainer.test.ts` shows 1 failure + 19 skips —
+  module-resolution fails clean, then everything downstream gracefully self-skips instead of
+  cascading into 20 separate "Cannot find module" errors).
+- **2 files run entirely GREEN today**, by design: `consumer-contract.test.ts` (self-contained —
+  validates the REQ-F004-053 contract itself against two local test doubles, no dependency on
+  `bff/src/relay/*`) and the non-relay-dependent portions of `static-scans.test.ts` (the `web/`
+  leakage check, the `listUnpublished`-caller audit, the route/service-untouched checks, and the
+  `EVENT_BUS_URL`-in-routes check all pass vacuously now and will keep doing real work as
+  F-004 implementation code lands — mirrors the F-001 `TEST_PLAN.md`'s own "PASSES NOW" pattern).
+- `tsc --noEmit -p bff` exits 0 (test files are outside `bff/tsconfig.json`'s `include: ["src"]`,
+  matching this repo's existing convention of not type-checking `test/**` — vitest's own esbuild
+  transform is what "compiles" the test files, and it succeeded for all 60 files with zero
+  transform errors).
+
+**Status update (post-implementation):** F-004 has since been implemented (`bff/src/relay/**`,
+`bff/src/events/ordering-key.ts`, the `outbox.repo.ts`/`bus.ts`/`config.ts` edits all now exist).
+Two follow-up QA passes were made against the built implementation, kept as separate dated
+addenda below rather than silently rewritten into this pre-implementation snapshot: (1) the
+REQ-F004-055 addendum (rev-11 ruling), and (2) the Phase-3 addendum immediately below (a
+Phase-8-perf-incident regression guard). As of the Phase-3 addendum the full `bff/` suite is
+`Test Files 70 passed (70)` / `Tests 1229 passed (1229)`, `tsc --noEmit -p bff` exits 0 — the
+70-vs-60 file-count growth includes both this task's additions and a separate `*.unit.test.ts`
+batch owned by the unit-test-writer agent (outside this document's scope, not touched here).
+
+## Phase-3 addendum (Phase-8 perf incident — REQ-F004-027/034 query-PLAN regression guard)
+
+**Incident:** Phase-8 perf testing found `selectEligible` was `O(total-table-size)`, not
+`O(backlog)` — the 7-day retention window keeps published rows around, and the outer scan (plus
+the correlated per-key head-of-line subquery) fell back to a full-table/rowid-range scan once
+enough published rows accumulated: median 4.5ms @5k rows -> **4851ms @205k rows**, blowing the
+REQ-F004-027 p95 SLO. This was invisible to `bff/test/relay/perf.test.ts`, which only seeds ~500
+rows — too small for SQLite's query planner to ever consider, let alone need, a full scan. The fix
+(implementation, not touched by this task) added two partial indexes in `bff/src/store/db.ts`
+(`idx_outbox_live_id`, `idx_outbox_unpublished_key`); `outbox.repo.ts`'s `selectEligibleStmt` SQL
+text is byte-for-byte unchanged.
+
+**Test added:** a new `describe` block appended to
+`bff/test/store/repositories/outbox.repo.f004.test.ts` — **2 test cases**:
+
+1. **Query-PLAN assertion (the actual regression guard).** Seeds 4,000 retained-published rows +
+   400 unpublished rows across 40 ordering keys (large enough for SQLite's planner to genuinely
+   prefer an index — verified manually: dropping the two indexes against an equivalent seed
+   reproduces `"SCAN o"` (bare) + `"SEARCH e USING INTEGER PRIMARY KEY (rowid<?)"`, i.e. this test
+   would correctly FAIL against the pre-fix schema). The exact SQL under test is **extracted
+   directly from `outbox.repo.ts`'s own `selectEligibleStmt` source text** (via
+   `extractSelectEligibleSql()`, a small text-marker extraction, not a re-typed copy) so the guard
+   can never silently drift from the real query. Runs `EXPLAIN QUERY PLAN` against that exact SQL
+   and asserts: the outer scan's plan step mentions `idx_outbox_live_id`; the correlated subquery's
+   plan step mentions `idx_outbox_unpublished_key`; and **no** plan step is a bare `SCAN` (matches
+   `/\bSCAN\b/` without `USING INDEX`) — i.e. no full-table scan survived. This guards the query
+   **plan shape**, not wall-clock timing, so it is deterministic and non-flaky in CI.
+2. **Correctness-on-the-same-large-dataset assertion.** Layers five precise marker rows on top of
+   the 4,400-row noise set (an older-parked-row-blocks-its-key pair, a clean single-row key, and an
+   older-parked/newer-eligible `__unkeyed__` pair) and asserts `selectEligible` still returns
+   exactly the spec-correct set — guarding against exactly the trap the implementer avoided: an
+   "index-friendly" rewrite that becomes fast by silently breaking per-key head-of-line or
+   `__unkeyed__` independence (e.g. adding `parked_at IS NULL` to `idx_outbox_unpublished_key`'s
+   partial predicate would make the subquery index-driven too, but would drop parked rows from the
+   blocker set and un-stall a key that must stay stalled — this test would catch that).
+
+Both cases run in ~11ms each (real SQLite, no mocking), confirmed by re-running with the two new
+indexes manually dropped (see above) that they fail for the right reason before the fix, and pass
+after it.
+
+## REQ-F004-### -> test coverage map (every MUST mapped)
+
+Legend: **NEW** = a test in the files above. **EXISTING** = the pre-existing, untouched
+`f004-outbox-migration.test.ts`. **traced** = a §9 ruling/OQ-record REQ realized entirely through
+the operative REQ(s) it decided, per the same convention F-002/F-005's own plans use for their
+open-questions sections (no independent test, would just re-test the REQ it resolved).
+
+| REQ | Requirement (short) | Test(s) |
+|---|---|---|
+| REQ-F004-001 | Core guarantee; seam unchanged; static scan | `static-scans.test.ts` (emitAdminEvent/services scan); `drainer.test.ts` basic-delivery + crash/restart blocks |
+| REQ-F004-002 | Envelope delivered byte-for-byte | `drainer.test.ts`, `http-peer-transport.test.ts`, `bus.f004.test.ts` |
+| REQ-F004-003 | Independent out-of-process subscriber receives the event | `drainer.test.ts` crash/restart-backfill block (FakeTransport models the subscriber); `static-scans.test.ts` (no browser path) |
+| REQ-F004-004 | Event contract itself unchanged | traced — `ordering-key.test.ts`'s `CATALOG_FAMILY_CASES` is grounded verbatim from `catalog.ts`; no F-004 test asserts a changed envelope shape |
+| REQ-F004-005 | Transactional outbox WRITE unchanged | traced via `bus.f004.test.ts` (insert() still takes ts/envelope; only ordering_key appended) |
+| REQ-F004-006 | Zero web/ changes | `static-scans.test.ts` |
+| REQ-F004-007 | No production consumer beyond test doubles | traced — the whole suite's only "consumers" are `FakeTransport`/the `consumer-contract.test.ts` reference `Consumer`, never a production module |
+| REQ-F004-008 | Demonstrable against a transport stub, no broker product needed | traced via `drainer.test.ts` (entirely against `FakeTransport`) |
+| REQ-F004-009 | `listUnpublished` has no non-test caller (grounding) | `static-scans.test.ts` |
+| REQ-F004-010 | Relay drains ELIGIBLE rows only | `outbox.repo.f004.test.ts` `selectEligible`; `drainer.test.ts` basic-delivery block |
+| REQ-F004-011 | Core durability guarantee; `acked_at`-routed post-ack cap | `drainer.test.ts` crash/restart-backfill + poison-isolation blocks; `outbox.repo.f004.test.ts` markAcked/forcePublish |
+| REQ-F004-012 | Mark-published only on ack | `drainer.test.ts` basic-delivery block |
+| REQ-F004-013 | Retry with bounded backoff; inclusive-at-N cap | `backoff.test.ts`; `outbox.repo.f004.test.ts` recordFailure; `drainer.test.ts` transient-failure test |
+| REQ-F004-014 | Poison isolation, per-key scoped | `drainer.test.ts` poison-isolation block; `outbox.repo.f004.test.ts` park |
+| REQ-F004-015 | Backfill after outage | `drainer.test.ts` first-connection-backfill test |
+| REQ-F004-016 | In-order within key, skip-ahead across keys | `drainer.test.ts` per-key-ordering block; `outbox.repo.f004.test.ts` selectEligible ordering tests |
+| REQ-F004-017 | Single-drainer / no double-processing | `drainer.test.ts` single-drainer block |
+| REQ-F004-018 | Consumer dedupe id | `delivery-id.test.ts`; `drainer.test.ts` crash-in-window test; `consumer-contract.test.ts` |
+| REQ-F004-019 | Retention & pruning | `outbox.repo.f004.test.ts` pruneShipped |
+| REQ-F004-020 | Lifecycle, supervision, graceful shutdown of the SET | `drainer.test.ts` graceful-shutdown block (3 tests); `outbox.repo.f004.test.ts` busy_timeout proxy check (see limitation note) |
+| REQ-F004-021 | `bus` is prod; BFF hard-refuse on non-bus mode | `config.f004.test.ts` |
+| REQ-F004-022 | Transport adapter behind the seam; no route/service change | `static-scans.test.ts` |
+| REQ-F004-023 | Relay lag metric | `metrics.test.ts` getRelayLagMs |
+| REQ-F004-024 | Backlog metric | `metrics.test.ts` getBacklogCount |
+| REQ-F004-025 | Failure/attempt/park-split/post-ack-cap counters | `metrics.test.ts` event-counters block |
+| REQ-F004-026 | `/ready` threshold-driven readiness, named config keys | `ready.test.ts`; `relay-config.test.ts` thresholds |
+| REQ-F004-027 | Latency/throughput SLO | `perf.test.ts`; `outbox.repo.f004.test.ts` REQ-F004-027/034 query-PLAN regression guard (Phase-8 addendum — see below) |
+| REQ-F004-028 | Security & log hygiene | `static-scans.test.ts` |
+| REQ-F004-029 | Delivery-bookkeeping schema + total derivation | EXISTING `f004-outbox-migration.test.ts`; NEW `ordering-key.test.ts`, `outbox.repo.f004.test.ts`, `bus.f004.test.ts` |
+| REQ-F004-030 | Transport/broker deferred to ops (ruling) | traced via REQ-F004-049/050 tests |
+| REQ-F004-031 | Per-key ordering + effectively-once (ruling) | traced via REQ-F004-001/011/016/018/042 tests |
+| REQ-F004-032 | Park + capped backoff (ruling) | traced via REQ-F004-013/014 tests |
+| REQ-F004-033 | Separate supervised relay service (ruling) | `relay-config.test.ts` REQ-F004-033 block (relay-scoped config independent of BFF secrets); `static-scans.test.ts` REQ-F004-054 block |
+| REQ-F004-034 | Observability/SLO constants (ruling) | traced via REQ-F004-026/027 tests |
+| REQ-F004-035 | Retention (ruling) | traced via REQ-F004-019 test |
+| REQ-F004-036 | Dedupe id transport-level (ruling) | traced via REQ-F004-018/048 tests |
+| REQ-F004-037 | First-connection backfill horizon (ruling) | traced via REQ-F004-015 test |
+| REQ-F004-038 | Bookkeeping columns shape (ruling) | traced via REQ-F004-029 tests |
+| REQ-F004-039 | Hard-refuse prod posture; separate `/ready` (ruling) | traced via REQ-F004-021/044/045 tests |
+| REQ-F004-040 | Production-readiness gate framing (informational ruling) | not independently tested — informational, no code behavior hinges on it |
+| REQ-F004-041 | Eligibility query (drain-selection contract) | `outbox.repo.f004.test.ts` selectEligible (the spec's own two seeded scenarios verbatim) |
+| REQ-F004-042 | Head-of-line: skip across / block within | `outbox.repo.f004.test.ts` head-of-line tests; `drainer.test.ts` per-key-ordering block |
+| REQ-F004-043 | Conforming-transport contract (ack/id-carriage/perm-transient) | `transport.test.ts`; `http-peer-transport.test.ts` (id-carriage + full REQ-F004-055 classification table) |
+| REQ-F004-044 | Separate `/ready` on the relay | `ready.test.ts` |
+| REQ-F004-045 | `bus`+no-URL relay hard-refuse | `relay-config.test.ts` bus-mode-without-URL block |
+| REQ-F004-046 | `EVENT_BUS_MODE` closed-set validation | `config.f004.test.ts` |
+| REQ-F004-047 | Transient-vs-permanent classification | `drainer.test.ts` (permanent-immediate-park + transient-retry tests); `http-peer-transport.test.ts` transient cases |
+| REQ-F004-048 | Delivery-id epoch | `delivery-id.test.ts`; `outbox.repo.f004.test.ts` getEpoch |
+| REQ-F004-049 | Two-layer transport seam; fake-transport swap proof; no-leak | `drainer.test.ts` (built entirely against `FakeTransport`); `static-scans.test.ts` no-leak block; `transport.test.ts` |
+| REQ-F004-050 | HTTP-to-known-peer for GTM; broker future drop-in | `transport.test.ts`; `http-peer-transport.test.ts` |
+| REQ-F004-051 | Multi-peer fan-out ack, stateful re-drive, eviction, permanent-immediate-park, partial-park distinct signal | `http-peer-transport.test.ts` fan-out block (a-c) + REQ-F004-055 fan-out-composition block (d, concrete HTTP-status-driven); `drainer.test.ts` permanent-immediate-park test (d, transport-agnostic); `metrics.test.ts` park-split counters (e, SPEC-AMBIGUITY on the transport->drainer signal shape remains open, see below) |
+| REQ-F004-052 | `EVENT_BUS_URL` comma-list + `EVENT_BUS_TRANSPORT` selector, broker all-env refuse | `relay-config.test.ts`; `transport.test.ts` broker-refuse block |
+| REQ-F004-053 | Broker-swap-invariant consumer contract (dedupe + reorder tolerance) | `consumer-contract.test.ts` |
+| REQ-F004-054 | Per-app relay pattern | `static-scans.test.ts` REQ-F004-054 block |
+| REQ-F004-055 | HTTP status/network-failure -> permanent/transient classification (RULED, rev 11, §4.4); fan-out composition | `http-peer-transport.test.ts` REQ-F004-055 single-peer classification-table block (`it.each` over ack/transient/permanent) + fan-out-composition block; `static-scans.test.ts` REQ-F004-055/049 seam-isolation block (classification tokens live only in HttpPeerTransport) |
+
+**Coverage: 55/55 REQ-F004-### ids mapped** (rev 11 appended REQ-F004-055; 14 "traced"/
+informational — REQ-F004-004/005/007/008 plus the ten §9 ruling-record items REQ-F004-030..040
+whose behavior is realized entirely by the operative REQ(s) they decided or, for REQ-F004-040, is
+purely informational — matching the F-002/F-005 `TEST_PLAN.md` precedent for open-questions
+sections; the remaining 41 REQ ids, including the new REQ-F004-055, each have at least one
+independent, executable test). No REQ id was left unmapped.
+
+## Design notes / how ambiguity was handled
+
+- **Internal module call-shapes** for every not-yet-built `bff/src/relay/*` file are documented
+  assumptions (see table above), not spec ambiguities — the spec's *behavior* is unambiguous in
+  every case; only the literal function/class signature was invented, exactly as F-002/F-005 did
+  for their own unpinned web API client names.
+- **`drainer.test.ts` decouples from `transport.ts`/`http-peer-transport.ts` entirely** — it uses
+  only the structurally-duck-typed `FakeTransport` from `helpers.ts`, which imports nothing from
+  `bff/src/relay/*`. This means the drainer suite can go green the moment `drainer.ts` alone
+  exists, independent of whether `HttpPeerTransport` is finished yet — mirroring the real
+  REQ-F004-049 swap-ability guarantee in the test suite's own dependency graph, not just its
+  assertions.
+- **The `MAX_ATTEMPTS` cap-boundary tests** (`drainer.test.ts` poison-isolation block) seed
+  `attempt_count = MAX_ATTEMPTS - 1` directly rather than driving a row through N real
+  backoff-delayed ticks, so the test is deterministic and fast regardless of the (spec-undefined)
+  concrete backoff constant values — it still exercises the real cap-decision code path (one more
+  failure trips the cap), just without waiting out real backoff wall-clock delays.
+- **Graceful-shutdown tests** use `FakeTransport.hang()`/`.settleHang()` plus short REAL timeouts
+  (tens of ms, not fake timers) — this repo's own test-authoring notes (`TEST_PLAN.md`'s F-002
+  session-reuse note) record that faking timers previously hung Fastify's/better-sqlite3's own
+  real-timer internals in this codebase, so real (short) timeouts are the established, safer
+  convention here.
+- **Perf tests are smoke-level**, not a rigorous load test, per this repo's own established
+  `*.performance.test.ts` convention (documented inline in `perf.test.ts`'s header).
+
+## SPEC-AMBIGUITY findings requiring human ruling
+
+**Status update (Phase-2 addendum): item 1 below (the HTTP-status -> permanent/transient mapping)
+was the one genuine ambiguity this suite originally flagged. It has since been RULED and pinned as
+REQ-F004-055 (spec rev 11, §4.4) and is now fully tested** — see "Phase-2 addendum" above and the
+`http-peer-transport.test.ts`/`static-scans.test.ts` blocks it added. Retained here, struck
+through, for the historical record rather than silently deleted (the QA workflow instruction is to
+list ambiguities found, not to erase the record once a human rules on one).
+
+~~1. HttpPeerTransport's concrete HTTP-status-code -> permanent/transient classification mapping
+   was genuinely unpinned.~~ **RESOLVED by REQ-F004-055 (rev 11) — see the Phase-2 addendum
+   above.** (Original finding: the spec precisely defined the conforming-transport CONTRACT,
+   REQ-F004-043(c), and the ORCHESTRATION-level consequence, REQ-F004-047/014/051(d), but never
+   stated which concrete HTTP status codes `HttpPeerTransport` itself must treat as "permanent."
+   REQ-F004-055 now pins the exact table; `http-peer-transport.test.ts` exercises it in full.)
+
+2. **How the drain/orchestration layer learns "this park was partial" vs. "this park was
+   never-delivered" from `HttpPeerTransport`, for the REQ-F004-025/051(e) split park counters, is
+   not pinned.** REQ-F004-051(e) itself states a partially-delivered park STILL has row-level
+   `acked_at IS NULL` (full ack requires every peer), so the distinction cannot be read back from
+   the `event_outbox` row/DB state alone — the signal must originate inside the transport's
+   rejection (e.g. `TransportError` carrying a `partial: boolean` flag alongside its
+   `classification`), which the design doc's pinned `TransportError` shape (§2.1: `classification:
+   'transient' | 'permanent'`) does not currently include. `metrics.test.ts` tests each recorder
+   function directly (the defensible, interface-level slice: the two counters ARE independently
+   incrementable and distinct) rather than assuming a specific transport-to-drainer signal shape
+   for the distinction end-to-end. **Needs a human/architect ruling** on the exact carrier for this
+   signal (most likely: add an optional field to `TransportError`).
+3. **`bff/src/relay/drainer.ts`'s exact exported API shape** (assumed `createDrainer({transport})
+   -> {runOnce(), shutdown(timeoutMs)}`) is the single highest-leverage assumption in this suite —
+   see the "Interface-shape assumptions" table above. This is flagged for awareness (not a spec
+   ambiguity — the design doc correctly leaves internal APIs to the implementer) so the
+   implementer either matches this minimal shape or the test call sites get a thin adjustment;
+   either way the OBSERVABLE assertions (DB row state transitions) are what encode the spec.
+4. **The relay-scoped config's module path and BFF/relay config split** (design §5/§11 "open
+   question #1") is explicitly UNRESOLVED by the spec/design itself, not just by this suite —
+   `relay-config.test.ts` assumes `bff/src/relay/config.ts`. This is the design doc's own flagged
+   open question, carried forward here rather than resolved by this QA task.
+5. **REQ-F004-020's SQLITE_BUSY-retry-without-incrementing-attempt_count scenario is not
+   independently exercised** — documented as a coverage limitation (not a fabricated/fake test) in
+   `outbox.repo.f004.test.ts`'s `busy_timeout` block: reliably forcing a genuine SQLITE_BUSY from
+   two truly concurrent writers is not feasible deterministically within one Node process given
+   better-sqlite3's synchronous, single-threaded-per-connection nature, without either flaky
+   timing or spawning a second OS process/worker thread. A positive-`busy_timeout`-configured
+   proxy check is included instead; the full concurrent-contention scenario is recommended for an
+   integration/e2e-level check outside this unit suite (two real relay/BFF processes against one
+   file), not fabricated here with a fake that wouldn't exercise SQLite's real retry path.
+
+None of the above blocks writing a concrete, spec-derived test — each is either (a) tested at the
+most defensible, uncontroversial layer while flagging the genuinely-open narrower question, or
+(b) an interface-shape assumption already reasoned through and documented, per hard rule 4's
+"write the test for the most defensible reading, mark it, list it" instruction.

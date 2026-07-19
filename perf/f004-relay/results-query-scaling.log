@@ -1,0 +1,7 @@
+=== F-004 selectEligible cost vs TOTAL table size (simulating accumulated published rows before hourly prune) ===
+config: UNPUBLISHED backlog held constant at 5000 across 500 keys; PUBLISHED (already-delivered, retained) count varies.
+  total=   5000 rows (published=0, unpublished=5000, keys=500) -> selectEligible median=4.45ms p95=4.62ms max=4.62ms => max tick rate ~224.73 ticks/sec from this query alone
+  total=  15000 rows (published=10000, unpublished=5000, keys=500) -> selectEligible median=165.24ms p95=166.34ms max=166.34ms => max tick rate ~6.05 ticks/sec from this query alone
+  total=  55000 rows (published=50000, unpublished=5000, keys=500) -> selectEligible median=808.90ms p95=816.52ms max=816.52ms => max tick rate ~1.24 ticks/sec from this query alone
+  total= 105000 rows (published=100000, unpublished=5000, keys=500) -> selectEligible median=2529.20ms p95=2578.76ms max=2578.76ms => max tick rate ~0.40 ticks/sec from this query alone
+  total= 205000 rows (published=200000, unpublished=5000, keys=500) -> selectEligible median=4850.69ms p95=4913.02ms max=4913.02ms => max tick rate ~0.21 ticks/sec from this query alone

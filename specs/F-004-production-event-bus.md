@@ -1,10 +1,16 @@
 # F-004: Production-Ready Event Bus (Replace the In-Process Bus) — Specification
 
-Status: Draft rev 8 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6), folds in the resolved
+Status: Draft rev 9 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6), folds in the resolved
 delivery-transport decision (rev 7, 2026-07-19: HTTP-to-known-peer for GTM; broker as a future `EventTransport`
-adapter), and resolves the rev-7 adversarial BLOCK (rev 8, 2026-07-19: baseline `baseline` singleton
+adapter), resolves the rev-7 adversarial BLOCK (rev 8, 2026-07-19: baseline `baseline` singleton
 ordering key; corrected 21-event/8-family catalog count; stateful per-`deliveryId` fan-out re-drive; pinned
-`EVENT_BUS_URL` comma-list + `EVENT_BUS_TRANSPORT` selector); for implementation and QA review
+`EVENT_BUS_URL` comma-list + `EVENT_BUS_TRANSPORT` selector), resolves a fresh adversarial BLOCK (rev 9,
+2026-07-19: shutdown drains the SET of in-flight deliveries; fan-out permanent-peer rejection parks
+immediately; `EVENT_BUS_TRANSPORT=broker` hard-refuses in the GTM build; + notes N1–N6), and applies the
+round-2 PASS-WITH-NOTES clarity pass (rev 10, 2026-07-19: broker refuses to boot in ALL environments;
+term/edge/cross-ref clarity — no MUST semantics changed), and pins the `HttpPeerTransport` HTTP-response →
+permanent/transient classification (rev 11, 2026-07-19: REQ-F004-055, standard webhook convention); for
+implementation and QA review
 Feature brief (authoritative intent): `briefs/F-004-production-event-bus.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `bff/src/events/bus.ts`, `bff/src/events/emitter.ts`, `bff/src/events/catalog.ts`,
@@ -182,6 +188,17 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
     `__unkeyed__` key (`catalog.ts:69-70` note; REQ-F005-052) — toggle changes carry no cross-event
     ordering requirement, so they are independent (no per-key serialization). This is a deliberate mapping,
     not a totality fallthrough.
+  **Prefix match MUST include the trailing separator (rev-9, folds in review N6).** The prefix rules above
+  are matched on the **full dotted namespace segment including its trailing `.`** — e.g. `admin.workspace.`
+  (with the dot), **not** the bare string `admin.workspace`. This is load-bearing because
+  `admin.workspace_user.*` shares the leading substring `admin.workspace` with `admin.workspace.*`: a naive
+  `startsWith('admin.workspace')` would **wrongly** classify membership events as `admin.workspace.*` and
+  try to read a non-existent `target.id` (membership carries `{workspace, user}`, no `id`), silently folding
+  them into `__unkeyed__` and **losing membership ordering** on the `ws:<workspace>` key. The derivation
+  MUST therefore match `admin.workspace_user.` (underscore-separated segment) as its **own** rule
+  distinct from `admin.workspace.` (dot-separated), and generally anchor each rule to a complete
+  `.`-delimited prefix. *Test:* an `admin.workspace_user.assigned` event resolves to `ws:<target.workspace>`
+  (its membership key), **not** to `__unkeyed__` and **not** to a workspace-lifecycle misparse.
   Any event that still matches none of the above (no rule, no natural id) falls into the reserved key
   `__unkeyed__`. **Totality edge (resolves review N5):** an event that *matches* a prefix rule but whose
   named `target` field is **absent/empty** (e.g. an `admin.workspace.*` event with no `target.id`) also
@@ -423,7 +440,8 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   has accepted** the event (HTTP 2xx). The stateful re-drive model is specified concretely:
   - **(a) Partial failure rejects; the row stays unpublished.** On **partial failure** (some peers
     accepted, others errored / timed out / returned 4xx-5xx) `deliver()` does **NOT** resolve — it
-    **rejects** (with the transient-vs-permanent classification, REQ-F004-047) — so the row stays
+    **rejects** (with the transient-vs-permanent classification, REQ-F004-047; concrete HTTP-outcome
+    mapping REQ-F004-055) — so the row stays
     `published_at IS NULL` and the orchestration backoff (REQ-F004-013) **later re-invokes `deliver()` with
     the SAME `deliveryId`**.
   - **(b) In-memory per-`deliveryId` ack map; re-POST only un-acked peers.** The transport MUST **persist
@@ -435,8 +453,26 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
     **fully acked** (all peers accepted → orchestration marks `published_at`) **OR** when the row is
     **parked / dead-lettered** (REQ-F004-014). So the ack map cannot grow unbounded even on a long-parked or
     long-retrying key: a terminal outcome (published or parked) always evicts the entry.
-  A peer whose rejection is **permanent** (REQ-F004-047) drives the row to **park** after the bound
-  (REQ-F004-014) — evicting its map entry per (c) — without blocking other ordering keys. Because the entire
+  - **(d) Permanent-peer rejection parks IMMEDIATELY (rev-9 fix — reconciles with REQ-F004-047/014).** If
+    **any not-yet-acked peer** returns a **permanent** rejection (the transport's permanent-vs-transient
+    signal, REQ-F004-043(c); classified per REQ-F004-047, with the concrete HTTP-outcome mapping in
+    REQ-F004-055), `deliver()` **rejects as
+    permanent** and the orchestration layer **parks the row immediately** per REQ-F004-047/014 — with **no**
+    backoff retries and **regardless** of the attempt bound. The **"after the bound"** path (retry with
+    capped backoff up to max attempts, then park) applies **only** to **transiently**-failing peers
+    (REQ-F004-013); a permanent peer failure short-circuits it. Either way the row's map entry is evicted
+    per (c), and parking never blocks other ordering keys (REQ-F004-014).
+  - **(e) Partially-delivered park is a DISTINCT signal (rev-9 — folds in review N3).** Because a peer may
+    have **already accepted** before another peer permanently rejects (or before max transient attempts
+    exhaust), a parked fan-out row is **not** necessarily "delivered to nobody": it was never **fully
+    acked** at the **row/transport level** (`acked_at IS NULL`, so REQ-F004-011 correctly **parks** it
+    rather than force-publishing — the row-level ack requires the FULL fan-out), yet some peers hold a
+    (dedupable) copy. This **partially-delivered park** MUST be surfaced as a **distinct** observability
+    signal from a fully-never-delivered park (REQ-F004-025), so operators know the already-accepted peers
+    have copies (consumers dedupe on the delivery id, REQ-F004-018) and that only the un-acked peers need
+    reconciliation on replay. `parked_at` still means "never fully handed off to the transport"
+    (REQ-F004-014); the partial-vs-total distinction is metric-level, not a new row state.
+  Because the entire
   fan-out and per-peer bookkeeping are **encapsulated inside the transport**, `published_at` keeps its
   **single meaning — "successfully handed off to the transport"** — and the `event_outbox` schema
   (REQ-F004-029) **does NOT need to change when the transport is later swapped** to a broker (which acks
@@ -451,8 +487,49 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   a peer that fails once then succeeds yields exactly-one net effect at the succeeding peer and at-most-one
   duplicate at the already-acked peer (same delivery id, REQ-F004-018) — and after the row publishes (or
   parks) the `deliveryId` entry is evicted (a subsequent unrelated delivery does not carry stale ack state).
-  *Test (schema invariant):* swapping `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049)
-  requires **no** migration or column change to `event_outbox`.
+  *Test (permanent peer → immediate park + partial signal):* with N peers where one **permanently** rejects
+  (REQ-F004-043(c)) on the first attempt after another peer has already accepted, `deliver()` rejects as
+  permanent, the row is **parked immediately** (no backoff retries, `parked_at` set, `acked_at` NULL,
+  REQ-F004-014), other ordering keys keep delivering, and the row is counted under the **partially-delivered
+  park** signal (REQ-F004-025), not the never-delivered-park signal. *Test (schema invariant):* swapping
+  `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049) requires **no** migration or column
+  change to `event_outbox`.
+- REQ-F004-055 — **HTTP response → permanent/transient classification (RATIFIED 2026-07-19 — standard
+  webhook convention).** The concrete mapping from a peer's HTTP outcome to the **permanent-vs-transient
+  signal** (REQ-F004-043(c)) is a **transport-specific wire concern owned by `HttpPeerTransport`** and is
+  kept **OUT of the transport-agnostic drainer** (REQ-F004-049 seam) — the drainer only ever sees the
+  abstract ack / transient-reject / permanent-reject outcomes, never HTTP status codes. `HttpPeerTransport`
+  MUST classify each **per-peer** POST outcome exactly as follows:
+  - **Ack (success) — gates `markPublished` (REQ-F004-012).** The peer responds **2xx**.
+  - **Transient — `deliver()` rejects transient ⇒ orchestration retries with capped backoff up to the
+    max-attempt bound, then parks (REQ-F004-013/014).** Any **network / connection-level failure**
+    (connection refused, connection timeout, DNS-resolution failure, socket reset / dropped connection),
+    **every 5xx** response, **and** the two throttling/timeout status codes **408 (Request Timeout)** and
+    **429 (Too Many Requests)**.
+  - **Permanent — `deliver()` rejects permanent ⇒ the row parks IMMEDIATELY, no backoff
+    (REQ-F004-047/051(d)).** **All other 4xx** (e.g. 400, 401, 403, 404, 422), **and any other unexpected
+    non-2xx response, including any 3xx** (a webhook peer is expected to accept at its final URL, so a
+    redirect is treated as a misconfiguration, not a retry).
+  This closed mapping is total over every possible outcome (2xx ack; the enumerated transient set; **all
+  else** permanent), so no response is left unclassified. **Fan-out composition (cross-ref REQ-F004-051):**
+  in the multi-peer case the per-peer classification composes with the existing fan-out rules — a
+  **permanent** response from **any not-yet-acked peer** makes the **whole `deliver()` reject permanent**
+  (immediate park, REQ-F004-051(d)); if **no** not-yet-acked peer is permanent but **at least one** is
+  **transient**, `deliver()` **rejects transient** and the transport re-drives **only the un-acked peers**
+  on the next backoff-driven call (REQ-F004-051(a)/(b)); `deliver()` **resolves (acks)** only when **every**
+  peer has returned 2xx. The classification carries **no** HTTP-specific detail into the outbox schema or
+  the drainer; a later `BrokerTransport` supplies its own equivalent mapping behind the same
+  REQ-F004-043(c) signal (REQ-F004-049). *Test (single-peer table):* drive one peer through each outcome and
+  assert the resulting signal — **2xx → ack** (row published); **500/502/503, 408, 429, connection-refused,
+  timeout, DNS-failure, socket-reset → transient** (row stays `published_at IS NULL`, `attempt_count`
+  advances, retried with backoff, parked only after the max-attempt bound, REQ-F004-013/014); **400/401/403/
+  404/422, any 3xx, any other non-2xx → permanent** (row `parked_at` set immediately, no backoff retries,
+  REQ-F004-047). *Test (fan-out composition):* with N peers where one returns 400 (permanent) and others are
+  2xx or 5xx, `deliver()` rejects **permanent** and the row parks immediately (REQ-F004-051(d)); with no
+  permanent peer but one returning 503 (transient), `deliver()` rejects **transient** and only the 503 peer
+  is re-POSTed on the next attempt while already-2xx peers are not (REQ-F004-051(a)/(b)). *Test (seam):* a
+  static check confirms HTTP status-code constants live only in `HttpPeerTransport`, not in the drain /
+  orchestration module (REQ-F004-049).
 
 ---
 
@@ -585,8 +662,19 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   retried up to a **maximum attempt count** before it is parked (REQ-F004-014). The policy shape —
   **capped exponential backoff** (base, factor, cap) with a **max attempt count** before park-in-place —
   is RATIFIED (§9, REQ-F004-032); the concrete values are fixed as a documented BFF constant of record.
-  Retries stay **within** the failing row's ordering key (REQ-F004-042): a row in backoff holds its key
-  but not other keys. *Test:* a row whose delivery fails K (< max)
+  **Cap edge is INCLUSIVE at the Nth failure (rev-9, folds in review N2 — for deterministic tests):** the
+  documented constant `MAX_ATTEMPTS` is the number of **failed attempts** at which the row is parked, i.e.
+  a row is parked **when `attempt_count` reaches `MAX_ATTEMPTS`** (the `MAX_ATTEMPTS`-th failure parks it),
+  not after `MAX_ATTEMPTS` further retries beyond the first — so with `MAX_ATTEMPTS = N` a row that fails N
+  times is parked on the Nth failure and is retried at most `N-1` times. This inclusive-at-N convention
+  MUST be stated alongside the constant.
+  **Post-ack mark-failure pacing (rev-9, folds in review N1):** a **persistent** post-ack `markPublished`
+  failure that counts toward the post-ack cap (REQ-F004-011 — i.e. **not** a transient `SQLITE_BUSY`, which
+  is retried and excluded, REQ-F004-020) **also advances `next_attempt_at` under the SAME backoff
+  schedule** and increments `attempt_count`, so a row that is acked-but-unmarkable is **not** hot-looped —
+  it re-drains on the same capped-exponential cadence as a transient delivery failure until it hits the cap
+  and is force-marked published (REQ-F004-011). Retries stay **within** the failing row's ordering key
+  (REQ-F004-042): a row in backoff holds its key but not other keys. *Test:* a row whose delivery fails K (< max)
   transient times has `next_attempt_at` advanced with monotonically non-decreasing delays per the
   documented schedule (observed via attempt timestamps), is not re-selected before `next_attempt_at`,
   and is not on a tight loop; a transient failure that later succeeds ends with the row marked
@@ -599,7 +687,15 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   (REQ-F004-047 classification), MUST be **isolated** — parked in place (setting `parked_at`, a
   terminal-state marker) or moved to a dead-letter store. (A row that was **ever acked** — `acked_at`
   set — is **never** parked at the cap; it force-marks published instead, REQ-F004-011, so `parked_at`
-  means exclusively never-delivered poison.) Isolation makes the row **ineligible** for the drain
+  means exclusively **never-fully-acked** poison.) **"Never-acked" is at the ROW / transport-ack level
+  (rev-9 clarification, review N3):** `acked_at` is set only when the transport **fully** acks the row; for
+  the multi-peer HTTP transport (REQ-F004-051) full ack requires **every** configured peer to accept, so a
+  **partially-delivered** row (some peers accepted, but a peer permanently rejected or transient attempts
+  exhausted before full fan-out) has `acked_at IS NULL` and is correctly **parked** — even though some
+  peers already hold a (dedupable) copy. `parked_at` therefore means "never **fully** handed off to the
+  transport", which subsumes both a fully-never-delivered row and a partially-delivered one; the two are
+  distinguished only at the **metric** level by the partially-delivered-park signal (REQ-F004-025/051),
+  not by a distinct row state. Isolation makes the row **ineligible** for the drain
   selection (REQ-F004-041) so the relay does not re-attempt it, and
   the relay MUST **continue draining eligible rows of OTHER ordering keys**. A single poison event MUST
   NOT block delivery across the **global** stream, and MUST NOT be silently dropped: a parked event is
@@ -630,9 +726,15 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   retried with backoff up to max attempts, then parked. Because the concrete transport is deferred
   (§9, REQ-F004-030), the **rev 2 provisional default when the transport gives no explicit permanent
   signal is: treat every failure as transient until max-attempts** (fail-safe toward retry, not toward
-  dropping). *Test:* a transport reply flagged permanent parks the row on the first failure with no
+  dropping). **For the GTM `HttpPeerTransport` this provisional default is SUPERSEDED by an explicit,
+  total classification (rev-11):** REQ-F004-055 pins the concrete HTTP-response → permanent/transient
+  mapping (2xx ack; 5xx / 408 / 429 / network errors transient; all other 4xx, any 3xx, any other non-2xx
+  permanent), so under HTTP the transport always emits an explicit signal and never falls back to
+  treat-all-as-transient. The provisional default still governs any transport that gives no explicit
+  signal. *Test:* a transport reply flagged permanent parks the row on the first failure with no
   backoff retries; an error/timeout/unreachable failure increments `attempt_count`, sets
-  `next_attempt_at`, and is retried, parking only after max attempts.
+  `next_attempt_at`, and is retried, parking only after max attempts. (HTTP-specific outcome-to-signal
+  cases are tested under REQ-F004-055.)
 
 ### §6.3 Backfill after outage
 - REQ-F004-015 — **Backfill after the transport is unavailable.** While the transport is unreachable,
@@ -681,11 +783,26 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
     single-instance constraint) is realizable; the advisory-lock phrasing applies only if the store is
     later a client/server DB. A cross-box relay would require the store to become a shared network DB (out
     of scope for rev 1; the on-box SQLite model is assumed).
-  - **Graceful shutdown.** On shutdown the relay (a) **stops selecting new rows**, releases its lease if
-    it holds one (REQ-F004-017), then (b) performs a **bounded graceful drain** of the single in-flight
-    delivery — it awaits the outcome of the one delivery already handed to the transport up to a bounded
-    shutdown timeout (M5, Reading A retained): if the ack arrives it calls `markPublished`; if the timeout
-    elapses first it **abandons** the delivery, leaving `published_at` NULL for redelivery on next start.
+  - **Graceful shutdown (bounded drain over the SET of in-flight deliveries — rev 9 fix, reconciles with
+    the parallel-delivery model REQ-F004-017/027).** Because distinct ordering keys deliver **in parallel**
+    (REQ-F004-027 — the relay is not single-threaded-capped by per-key order, and REQ-F004-017 presumes
+    concurrent drain ticks), a relay under load has **N concurrent in-flight deliveries** at shutdown, not
+    one. On shutdown the relay (a) **stops selecting new rows**, releases its lease if it holds one
+    (REQ-F004-017), then (b) performs a **bounded graceful drain over ALL currently in-flight deliveries**:
+    it awaits the outcome of **every** delivery already handed to the transport, up to a single bounded
+    shutdown timeout shared across the set (M5, Reading A generalized). For **each** in-flight delivery, if
+    its ack arrives before the timeout the relay calls `markPublished` for that row; any delivery whose ack
+    has **not** arrived when the timeout elapses is **abandoned**, leaving its `published_at` NULL for
+    redelivery on next start. **Abandonment does NOT advance `attempt_count` (rev-10 clarification):** an
+    in-flight delivery abandoned at the shutdown timeout is **neither a transport ack nor a delivery
+    failure** — it is an interrupted attempt — so it leaves the row's retry bookkeeping (`attempt_count`,
+    `next_attempt_at`, `last_error`) **unchanged** and simply re-drains on next start. A restart *during*
+    delivery therefore does **not** erode the row's retry budget (REQ-F004-013/014): repeated
+    shutdown-interruptions cannot spuriously push a row toward the max-attempt park cap. No in-flight row is
+    left partially written: each ends either published (acked within the timeout) or unpublished
+    (abandoned, bookkeeping untouched), independently of the others. This is the multi-delivery
+    generalization of the former single-in-flight wording; it does **not** serialize shutdown (the set is
+    awaited concurrently, not one-by-one).
   - **Restart mid-drain (safe by construction).** Because delivery is at-least-once and dedupe delivers
     effectively-once (REQ-F004-018/031), a relay restart mid-drain is safe: an **unpublished** in-flight
     row (crash/kill before ack) stays `published_at IS NULL` and is re-drained on restart; an
@@ -693,11 +810,15 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
     collapsed to one effect by a deduping consumer. State is never corrupted (an unacked delivery stays
     unpublished; an acked one is marked published) and per-key order is preserved because re-drain still
     honors per-key head-of-line (REQ-F004-042).
-  *Test:* a shutdown/kill initiated while one delivery is in flight waits up to the shutdown timeout (or,
-  on hard kill, is simply re-driven by the supervisor); the in-flight row ends **either** published (ack
-  arrived within the timeout) **or** unpublished (timeout elapsed / hard kill), never partially written;
-  after the supervisor restarts the relay, every remaining unpublished eligible row is delivered in
-  per-key order, and a mid-drain kill produces at most a same-delivery-id duplicate, never a loss.
+  *Test:* a shutdown/kill initiated while **multiple deliveries on distinct keys are concurrently in
+  flight** waits up to the shared shutdown timeout (or, on hard kill, is simply re-driven by the
+  supervisor); **each** in-flight row ends **either** published (its ack arrived within the timeout) **or**
+  unpublished (its ack did not arrive before the timeout, or hard kill), never partially written, and the
+  outcomes are per-row independent (some may publish while others abandon within the same shutdown); an
+  abandoned in-flight row keeps its `attempt_count` **unchanged** (abandonment is not a failure), so
+  repeated shutdown-during-delivery does not advance it toward the park cap; after
+  the supervisor restarts the relay, every remaining unpublished eligible row is delivered in per-key
+  order, and a mid-drain kill produces at most a same-delivery-id duplicate per row, never a loss.
 - REQ-F004-054 — **The relay is a PER-APP pattern (each app drains its own outbox).** Consistent with the
   grounded **copy-and-renamespace** precedent used for the bus / catalog / emitter (each application
   carries its own `bff/src/events/*` and its own `event_outbox`), the relay is instantiated **once per
@@ -789,7 +910,15 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   present** — critically the pre-F-004 unpublished backlog that the first-connection replay (REQ-F004-015)
   must drain **in per-key order** — by applying the §3 derivation to each stored envelope; and (ii) the
   enqueue path populates `ordering_key` at INSERT for every new row. It is **NOT** "lazily populated on
-  first drain" (that is circular — the drain *selection* is precisely what needs the key). After the
+  first drain" (that is circular — the drain *selection* is precisely what needs the key). **Malformed /
+  unparseable stored envelope during backfill (rev-9, folds in review N4):** the derivation parses each
+  stored `envelope` JSON and reads the event name + a named `target` field. If a pre-existing row's stored
+  envelope is **unparseable or structurally invalid** (cannot be JSON-parsed, or lacks a usable event
+  name), the migration MUST still assign a **non-null** key — it falls the row back to `'__unkeyed__'`
+  (independent — never a shared blocking partition), the **same** total fallback the §3 derivation uses for
+  a matched-prefix-but-missing-`target`-field row. So the migration **never** leaves a row NULL, **never**
+  aborts on a bad row, and a malformed row degrades only to unordered-but-still-deliverable (its delivery
+  may then park normally, REQ-F004-014, without stalling a real key). After the
   migration `ordering_key` is therefore **NON-NULL for every row**, so the eligibility query
   (REQ-F004-041) can rely on a non-null key; **defensively**, any row that nonetheless presents a NULL
   `ordering_key` is treated as `'__unkeyed__'` (independent — eligible on its own, never a shared blocking
@@ -855,18 +984,42 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
     with values **`{http, broker}`**, **default `http`**, evaluated **ONLY when `EVENT_BUS_MODE=bus`** and
     **only by the relay**. This selector is **the single config branch** the future `BrokerTransport` swaps
     behind (REQ-F004-049/050): `http` → `HttpPeerTransport` (GTM default), `broker` → the future
-    `BrokerTransport` (its own connection config). It is **orthogonal** to `EVENT_BUS_MODE` — mode chooses
+    `BrokerTransport`. It is **orthogonal** to `EVENT_BUS_MODE` — mode chooses
     *whether* to relay, transport chooses *how* to deliver — so adding the broker imposes **no** new
     production-config shape on producers, the emitter, or the BFF.
+  - **(3) `broker` is a valid value with NO GTM behavior — HARD-REFUSE in ALL environments (rev-9 fix +
+    rev-10 human ruling; resolves review blocking-3).** `BrokerTransport` is **future / post-GTM** and is
+    **not** part of this deliverable (REQ-F004-030/050). So although `broker` is in the closed set (to keep
+    the selector's future values documented and validated), the **GTM relay has no broker implementation to
+    select**. Setting `EVENT_BUS_TRANSPORT=broker` against the GTM build is therefore a **misconfiguration**:
+    the **relay refuses to boot** with a clear error — **"broker transport not available in this build"**
+    (non-zero exit; the BFF is unaffected and keeps enqueuing). **This refuse-to-boot applies in BOTH
+    development AND production (rev-10 human ruling) — it is deliberately NOT the environment-split posture
+    of REQ-F004-045.** REQ-F004-045 boots-soft in dev for a *missing `EVENT_BUS_URL`* because that is a
+    **recoverable** state (the operator can supply the URL and the already-instantiated `HttpPeerTransport`
+    starts delivering the accumulated backlog). By contrast there is **structurally no `BrokerTransport` to
+    instantiate** in this build, so a dev "boot but never ready" state would be pointless — nothing can ever
+    make it ready without a different build. The relay therefore hard-refuses regardless of `NODE_ENV`. This
+    makes the GTM behavior of every value in the closed set defined: `http` (or unset → default `http`)
+    selects `HttpPeerTransport`; `broker` refuses to boot **in every environment** until a build actually
+    ships `BrokerTransport`; any value outside `{http, broker}` is likewise a refuse-to-boot misconfiguration
+    in every environment (same closed-set validation posture as `EVENT_BUS_MODE`, REQ-F004-046).
   With `bus` mode and the `http` transport but **no** `EVENT_BUS_URL` (empty peer list), the relay has
   nowhere to deliver, so it **refuses to start in production** and reports `/ready` not-ready in
   development — exactly the REQ-F004-045 posture — while the BFF boots and keeps enqueuing regardless.
-  *Test:* `EVENT_BUS_URL="https://a.example, https://b.example"` yields exactly two trimmed peers for
-  fan-out (REQ-F004-051); `EVENT_BUS_TRANSPORT` unset defaults to `http` and selects `HttpPeerTransport`,
-  `EVENT_BUS_TRANSPORT=broker` selects the (future) `BrokerTransport` via the one branch, and either
-  selector value is **ignored when `EVENT_BUS_MODE!=bus`**; `bus`+`http` with an empty `EVENT_BUS_URL`
-  trips the REQ-F004-045 refuse-to-boot (production) / not-ready (dev) posture while the BFF boots and
-  enqueues; no peer/transport config is ever read by the BFF or reaches the browser (REQ-F004-028).
+  *Test (peer list):* `EVENT_BUS_URL="https://a.example, https://b.example"` yields exactly two trimmed
+  peers for fan-out (REQ-F004-051). *Test (selector, GTM build):* `EVENT_BUS_TRANSPORT` unset defaults to
+  `http` and selects `HttpPeerTransport`; `EVENT_BUS_TRANSPORT=broker` makes the **relay refuse to boot**
+  with "broker transport not available in this build" (non-zero exit) **in BOTH development AND production**
+  (there is no dev-soft "boot but never ready" arm for the broker case, rev-10 ruling) while the BFF boots
+  and enqueues; an out-of-set value likewise refuses to boot in every environment; and any selector value
+  is **ignored when `EVENT_BUS_MODE!=bus`**;
+  `bus`+`http` with an empty `EVENT_BUS_URL` trips the REQ-F004-045 refuse-to-boot (production) / not-ready
+  (dev) posture while the BFF boots and enqueues; no peer/transport config is ever read by the BFF or
+  reaches the browser (REQ-F004-028). *Test (post-GTM / broker-era — does NOT gate this deliverable):* once a
+  build ships `BrokerTransport`, `EVENT_BUS_TRANSPORT=broker` selects it via the one branch with no change
+  above the seam (REQ-F004-049); this test is deferred to the broker-era build and is **not** part of the
+  GTM acceptance set.
 
 ---
 
@@ -879,25 +1032,53 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
 - REQ-F004-024 — **Backlog count.** The count of unpublished, non-parked rows (backlog) is observable.
   *Test:* enqueuing N rows against an unreachable transport makes the backlog report N; draining them
   returns it to zero.
-- REQ-F004-025 — **Failure, attempt, parked/DLQ & post-ack-cap counts.** Delivery failure counts,
-  retry/attempt counts, and parked/dead-lettered depth (REQ-F004-014) are observable, so operators can
-  alert on a stuck or poison-accumulating relay. Additionally, a **post-ack-cap** counter (REQ-F004-011)
-  records rows that were **delivered/acked** but force-marked published after their `markPublished`
-  repeatedly failed — a distinct signal from parked depth (which is now exclusively never-delivered poison,
-  REQ-F004-011/N2): it means the event reached the consumer but its local bookkeeping was lossy, warranting
-  reconciliation without implying event loss. *Test:* a permanently failing (never-acked) row increments
-  the failure/attempt counters and, after max attempts, increments the **parked** count by one; a row whose
-  delivery is acked but whose `markPublished` repeatedly fails increments the **post-ack-cap** counter (not
-  the parked count) and ends up `published_at`-set.
+- REQ-F004-025 — **Failure, attempt, parked/DLQ, partially-delivered-park & post-ack-cap counts.**
+  Delivery failure counts, retry/attempt counts, and parked/dead-lettered depth (REQ-F004-014) are
+  observable, so operators can alert on a stuck or poison-accumulating relay. Additionally, a
+  **post-ack-cap** counter (REQ-F004-011) records rows that were **delivered/acked** but force-marked
+  published after their `markPublished` repeatedly failed — a distinct signal from parked depth (which is
+  now exclusively never-**fully**-acked poison, REQ-F004-011/N2): it means the event reached the consumer
+  but its local bookkeeping was lossy, warranting reconciliation without implying event loss. **Additionally
+  (rev-9, folds in review N3), the parked depth is split into two counters:** a **never-delivered park**
+  count (no peer ever accepted before parking) and a **partially-delivered park** count (a fan-out row
+  parked while **some** peers had already accepted, REQ-F004-051(e)/-014). The partially-delivered-park
+  signal tells operators that already-accepted peers hold dedupable copies (REQ-F004-018) and only the
+  un-acked peers need reconciliation on replay — a materially different remediation than a never-delivered
+  park, though both share the `parked_at` row state. *Test:* a **repeatedly transiently-failing**
+  (never-acked, no peer accepted) row increments the failure/attempt counters and, after **max transient
+  attempts** (REQ-F004-013 — not the permanent-classification short-circuit), increments the
+  **never-delivered park** count by one; a fan-out row where one peer accepts and another returns a
+  **permanent** rejection (REQ-F004-043(c)) is parked immediately and increments the **partially-delivered
+  park** count (not the never-delivered count); a row whose delivery is acked but whose `markPublished`
+  repeatedly fails increments the **post-ack-cap** counter (neither park count) and ends up
+  `published_at`-set.
 - REQ-F004-026 — **Relay readiness signal (contributes to REQ-F004-044).** The relay contributes to the
   **separate readiness signal defined in REQ-F004-044** (NOT the parent's fixed `GET /health`, REQ-024)
   a status reflecting whether it is running, whether the mode is `bus` (REQ-F004-021), whether the
   transport is configured (REQ-F004-045) and reachable, and whether backlog/lag are within a configured
-  threshold — usable by the deployment's orchestration probes and by REQ-F004-021. *Test:* with `bus`
-  mode, a reachable conforming transport, and backlog under threshold the readiness signal (REQ-F004-044)
-  is ready; with the transport unconfigured/unreachable or backlog/lag over threshold it is
-  not-ready/degraded, while parent `GET /health` still returns `{ok:true}`. The metric set, thresholds,
-  and delivery-latency/throughput SLOs are RATIFIED (§9, REQ-F004-034; §8 REQ-F004-027).
+  threshold — usable by the deployment's orchestration probes and by REQ-F004-021. **Named threshold config
+  surface (rev-9, folds in review N5):** the backlog and lag thresholds that flip `/ready` to
+  not-ready/degraded are two **named, relay-only** config keys following the `EVENT_BUS_*` convention:
+  **`EVENT_BUS_BACKLOG_THRESHOLD`** (unpublished-non-parked row count, REQ-F004-024) and
+  **`EVENT_BUS_LAG_THRESHOLD_MS`** (oldest-unpublished-row age in ms, REQ-F004-023). Each has a
+  **provisional default** documented as a constant of record (the same treatment as the backoff constants,
+  REQ-F004-013): default `EVENT_BUS_LAG_THRESHOLD_MS` = **30000** (30 s — comfortably above the p95 < 5 s
+  delivery target so transient bursts do not flap the probe, REQ-F004-027) and default
+  `EVENT_BUS_BACKLOG_THRESHOLD` = **1000** rows (well under the ≥10,000-row backfill-drain target so a
+  genuinely growing backlog trips before saturation, REQ-F004-027). Both are operator-tunable; unset ⇒ the
+  documented default. **Boundary edge is AT-OR-OVER ⇒ not-ready (rev-10 clarification, deterministic
+  comparison):** the probe reports **not-ready/degraded** when **`backlog ≥ EVENT_BUS_BACKLOG_THRESHOLD`
+  OR `lag ≥ EVENT_BUS_LAG_THRESHOLD_MS`** (either condition, inclusive `≥` — reaching the threshold is
+  already degraded); it is **ready** only when **both** are **strictly below** their thresholds (`backlog <
+  … AND lag < …`), the transport is reachable, and the mode/URL are configured. *Test:* with `bus`
+  mode, a reachable conforming transport, and backlog **and** lag both **strictly below** threshold the
+  readiness signal (REQ-F004-044) is ready; with the transport unconfigured/unreachable, or with backlog or
+  lag **at-or-over** its threshold (a row count **equal to** `EVENT_BUS_BACKLOG_THRESHOLD`, or an age
+  **equal to** `EVENT_BUS_LAG_THRESHOLD_MS`, is already not-ready), it is not-ready/degraded, while parent
+  `GET /health` still returns `{ok:true}`; setting `EVENT_BUS_BACKLOG_THRESHOLD`/`EVENT_BUS_LAG_THRESHOLD_MS`
+  to a low value flips `/ready` to not-ready at that lower bound. The metric set, thresholds' **shape**,
+  and delivery-latency/throughput SLOs are RATIFIED (§9, REQ-F004-034; §8 REQ-F004-027); the concrete
+  default threshold values above are provisional constants of record (tunable via the named keys).
 - REQ-F004-044 — **Readiness signal — SEPARATE `/ready` probe served by the RELAY; startup
   misconfig HARD-REFUSES per-process (RECONCILED per REQ-F004-033/039; resolves review MJ1).** The
   readiness signal that REQ-F004-026 (and, at runtime, REQ-F004-045) depends on has no home in the
@@ -1030,6 +1211,10 @@ seam — are cited.
   **RATIFIED (2026-07-07):** lag + backlog + failure/attempt + parked counts + a threshold-based
   readiness signal (§7), with **p95 < 5 s** latency, **≥ 50 events/sec** sustained throughput, and a
   **≥ 10,000-row** backfill-drain target — F-004's **own** constants (REQ-F004-027), NOT parent REQ-100.
+  (Rev-9, review N5: the readiness thresholds are exposed via named config keys
+  `EVENT_BUS_BACKLOG_THRESHOLD` / `EVENT_BUS_LAG_THRESHOLD_MS` with provisional documented defaults —
+  REQ-F004-026; and the parked-count metric is split into never-delivered vs partially-delivered park
+  signals — REQ-F004-025.)
   Note per-key ordering does **not** force global serial delivery (distinct keys deliver in parallel), so
   throughput is not single-threaded-capped (REQ-F004-027). Governing: §7 + REQ-F004-027 + REQ-F004-044.
 - REQ-F004-035 — **Outbox retention.** Once `published_at` is set, are rows pruned, archived, or
@@ -1099,6 +1284,7 @@ seam — are cited.
 | Transport seam: transport-agnostic drain + narrow `EventTransport` interface (broker-swap-ready; fake-transport test) | §4.4 REQ-F004-049 |
 | GTM transport = HTTP-to-known-peer; broker a future drop-in adapter (zero-churn boundary) | §4.4 REQ-F004-050 + §9 REQ-F004-030 |
 | Multi-peer fan-out ack; `published_at` keeps its meaning; outbox schema invariant across swap | §4.4 REQ-F004-051 |
+| HTTP response → permanent/transient classification (webhook convention); fan-out composition | §4.4 REQ-F004-055 + §6.2 REQ-F004-047 + §5 REQ-F004-043(c) |
 | Config surface: `EVENT_BUS_URL` comma-delimited peer list + separate `EVENT_BUS_TRANSPORT` {http,broker} selector | §6.6 REQ-F004-052 |
 | Ordering: `admin.baseline_prompt.*` → dedicated `baseline` singleton key; `admin.feature_toggle.*` → intentional `__unkeyed__` | §3 def; §9 REQ-F004-031; §6.6 REQ-F004-029 |
 | Catalog count corrected to 21 event names / 8 families | §1.2 REQ-F004-002; §3 def |
@@ -1285,3 +1471,98 @@ edits existing REQs in place; **no id or § renumbered, none added**:
 The catalog-count assertion (REQ-F004-002: 21 names / 8 families) and the baseline-ordering assertion
 (REQ-F004-029/031: `admin.baseline_prompt.*`→`baseline`) now match the grounded `catalog.ts` and
 `baseline.service.ts`, so both tests pass against the real catalog.
+
+Rev 9 (resolves a fresh standalone adversarial BLOCK — 3 blocking findings + 6 notes, 2026-07-19) edits
+existing REQs in place; **no id or § renumbered, none added**. The blocking findings were internal-
+consistency fixes (no product ruling required); all were applied verbatim to the reviewer's recommended
+resolution:
+- **Blocking 1 — shutdown model contradicted the parallel-delivery model (REQ-F004-020 vs REQ-F004-017/027).**
+  REQ-F004-020's graceful drain was written for a **single** in-flight delivery, but the relay runs **N
+  concurrent** deliveries across distinct keys (REQ-F004-027) to meet the ≥50 ev/s SLO. REQ-F004-020 now
+  drains the **SET** of in-flight deliveries: on shutdown, stop selecting, then await **every** in-flight
+  delivery up to one shared bounded timeout, marking each that acks and abandoning (leaving `published_at`
+  NULL) any that do not — per-row independent outcomes; the test now seeds **multiple** concurrent
+  in-flight deliveries.
+- **Blocking 2 — fan-out permanent-peer rejection timing (REQ-F004-051 vs REQ-F004-047/014).** REQ-F004-051
+  said a permanent peer rejection parks "after the bound" (the transient path). Corrected: a **permanent**
+  rejection from **any not-yet-acked peer** makes `deliver()` reject as permanent and the row is **parked
+  immediately** (no backoff retries, REQ-F004-047/014); "after the bound" is reserved for **transient**
+  peer failures only. New test added.
+- **Blocking 3 — `EVENT_BUS_TRANSPORT=broker` had no defined GTM behavior (REQ-F004-052).** `broker` stays
+  a documented value of the closed set but has no implementation in this build, so the GTM relay now
+  **hard-refuses to boot** with "broker transport not available in this build" (mirroring REQ-F004-045).
+  The "selects `BrokerTransport`" test is explicitly marked **post-GTM / broker-era** and does **not** gate
+  this deliverable.
+- **Notes folded in:** N1 (REQ-F004-013 — a persistent post-ack mark failure advances `next_attempt_at`
+  under the same backoff schedule); N2 (REQ-F004-013 — cap edge is **inclusive at the Nth failure**, stated
+  with the constant); N3 (REQ-F004-014/025/051 — a **partially-delivered park** is a distinct metric signal
+  from a never-delivered park; `parked_at` = never-**fully**-acked); N4 (REQ-F004-029 — a
+  malformed/unparseable stored envelope backfills to `__unkeyed__`, never NULL, migration never aborts);
+  N5 (REQ-F004-026 — named `/ready` threshold config keys `EVENT_BUS_BACKLOG_THRESHOLD` /
+  `EVENT_BUS_LAG_THRESHOLD_MS` with provisional documented defaults 1000 rows / 30000 ms); N6 (§3 — prefix
+  match MUST include the trailing `.` separator so `admin.workspace_user.*` is not misparsed as
+  `admin.workspace.*` and stripped of membership ordering). No note required a human product ruling.
+Consistency check: the shutdown-set model (REQ-F004-020) now agrees with the parallel-delivery SLO
+(REQ-F004-027) and concurrent-drain-tick assumption (REQ-F004-017); the fan-out permanent-park path
+(REQ-F004-051) now agrees with the immediate-park rule (REQ-F004-047/014); and `broker` refuse-to-boot
+(REQ-F004-052) agrees with the closed-set hard-refuse posture (REQ-F004-045/046). `acked_at`-routed cap
+(REQ-F004-011) is unchanged and remains consistent with the clarified `parked_at` = never-**fully**-acked
+wording (REQ-F004-014/025).
+
+Rev 10 (round-2 re-review returned PASS WITH NOTES — no blocking findings; this is a **clarity/edge-only**
+pass, 2026-07-19). **No requirement's MUST semantics changed and nothing was renumbered** — every edit is
+terminology, an edge-comparison pin, or a citation fix. Touched REQ ids: REQ-F004-052, REQ-F004-025,
+REQ-F004-020, REQ-F004-026, REQ-F004-051.
+1. **REQ-F004-052(3) — `broker` refuses to boot in ALL environments (human ruling).** Pinned the dev
+   posture: `EVENT_BUS_TRANSPORT=broker` (and any out-of-set value) hard-refuses in **both dev and
+   production** — deliberately **not** the env-split boots-soft-in-dev posture of REQ-F004-045. Rationale
+   recorded: a missing URL is recoverable (the transport exists and can start delivering once configured),
+   but there is **structurally no `BrokerTransport` to instantiate** in this build, so a dev "boot but
+   never ready" state is pointless. GTM test updated to assert refuse-in-all-environments (dev-soft arm
+   dropped for the broker case).
+2. **REQ-F004-025 test — term overload fixed.** "permanently failing … after max attempts" reworded to
+   "**repeatedly transiently-failing** … after max transient attempts", so the never-delivered-park test
+   no longer collides with the load-bearing **permanent** classification (which means park-immediately,
+   REQ-F004-043(c)/051(d)).
+3. **REQ-F004-020 — abandon-at-shutdown does not advance `attempt_count`.** Added: an in-flight delivery
+   abandoned at the shutdown bounded timeout is neither an ack nor a failure, so it leaves the row's retry
+   bookkeeping (`attempt_count`/`next_attempt_at`/`last_error`) unchanged — a restart-during-delivery does
+   **not** erode the REQ-F004-013/014 retry budget. Test updated.
+4. **REQ-F004-026 — `/ready` boundary edge pinned.** Comparison made explicit and deterministic:
+   **`backlog ≥ EVENT_BUS_BACKLOG_THRESHOLD` OR `lag ≥ EVENT_BUS_LAG_THRESHOLD_MS` ⇒ not-ready** (at-or-over
+   is degraded); ready requires **both strictly below**. Removed the ambiguous "over"/exclusive wording;
+   test asserts the equal-to boundary is already not-ready.
+5. **Cross-reference fix.** The permanent-signal citations `REQ-F004-047c` (which has no lettered
+   sub-parts) were corrected to **REQ-F004-043(c)** — where the permanent-vs-transient transport signal is
+   defined — in REQ-F004-051(d), the REQ-F004-051 permanent-park test, and the REQ-F004-025 test (plain
+   REQ-F004-047 retained where the reference is to the *classification* step).
+6. **`/ready` defaults — kept provisional (human ruling).** `EVENT_BUS_BACKLOG_THRESHOLD=1000` /
+   `EVENT_BUS_LAG_THRESHOLD_MS=30000` remain **documented provisional constants of record, operator-tunable**
+   (REQ-F004-026); the human accepted them as provisional — no value change.
+Consistency confirmed: the broker all-env refuse-to-boot (REQ-F004-052) is intentionally distinct from —
+and does not contradict — REQ-F004-045's URL env-split (different failure class: unrecoverable-missing-code
+vs recoverable-missing-config); the corrected `REQ-F004-043(c)` citations point at the actual definition of
+the permanent signal (REQ-F004-043); and the abandon-does-not-advance-`attempt_count` clause is consistent
+with REQ-F004-011's `acked_at`-routed cap and REQ-F004-020's at-least-once + dedupe restart safety. No MUST
+was added, removed, or weakened in rev 10.
+
+Rev 11 (pins a previously-unspecified classification the qa-engineer flagged; human ruled the standard
+webhook convention, 2026-07-19). **Adds ONE new requirement, REQ-F004-055; no existing REQ renumbered and
+no existing MUST changed** — this only fills a genuine gap (the concrete HTTP-response → permanent/transient
+mapping inside `HttpPeerTransport` was unpinned). REQ-F004-055 (§4.4, in the `HttpPeerTransport` area) pins,
+as a **transport-specific wire concern kept OUT of the drainer per the REQ-F004-049 seam** and surfaced via
+the REQ-F004-043(c) permanent-vs-transient signal: **2xx → ack**; **transient** = network/connection-level
+failures (connection refused, timeout, DNS failure, socket reset) + **all 5xx** + **408** + **429**
+(→ retry with backoff up to the max-attempt bound, then park, REQ-F004-013/014); **permanent** = all other
+4xx (400/401/403/404/422), any 3xx, and any other unexpected non-2xx (→ immediate park, REQ-F004-047/051(d)).
+The mapping is **total** (every outcome classified). **Fan-out composition** is cross-referenced both ways
+with REQ-F004-051: a permanent response from any not-yet-acked peer ⇒ whole `deliver()` rejects permanent
+(immediate park, REQ-F004-051(d)); no permanent but ≥1 transient ⇒ `deliver()` rejects transient and
+re-drives only the un-acked peers (REQ-F004-051(a)/(b)); ack only when every peer is 2xx. REQ-F004-047's
+rev-2 provisional "treat-all-as-transient when the transport gives no explicit signal" default is noted as
+**superseded for the GTM HTTP transport** by this explicit total classification (and still governs any
+signal-less transport). Cross-refs touched: §4.4 REQ-F004-051 (bullets (a)/(d) now cite REQ-F004-055),
+§6.2 REQ-F004-047 (notes the HTTP supersession), §10 traceability table (new row). Seam preserved: HTTP
+status-code constants live only in `HttpPeerTransport`, never in the drain/orchestration module
+(REQ-F004-049), asserted by a static-check test. No MUST was added to, removed from, or weakened in any
+existing requirement in rev 11.

@@ -75,9 +75,11 @@ references a `/v1/...` path or engine field name. Both are enforced by static sc
   `otplib` (or equivalent RFC-6238) for TOTP (REQ-016), httpOnly session cookie backed
   by a `sessions` row (REQ-011, REQ-014). See `04-cross-cutting.md`.
 - **Event bus: abstract `EventBus` interface + transactional outbox.** The on-box
-  shared bus may not exist yet, so we ship an in-process emitter that also writes an
-  `event_outbox` row in the same transaction as the verify result; a relay drains the
-  outbox to the real bus when configured. See `04-cross-cutting.md` and `06-risks.md`.
+  shared bus may not exist yet, so we ship an in-process emitter (`inproc` mode) that also
+  writes an `event_outbox` row in the same transaction as the verify result; F-004 adds a
+  production outbox relay that drains published-pending rows to real peer endpoints over HTTP
+  with at-least-once semantics, per-key ordering, and automatic poison isolation. See
+  `04-cross-cutting.md`, `06-risks.md`, and `09-F004-production-event-bus.md`.
 - **HTTP framework: Fastify 4 + `@fastify/cors` + `@fastify/cookie`**, mirroring the
   sibling BFF. Native `fetch` for upstream calls (as the sibling does).
 
