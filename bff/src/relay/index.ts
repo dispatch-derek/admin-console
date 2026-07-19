@@ -12,11 +12,19 @@ import { createTransport } from './transport.js';
 import { createDrainer } from './drainer.js';
 import { buildReadyApp } from './ready.js';
 import { getBacklogCount, getRelayLagMs } from './metrics.js';
+import { outboxRepo } from '../store/repositories/outbox.repo.js';
 
 // Implementation-defined poll cadence (REQ-F004-010/M8) and graceful-shutdown drain bound.
 const POLL_INTERVAL_MS = 1_000;
 const SHUTDOWN_DRAIN_MS = 10_000;
 const READY_PORT = Number.parseInt(process.env['RELAY_READY_PORT'] ?? '3003', 10);
+// Outbox retention (REQ-F004-019/035): published rows older than this window are pruned so the
+// outbox does not grow without bound; unpublished and parked rows are NEVER pruned regardless of
+// age. The spec leaves the concrete window to the implementer ("e.g. N days") as a documented
+// constant of record — 7 days here. The prune runs periodically, once every PRUNE_EVERY_CYCLES
+// poll ticks (~hourly at a 1s cadence), rather than every tick.
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const PRUNE_EVERY_CYCLES = 3_600;
 
 async function main(): Promise<void> {
   const transport = createTransport({ kind: config.transportKind, peerUrls: config.peerUrls });
@@ -34,17 +42,32 @@ async function main(): Promise<void> {
     getRelayLagMs: () => getRelayLagMs(),
     backlogThreshold: config.backlogThreshold,
     lagThresholdMs: config.lagThresholdMs,
+    // Surface the ratified store-unwritable 503 reason (REQ-F004-011/044) via a real probe write.
+    isStoreWritable: () => outboxRepo.isWritable(),
   });
   await ready.listen({ port: READY_PORT, host: '0.0.0.0' });
 
   let stopped = false;
+  let cycle = 0;
   const loop = async (): Promise<void> => {
     while (!stopped) {
       try {
         await drainer.runOnce();
         transportReachable = true;
-      } catch {
+      } catch (err) {
+        // The only top-level error boundary for the drain loop — do NOT swallow silently; a bare
+        // console.error is the accepted convention here (the relay has no Fastify request context).
+        console.error('[relay] drain tick failed:', err);
         transportReachable = false;
+      }
+      // Periodic retention prune (REQ-F004-019/035). Isolated try/catch so a prune failure never
+      // stops the drain loop or corrupts reachability state.
+      if (++cycle % PRUNE_EVERY_CYCLES === 0) {
+        try {
+          outboxRepo.pruneShipped(new Date(Date.now() - RETENTION_MS).toISOString());
+        } catch (err) {
+          console.error('[relay] retention prune failed:', err);
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }

@@ -65,6 +65,18 @@ const recordFailureStmt = db.prepare(
 const parkStmt = db.prepare(
   `UPDATE event_outbox SET parked_at = ? WHERE id = ?`,
 );
+// Record a diagnosable reason on a row WITHOUT touching attempt_count/next_attempt_at — used by the
+// permanent-rejection park path (REQ-F004-014/047), where there is no retry so recordFailure's
+// attempt/next-attempt bump would be semantically wrong. Keeps a parked row diagnosable (REQ-F004-025).
+const setLastErrorStmt = db.prepare(
+  `UPDATE event_outbox SET last_error = ? WHERE id = ?`,
+);
+// Store-writability probe (REQ-F004-011/044 store-unwritable): a no-op-VALUE UPDATE against the
+// outbox_meta singleton that still exercises the real write path (lock + WAL frame), so a read-only
+// / full / otherwise unwritable store surfaces as a thrown SQLITE error rather than a false "ready".
+const writableProbeStmt = db.prepare(
+  `UPDATE outbox_meta SET epoch = epoch WHERE id = 1`,
+);
 const forcePublishStmt = db.prepare(
   `UPDATE event_outbox SET published_at = ? WHERE id = ?`,
 );
@@ -102,6 +114,18 @@ export const outboxRepo = {
   },
   park(id: number, iso: string): void {
     parkStmt.run(iso, id);
+  },
+  setLastError(id: number, err: string): void {
+    setLastErrorStmt.run(err, id);
+  },
+  // Returns false if the store cannot accept a write right now (REQ-F004-011/044 store-unwritable).
+  isWritable(): boolean {
+    try {
+      writableProbeStmt.run();
+      return true;
+    } catch {
+      return false;
+    }
   },
   forcePublish(id: number, iso: string): void {
     forcePublishStmt.run(iso, id);

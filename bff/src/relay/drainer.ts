@@ -69,6 +69,9 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
     if (classification === 'permanent') {
       // Permanent rejection → park IMMEDIATELY, no backoff, regardless of attempt count
       // (REQ-F004-047/051(d)). parked_at set, acked_at NULL (a fully-acked row would have published).
+      // Record the reason so a permanently-parked poison row is diagnosable (REQ-F004-025) — via
+      // setLastError, NOT recordFailure, since a permanent rejection is not a retry attempt.
+      outboxRepo.setLastError(row.id, errText(err));
       outboxRepo.park(row.id, nowIso());
       recordPark();
       transport.release?.(deliveryId);
@@ -123,6 +126,9 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
 
       if (result === 'abandon') {
         // Left for redelivery — published_at stays NULL, attempt_count untouched (REQ-F004-020).
+        // Evict any per-deliveryId transport state so the ack map cannot leak on shutdown (F5): the
+        // in-memory map is lost on the impending restart anyway, and the row re-drives to all peers.
+        transport.release?.(deliveryId);
         return;
       }
       if (result === 'ack') {
@@ -160,6 +166,9 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
 
   async function shutdown(timeoutMs: number): Promise<void> {
     shuttingDown = true;
+    // Short-circuit an idle relay (REQ-F004-020): with nothing in flight there is nothing to drain,
+    // so don't tax every routine restart with the full shutdown window.
+    if (abandonTriggers.size === 0) return;
     // Give in-flight deliveries a bounded, SHARED window to settle naturally (ack → publish).
     await new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
     // Anything still in flight at the bound is ABANDONED — resolve its race so runOnce unblocks;

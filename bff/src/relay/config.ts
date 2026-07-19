@@ -4,6 +4,8 @@
 // and SECRETS_ENC_KEY at load, engine/auth secrets the relay never uses and must not crash on.
 // This config requires only the DB path + the EVENT_BUS_* family.
 
+import { dbPath } from '../store/db-path.js';
+
 const isProduction = process.env['NODE_ENV'] === 'production';
 
 // EVENT_BUS_URL — comma-delimited peer list (comma delimiter, per-entry whitespace trimmed, empty
@@ -45,6 +47,8 @@ export const config = {
   transportKind, // 'http' (broker already refused above)
   backlogThreshold: intEnv('EVENT_BUS_BACKLOG_THRESHOLD', 1000),
   lagThresholdMs: intEnv('EVENT_BUS_LAG_THRESHOLD_MS', 30_000),
-  dbPath: process.env['DB_PATH'] ?? 'data/console.db',
+  // Re-export the SHARED, secret-free path resolution (store/db-path.ts) — the same value store/db.ts
+  // opens — so the relay's config and its real DB handle can never drift (matches bff/src/config.ts).
+  dbPath,
   isProduction,
 } as const;
