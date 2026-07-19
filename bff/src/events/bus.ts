@@ -5,6 +5,7 @@
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { outboxRepo } from '../store/repositories/outbox.repo.js';
+import { deriveOrderingKey } from './ordering-key.js';
 import type { AdminEventEnvelope } from './catalog.js';
 
 export interface EventBus {
@@ -29,7 +30,10 @@ export class InProcessBus implements EventBus {
 // published — so events back-fill once the bus appears (04c, 06-risks).
 export class OutboxRelayBus implements EventBus {
   async publish(env: AdminEventEnvelope): Promise<void> {
-    outboxRepo.insert(env.timestamp, JSON.stringify(env));
+    // F-004 (REQ-F004-029): compute the per-key ordering key from the (parsed) envelope and
+    // persist it on the row so the relay enforces per-key order without re-deriving it each drain.
+    // INSERT path only — still no delivery here; the relay drains and delivers later.
+    outboxRepo.insert(env.timestamp, JSON.stringify(env), deriveOrderingKey(env));
   }
 }
 
