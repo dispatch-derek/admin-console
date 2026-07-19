@@ -95,7 +95,7 @@ All notable changes to the Admin Console are documented here. This project follo
 
 - **Specification:** `specs/F-004-production-event-bus.md` (rev 11, binding).
 - **Architecture design:** `docs/design/09-F004-production-event-bus.md`.
-- **Migration runbook:** `migrations/NOTES-F004.md` (schema delta, backfill, deploy phasing).
+- **Migration runbook:** `docs/runbooks/F-004-migration-runbook.md` (schema delta, backfill, deploy phasing).
 - **Security review:** `security/F-004-review.md` (pass with notes; two medium findings).
 - **Relay operator guide:** `bff/src/relay/README.md` (boot, config, `/ready`, troubleshoot).
 - **E2E test harness:** `tests/e2e/relay/README.md` (journey coverage, fixtures).

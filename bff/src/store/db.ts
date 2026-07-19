@@ -389,7 +389,7 @@ export function rollbackF005(): void {
 //     it from each envelope, so no ordering information is permanently lost by dropping it.
 // On a GREENFIELD DB (relay not yet deployed: all attempt_count=0, no parked rows, epoch unused)
 // this destroys nothing operational. On a LIVE DB: back up the SQLite file first and gate on
-// explicit human confirmation (migrations/NOTES-F004.md). Envelopes/published_at are NEVER touched,
+// explicit human confirmation (docs/runbooks/F-004-migration-runbook.md). Envelopes/published_at are NEVER touched,
 // so this rollback NEVER loses an emitted event — only delivery bookkeeping.
 export function rollbackF004(): void {
   const run = db.transaction(() => {

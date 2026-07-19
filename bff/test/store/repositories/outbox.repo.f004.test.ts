@@ -212,7 +212,7 @@ describe.skipIf(!repo.pruneShipped)('pruneShipped — REQ-F004-019/035 retention
 });
 
 describe('busy_timeout — REQ-F004-020 two-writer contention posture (proxy check, see TEST_PLAN.md limitation note)', () => {
-  it('the shared connection has a positive busy_timeout configured (BFF side; the relay MUST set the same pragma on its OWN connection per NOTES-F004.md)', () => {
+  it('the shared connection has a positive busy_timeout configured (BFF side; the relay MUST set the same pragma on its OWN connection per docs/runbooks/F-004-migration-runbook.md)', () => {
     const rows = db.pragma('busy_timeout') as Array<{ timeout: number }>;
     expect(rows[0]?.timeout).toBeGreaterThan(0);
   });
