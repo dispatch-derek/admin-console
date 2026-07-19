@@ -51,16 +51,26 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
     const classification = (err as { classification?: unknown })?.classification === 'permanent'
       ? 'permanent'
       : 'transient';
+    // FULL row-level ack marker (REQ-F004-011): routes the post-ack cap (force-publish vs park). Set
+    // only on a complete fan-out ack, so it is NULL at every park point below.
     const everAcked = row.acked_at != null;
+
+    // Partial-vs-never PARK split (REQ-F004-051(e)/025) is a METRICS-only distinction — both still
+    // park with acked_at NULL. A park is "partially delivered" if EITHER the row was ever fully
+    // acked before (defensive; e.g. a crash-window redelivery left acked_at set) OR the transport
+    // reports >= 1 destination already accepted this delivery (its transport-agnostic partialAck
+    // signal). NOT decidable from row.acked_at alone, which a partial fan-out never sets.
+    const partialAckSignal = (err as { partialAck?: unknown })?.partialAck === true;
+    const recordPark = (): void => {
+      if (everAcked || partialAckSignal) metrics.recordPartiallyDeliveredPark();
+      else metrics.recordNeverDeliveredPark();
+    };
 
     if (classification === 'permanent') {
       // Permanent rejection → park IMMEDIATELY, no backoff, regardless of attempt count
-      // (REQ-F004-047/051(d)). acked_at NULL here (a fully-acked row would have published).
+      // (REQ-F004-047/051(d)). parked_at set, acked_at NULL (a fully-acked row would have published).
       outboxRepo.park(row.id, nowIso());
-      // A fan-out row may have had SOME peers accept before another permanently rejected — that is
-      // a partially-delivered park, a distinct signal from never-delivered (REQ-F004-051(e)/025).
-      if (everAcked) metrics.recordPartiallyDeliveredPark();
-      else metrics.recordNeverDeliveredPark();
+      recordPark();
       transport.release?.(deliveryId);
       return;
     }
@@ -68,18 +78,20 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
     // Transient failure → increment attempt_count and schedule the next attempt (REQ-F004-013).
     const nextAttempt = row.attempt_count + 1;
     if (nextAttempt >= MAX_ATTEMPTS) {
-      // Cap reached (inclusive-at-N). Route SOLELY by the persisted acked_at marker (REQ-F004-011):
+      // Cap reached (inclusive-at-N). Route SOLELY by the persisted acked_at FULL-ack marker
+      // (REQ-F004-011) — unchanged: full-ack → force-publish, else park.
       if (everAcked) {
-        // Ever delivered → force-mark published (stop the redelivery loop, let the key resume);
-        // never park. Alerted via the post-ack-cap counter — the event reached the consumer.
+        // Ever FULLY delivered → force-mark published (stop the redelivery loop, let the key
+        // resume); never park. Alerted via the post-ack-cap counter — the event reached the consumer.
         outboxRepo.forcePublish(row.id, nowIso());
         metrics.recordPostAckCap();
       } else {
-        // Never delivered → genuine poison: record the failing attempt, then park (REQ-F004-014).
+        // Never fully delivered → genuine poison: record the failing attempt, then park
+        // (REQ-F004-014). The partial-vs-never split still applies (a peer may hold a copy).
         const at = new Date(Date.now() + backoffMs(nextAttempt)).toISOString();
         outboxRepo.recordFailure(row.id, at, errText(err));
         outboxRepo.park(row.id, nowIso());
-        metrics.recordNeverDeliveredPark();
+        recordPark();
       }
       transport.release?.(deliveryId);
       return;

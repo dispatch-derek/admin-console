@@ -17,11 +17,19 @@ export interface EventTransport {
 
 export class TransportError extends Error {
   readonly classification: 'transient' | 'permanent'; // REQ-F004-047
+  // TRANSPORT-AGNOSTIC partial-delivery signal (REQ-F004-051(e)/025): true when, at reject time,
+  // the transport had ALREADY handed this deliveryId off to >= 1 destination successfully (e.g. a
+  // fan-out peer that 2xx'd) even though the FULL row-level ack was not achieved. Lets the drainer
+  // distinguish a partially-delivered park from a never-delivered one WITHOUT any transport-specific
+  // (HTTP status / peer) detail leaking above the seam. Stateless / single-destination / future
+  // broker transports simply leave it false.
+  readonly partialAck: boolean;
 
-  constructor(message: string, classification: 'transient' | 'permanent') {
+  constructor(message: string, classification: 'transient' | 'permanent', partialAck = false) {
     super(message);
     this.name = 'TransportError';
     this.classification = classification;
+    this.partialAck = partialAck;
   }
 }
 

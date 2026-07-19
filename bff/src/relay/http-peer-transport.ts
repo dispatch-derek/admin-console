@@ -61,14 +61,20 @@ export class HttpPeerTransport implements EventTransport {
       if (r.outcome === 'ack') acked.add(r.url);
     }
 
+    // Partial-delivery signal (REQ-F004-051(e)/025): if >= 1 peer has already accepted this
+    // deliveryId (this call or a prior re-drive) while the FULL fan-out ack is not yet achieved, a
+    // resulting park is "partially delivered" — those peers hold dedupable copies. Surfaced on the
+    // TransportError so the drainer can split the park counter without seeing peer/HTTP detail.
+    const partialAck = acked.size > 0;
+
     // Fan-out composition (REQ-F004-051/055): a permanent from ANY not-yet-acked peer makes the
     // whole deliver() reject permanent (immediate park), even if others acked or were transient.
     if (results.some((r) => r.outcome === 'permanent')) {
-      throw new TransportError('a peer permanently rejected the delivery', 'permanent');
+      throw new TransportError('a peer permanently rejected the delivery', 'permanent', partialAck);
     }
     // Otherwise any transient peer means reject transient (re-drive re-POSTs only the un-acked ones).
     if (results.some((r) => r.outcome === 'transient')) {
-      throw new TransportError('a peer transiently failed the delivery', 'transient');
+      throw new TransportError('a peer transiently failed the delivery', 'transient', partialAck);
     }
     // Every peer accepted (2xx) → full fan-out ack → resolve (gates markPublished, REQ-F004-051).
   }
