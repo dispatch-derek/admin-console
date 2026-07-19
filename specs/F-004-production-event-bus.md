@@ -1,8 +1,10 @@
 # F-004: Production-Ready Event Bus (Replace the In-Process Bus) — Specification
 
-Status: Draft rev 7 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6) and folds in the resolved
+Status: Draft rev 8 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6), folds in the resolved
 delivery-transport decision (rev 7, 2026-07-19: HTTP-to-known-peer for GTM; broker as a future `EventTransport`
-adapter); for implementation and QA review
+adapter), and resolves the rev-7 adversarial BLOCK (rev 8, 2026-07-19: baseline `baseline` singleton
+ordering key; corrected 21-event/8-family catalog count; stateful per-`deliveryId` fan-out re-drive; pinned
+`EVENT_BUS_URL` comma-list + `EVENT_BUS_TRANSPORT` selector); for implementation and QA review
 Feature brief (authoritative intent): `briefs/F-004-production-event-bus.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `bff/src/events/bus.ts`, `bff/src/events/emitter.ts`, `bff/src/events/catalog.ts`,
@@ -54,8 +56,9 @@ the production configuration and demotes `inproc` (the interim Node `EventEmitte
   least once.
 
 ### §1.2 F-004 changes DELIVERY, not the contract
-- REQ-F004-002 — The event **contract** — the `admin.*` catalog (`bff/src/events/catalog.ts`, 18
-  event names; parent §14.2), the `AdminEventEnvelope` shape (parent REQ-029c), event **cardinality**
+- REQ-F004-002 — The event **contract** — the `admin.*` catalog (`bff/src/events/catalog.ts`, **21
+  event names across 8 families** — the six core families plus `admin.baseline_prompt.*` (F-002) and
+  `admin.feature_toggle.*` (F-005); parent §14.2), the `AdminEventEnvelope` shape (parent REQ-029c), event **cardinality**
   ("one or more" per state delta, parent REQ-029/029e), the per-control `verified` map for
   `admin.instance.setting_changed` (parent REQ-029f), and secret **redaction before publish** (parent
   REQ-029c, applied in `emitAdminEvent` via `redactSecrets`) — is defined, built, and **out of scope**
@@ -149,8 +152,9 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   the event **name** (which selects the namespace rule) plus a **named field of
   `AdminEventEnvelope.target`** (parent REQ-029c) — **not** from a literal `target.workspaceId` /
   `target.userId` field (no such field exists; the grounded `target` uses `{id}`, `{workspace, user}`,
-  or `{keys}`, see REQ-F004-031/MJ2). The derivation is **total over all six live catalog families**
-  (resolves review BR2/MJ2), keyed off the event-name prefix:
+  or `{keys}`, see REQ-F004-031/MJ2). The derivation is **total over all eight live catalog families**
+  (`bff/src/events/catalog.ts`, 21 event names; resolves review BR2/MJ2 and rev-7 Fix 1/2), keyed off the
+  event-name prefix:
   - `admin.workspace.*`      → `ws:<target.id>`
   - `admin.user.*`           → `user:<target.id>`
   - `admin.instance.*`       → reserved singleton `instance`
@@ -165,6 +169,19 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   - `admin.raw_env.*`        → reserved singleton `instance` (raw-env writes are instance-scoped
     configuration and share the `admin.instance.*` partition so sequential config writes stay ordered;
     resolves review MN4)
+  - `admin.baseline_prompt.*` → reserved singleton `baseline` (rev-7 Fix 1 human ruling). The F-002
+    baseline events are emitted with `target: { baseline: 'singleton' }` (`baseline.service.ts`), so they
+    have no natural per-entity id and would otherwise fall to `__unkeyed__` — which would leave the causal
+    pair `admin.baseline_prompt.updated → admin.baseline_prompt.applied` with **no** delivery-order
+    guarantee. They are therefore given their **own dedicated `baseline` singleton key** so baseline writes
+    stay mutually ordered. This is a **distinct** key from `instance` (deliberately **not** lumped onto the
+    `raw_env`/`instance` partition) so baseline writes are not false-serialized against unrelated raw-env
+    config writes — mirroring the `admin.raw_env.* → instance` singleton pattern but on its own partition.
+  - `admin.feature_toggle.*` → `__unkeyed__` (**intentional**; rev-7 Fix 2). The F-005 toggle event is
+    emitted with `target: { featureKey }` and F-005 explicitly routes its ordering to the reserved
+    `__unkeyed__` key (`catalog.ts:69-70` note; REQ-F005-052) — toggle changes carry no cross-event
+    ordering requirement, so they are independent (no per-key serialization). This is a deliberate mapping,
+    not a totality fallthrough.
   Any event that still matches none of the above (no rule, no natural id) falls into the reserved key
   `__unkeyed__`. **Totality edge (resolves review N5):** an event that *matches* a prefix rule but whose
   named `target` field is **absent/empty** (e.g. an `admin.workspace.*` event with no `target.id`) also
@@ -368,9 +385,10 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   `deliver(envelope, deliveryId): Promise<void>` (or a batch variant) that **resolves on ack** (gating
   `markPublished`, REQ-F004-012) and **rejects carrying the transient-vs-permanent classification**
   (REQ-F004-047) — with a **single concrete implementation for GTM, `HttpPeerTransport`** (REQ-F004-050).
-  A future `BrokerTransport` MUST be introducible as a **new class plus one config branch only**,
-  mirroring the grounded `createEventBus` / `getEventBus` factory that already switches on
-  `EVENT_BUS_MODE` (`bus.ts:38-43`). **No transport-specific logic — HTTP client, peer list, POST,
+  A future `BrokerTransport` MUST be introducible as a **new class plus one config branch only** — that
+  branch is the separate `EVENT_BUS_TRANSPORT` selector (REQ-F004-052), **mirroring the pattern** of the
+  grounded `createEventBus` / `getEventBus` factory that already switches on `EVENT_BUS_MODE`
+  (`bus.ts:38-43`), on its own axis (transport ≠ mode). **No transport-specific logic — HTTP client, peer list, POST,
   status-code mapping, per-peer retry (or, later, broker client / topics / partitions) — may leak into
   the orchestration layer**, which sees only the `EventTransport` interface and the conforming-transport
   contract (REQ-F004-043). *Test (transport-agnostic drain — the broker swap in miniature):* substitute a
@@ -388,7 +406,8 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   This is deliberately **not** a message broker. A real broker (Kafka / NATS / etc.) is **future state**
   (post-GTM, as more subscribers to **both** applications' events appear) and MUST be introducible
   **solely** as a new `EventTransport` implementation behind the REQ-F004-049 interface, selected by one
-  config branch, with **zero churn to producers, the emitter (`emitAdminEvent`), the `AdminEventEnvelope`,
+  config branch (`EVENT_BUS_TRANSPORT=broker`, REQ-F004-052), with **zero churn to producers, the emitter
+  (`emitAdminEvent`), the `AdminEventEnvelope`,
   the `event_outbox` write, mutating routes, or services** (reinforcing REQ-F004-004/005/006/022 for the
   transport axis specifically): F-004 changes delivery only, and the *choice of* delivery transport —
   HTTP now, broker later — changes nothing **above** the `EventTransport` seam. *Test (zero-churn swap
@@ -396,30 +415,44 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   broker) requires **no** edit to `emitter.ts`, `catalog.ts`, the `outbox.repo.ts` write path, any
   mutating route/service, or the envelope shape; a static scan confirms the only files touched to add a
   transport are the transport class itself and the one factory/config branch.
-- REQ-F004-051 — **Multi-peer fan-out ack (at-least-once per peer); `published_at` still means "handed to
-  transport"; schema invariant across the swap.** `HttpPeerTransport` **owns the peer / subscriber list
-  and the per-peer retry state** (REQ-F004-052). A `deliver()` call **resolves (acks) — and the row is
-  marked `published_at` (REQ-F004-012) — ONLY when EVERY configured peer has accepted** the event
-  (HTTP 2xx). On **partial failure** (some peers accepted, others errored / timed out / returned
-  4xx-5xx), `deliver()` does **NOT** resolve: the row stays `published_at IS NULL` and is retried under
-  the orchestration layer's backoff (REQ-F004-013), and within the transport's retry of that delivery
-  **only the un-acked peers are re-POSTed** (an already-accepted peer is not re-POSTed within the same
-  delivery's retry cycle). A peer whose rejection is **permanent** (REQ-F004-047) drives the row to
-  **park** after the bound (REQ-F004-014) without blocking other ordering keys. Because the entire fan-out
-  and per-peer bookkeeping are **encapsulated inside the transport**, `published_at` keeps its **single
-  meaning — "successfully handed off to the transport"** — and the `event_outbox` schema (REQ-F004-029)
-  **does NOT need to change when the transport is later swapped** to a broker (which acks once, from the
-  broker itself, with no peer list). Delivery remains **at-least-once per peer**: after a **process crash**
-  the transport's in-memory per-peer ack state is lost and the whole row is re-driven to **all** peers on
-  restart, so a peer may see a duplicate — collapsed to one effect by consumer dedupe on the stable
-  delivery id (REQ-F004-018). *Test (fan-out ack):* with **N** peers configured, a row is marked
-  `published_at` **only after all N accept**; with one peer failing, the row stays unpublished and on the
-  next attempt **only the failing peer is re-POSTed** (the already-acked peers are not), and once it
-  accepts the row is published. *Test (partial-failure re-drive + dedupe):* a peer that fails once then
-  succeeds yields exactly-one net effect at the succeeding peer and at-most-one duplicate at the
-  already-acked peer (same delivery id, REQ-F004-018). *Test (schema invariant):* swapping
-  `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049) requires **no** migration or column
-  change to `event_outbox`.
+- REQ-F004-051 — **Multi-peer fan-out ack (at-least-once per peer), STATEFUL per-`deliveryId` re-drive;
+  `published_at` still means "handed to transport"; schema invariant across the swap.**
+  `HttpPeerTransport` **owns the peer / subscriber list** (REQ-F004-052) and, per the **rev-7 Fix 3 human
+  ruling**, is **STATEFUL across orchestration-driven re-drives**. A `deliver(envelope, deliveryId)` call
+  **resolves (acks) — and the row is marked `published_at` (REQ-F004-012) — ONLY when EVERY configured peer
+  has accepted** the event (HTTP 2xx). The stateful re-drive model is specified concretely:
+  - **(a) Partial failure rejects; the row stays unpublished.** On **partial failure** (some peers
+    accepted, others errored / timed out / returned 4xx-5xx) `deliver()` does **NOT** resolve — it
+    **rejects** (with the transient-vs-permanent classification, REQ-F004-047) — so the row stays
+    `published_at IS NULL` and the orchestration backoff (REQ-F004-013) **later re-invokes `deliver()` with
+    the SAME `deliveryId`**.
+  - **(b) In-memory per-`deliveryId` ack map; re-POST only un-acked peers.** The transport MUST **persist
+    the per-peer ack state in memory, keyed by `deliveryId`**, across those repeated `deliver()` calls, so
+    on each re-drive it **re-POSTs ONLY the peers not yet acked** for that `deliveryId` (an already-accepted
+    peer is never re-POSTed while its `deliveryId` entry lives). This is a transport-internal map, invisible
+    to the orchestration layer and to the `event_outbox` schema.
+  - **(c) Eviction rule (bounded memory).** The transport **drops the `deliveryId` entry** when the row is
+    **fully acked** (all peers accepted → orchestration marks `published_at`) **OR** when the row is
+    **parked / dead-lettered** (REQ-F004-014). So the ack map cannot grow unbounded even on a long-parked or
+    long-retrying key: a terminal outcome (published or parked) always evicts the entry.
+  A peer whose rejection is **permanent** (REQ-F004-047) drives the row to **park** after the bound
+  (REQ-F004-014) — evicting its map entry per (c) — without blocking other ordering keys. Because the entire
+  fan-out and per-peer bookkeeping are **encapsulated inside the transport**, `published_at` keeps its
+  **single meaning — "successfully handed off to the transport"** — and the `event_outbox` schema
+  (REQ-F004-029) **does NOT need to change when the transport is later swapped** to a broker (which acks
+  once, from the broker itself, with no peer list). Delivery remains **at-least-once per peer**: after a
+  **process crash** the transport's in-memory ack map is lost and the whole row is re-driven to **all**
+  peers on restart, so a peer may see a duplicate — collapsed to one effect by consumer dedupe on the
+  stable delivery id (REQ-F004-018). *Test (stateful fan-out ack):* with **N** peers configured (from the
+  comma-delimited `EVENT_BUS_URL` list, REQ-F004-052), a row is marked `published_at` **only after all N
+  accept**; with one peer failing, the row stays unpublished and on the next backoff-driven `deliver()`
+  (same `deliveryId`) **only the previously-failing peer is re-POSTed** — the already-acked peers receive
+  **no** second POST — and once it accepts the row is published. *Test (partial-failure re-drive + dedupe):*
+  a peer that fails once then succeeds yields exactly-one net effect at the succeeding peer and at-most-one
+  duplicate at the already-acked peer (same delivery id, REQ-F004-018) — and after the row publishes (or
+  parks) the `deliveryId` entry is evicted (a subsequent unrelated delivery does not carry stale ack state).
+  *Test (schema invariant):* swapping `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049)
+  requires **no** migration or column change to `event_outbox`.
 
 ---
 
@@ -771,8 +804,10 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   value; an emitted row starts with `attempt_count` = 0, `next_attempt_at` = null, `parked_at` = null,
   and a non-null `ordering_key` matching its family's rule in the **total** derivation of §3
   (`admin.workspace.*`→`ws:<id>`, `admin.user.*`→`user:<id>`, `admin.instance.*`/`admin.raw_env.*`→
-  `instance`, `admin.workspace_user.*`→`ws:<workspace>`, `admin.invite.*`→`invite:<id>`, else
-  `__unkeyed__` — all six live catalog families covered, resolves review BR2); a failed delivery increments
+  `instance`, `admin.workspace_user.*`→`ws:<workspace>`, `admin.invite.*`→`invite:<id>`,
+  `admin.baseline_prompt.*`→`baseline` (rev-7 Fix 1), `admin.feature_toggle.*`→`__unkeyed__` (rev-7 Fix 2,
+  intentional), else `__unkeyed__` — **all eight live catalog families** covered, resolves review BR2 +
+  rev-7 Fix 2); a failed delivery increments
   `attempt_count` and records `last_error`/`next_attempt_at` without touching `envelope`, `ts`, or
   `ordering_key`. *Test (backfill):* given an `event_outbox` pre-seeded with unpublished pre-F-004 rows
   (written before the `ordering_key` column existed, so NULL), running the migration populates each such
@@ -804,22 +839,34 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   masquerading as healthy. In development an unrecognized value MAY warn and default to `inproc`.
   *Test:* `EVENT_BUS_MODE=buss` under production causes the BFF to **refuse to boot** with an error citing
   the invalid mode; the same value in development warns but starts.
-- REQ-F004-052 — **Peer-endpoint configuration (HTTP transport), consistent with the `EVENT_BUS_MODE` /
-  `EVENT_BUS_URL` convention.** The GTM `HttpPeerTransport` (REQ-F004-050) reads its **peer endpoint(s)**
-  from configuration that **extends the existing `EVENT_BUS_URL` convention** (`config.ts:52`) — a single
-  peer URL, or a delimited / enumerated list of peer URLs for multi-peer fan-out (REQ-F004-051) — read
-  **only by the relay process** (the BFF reads neither `EVENT_BUS_URL` nor any peer list, REQ-F004-021/045).
-  Transport selection stays gated by `EVENT_BUS_MODE=bus` (REQ-F004-021/046); `inproc` remains
-  development-only (REQ-F004-021). With `bus` mode and **no** peer endpoint configured the relay has
+- REQ-F004-052 — **Config surface — peer list + transport selector (both shapes PINNED, rev-7 Fix 4).**
+  Two distinct config mechanisms, on **two distinct axes**:
+  - **(1) Peer list — `EVENT_BUS_URL` is a comma-delimited list.** The GTM `HttpPeerTransport`
+    (REQ-F004-050) reads its **peer endpoint(s)** from the existing **`EVENT_BUS_URL`** variable
+    (`config.ts:52`) — **not** a new variable — parsed as a **comma-delimited list of one or more peer
+    URLs**: the delimiter is a **comma (`,`)**, surrounding **whitespace is trimmed** from each entry, and
+    empty entries are dropped (mirroring the grounded `WEB_ORIGINS` parse, `config.ts:22`). One URL yields a
+    single peer; several comma-separated URLs yield the **N peers** of the multi-peer fan-out
+    (REQ-F004-051), making that requirement's "N peers configured" test deterministic. This value is read
+    **only by the relay process** (the BFF reads no `EVENT_BUS_URL` / peer list, REQ-F004-021/045).
+  - **(2) Transport selector — `EVENT_BUS_TRANSPORT`, a SEPARATE axis from `EVENT_BUS_MODE`.** Because
+    `EVENT_BUS_MODE` is a closed `{inproc, bus}` set (REQ-F004-046) that selects the **BFF's emitter**, it
+    is **not** overloaded to pick the transport. F-004 adds a **separate** key **`EVENT_BUS_TRANSPORT`**
+    with values **`{http, broker}`**, **default `http`**, evaluated **ONLY when `EVENT_BUS_MODE=bus`** and
+    **only by the relay**. This selector is **the single config branch** the future `BrokerTransport` swaps
+    behind (REQ-F004-049/050): `http` → `HttpPeerTransport` (GTM default), `broker` → the future
+    `BrokerTransport` (its own connection config). It is **orthogonal** to `EVENT_BUS_MODE` — mode chooses
+    *whether* to relay, transport chooses *how* to deliver — so adding the broker imposes **no** new
+    production-config shape on producers, the emitter, or the BFF.
+  With `bus` mode and the `http` transport but **no** `EVENT_BUS_URL` (empty peer list), the relay has
   nowhere to deliver, so it **refuses to start in production** and reports `/ready` not-ready in
-  development — exactly the REQ-F004-045 posture for an unset `EVENT_BUS_URL` (the peer config **is** the
-  transport's `EVENT_BUS_URL`), while the BFF boots and keeps enqueuing regardless. A later
-  `BrokerTransport` reads its **own** connection config behind the **same single config branch**
-  (REQ-F004-049) — imposing **no** new production-config shape on producers, the emitter, or the BFF.
-  *Test:* the relay resolves its peer list from the `EVENT_BUS_URL`-convention config; `bus` mode with no
-  peer configured trips the REQ-F004-045 refuse-to-boot (production) / not-ready (dev) posture while the
-  BFF boots and enqueues; no peer/transport config is ever read by the BFF or reaches the browser
-  (REQ-F004-028).
+  development — exactly the REQ-F004-045 posture — while the BFF boots and keeps enqueuing regardless.
+  *Test:* `EVENT_BUS_URL="https://a.example, https://b.example"` yields exactly two trimmed peers for
+  fan-out (REQ-F004-051); `EVENT_BUS_TRANSPORT` unset defaults to `http` and selects `HttpPeerTransport`,
+  `EVENT_BUS_TRANSPORT=broker` selects the (future) `BrokerTransport` via the one branch, and either
+  selector value is **ignored when `EVENT_BUS_MODE!=bus`**; `bus`+`http` with an empty `EVENT_BUS_URL`
+  trips the REQ-F004-045 refuse-to-boot (production) / not-ready (dev) posture while the BFF boots and
+  enqueues; no peer/transport config is ever read by the BFF or reaches the browser (REQ-F004-028).
 
 ---
 
@@ -950,10 +997,13 @@ seam — are cited.
   matters, is it **per-key** (e.g. per workspace/user id) or **global**? **DECIDED (2026-07-07):**
   **per-key ordering + effectively-once** — NOT at-least-once/no-order, and NOT exactly-once/global-order.
   An **ordering key** is derived from the event **name** + a named `AdminEventEnvelope.target` field,
-  **total over all six live catalog families** (§3 definition, resolves review BR2/MJ2:
+  **total over all eight live catalog families** (`catalog.ts`, 21 event names; §3 definition, resolves
+  review BR2/MJ2 + rev-7 Fix 1/2:
   `admin.workspace.*`→`ws:<target.id>`, `admin.user.*`→`user:<target.id>`,
   `admin.instance.*`/`admin.raw_env.*`→`instance`, `admin.workspace_user.*`→`ws:<target.workspace>`
-  [ruling BR1/BR2, 2026-07-07], `admin.invite.*`→`invite:<target.id>`, else `__unkeyed__`).
+  [ruling BR1/BR2, 2026-07-07], `admin.invite.*`→`invite:<target.id>`,
+  `admin.baseline_prompt.*`→`baseline` [dedicated singleton, rev-7 Fix 1],
+  `admin.feature_toggle.*`→`__unkeyed__` [intentional per F-005, rev-7 Fix 2], else `__unkeyed__`).
   **`__unkeyed__` rows are INDEPENDENT** — exempt from per-key head-of-line, so none blocks another
   (ruling BR1, 2026-07-07; §3, REQ-F004-041). Guarantee: **in-order delivery WITHIN a key**; **skip-ahead
   ALLOWED ACROSS keys** (and among all `__unkeyed__` rows); **effectively-once**
@@ -1049,7 +1099,9 @@ seam — are cited.
 | Transport seam: transport-agnostic drain + narrow `EventTransport` interface (broker-swap-ready; fake-transport test) | §4.4 REQ-F004-049 |
 | GTM transport = HTTP-to-known-peer; broker a future drop-in adapter (zero-churn boundary) | §4.4 REQ-F004-050 + §9 REQ-F004-030 |
 | Multi-peer fan-out ack; `published_at` keeps its meaning; outbox schema invariant across swap | §4.4 REQ-F004-051 |
-| Peer-endpoint config extends the `EVENT_BUS_MODE`/`EVENT_BUS_URL` convention | §6.6 REQ-F004-052 |
+| Config surface: `EVENT_BUS_URL` comma-delimited peer list + separate `EVENT_BUS_TRANSPORT` {http,broker} selector | §6.6 REQ-F004-052 |
+| Ordering: `admin.baseline_prompt.*` → dedicated `baseline` singleton key; `admin.feature_toggle.*` → intentional `__unkeyed__` | §3 def; §9 REQ-F004-031; §6.6 REQ-F004-029 |
+| Catalog count corrected to 21 event names / 8 families | §1.2 REQ-F004-002; §3 def |
 | Consumer contract broker-swap-invariant (dedupe + reorder-tolerance baked in now) | §5 REQ-F004-053 |
 | Relay is a per-app pattern (each app drains its own outbox; twin out of scope) | §6.4 REQ-F004-054 |
 | Ruling: delivery-transport RESOLVED — HTTP-to-known-peer for GTM, broker future adapter; swap trigger | §9 REQ-F004-030 (rev 7) |
@@ -1091,7 +1143,7 @@ seam — are cited.
 | M6 delivery-id recycles on DB reset | Delivery id qualified by per-DB-lifetime epoch: `<epoch>:<row-id>` | §5 REQ-F004-018/048; §6.6 REQ-F004-029 |
 | M7 `markPublished` not a strict no-op | Test restated to "does not error, stays published" (optional WHERE guard) | §5 REQ-F004-017 |
 | M8 dangling cadence cross-ref | Cadence = implementation-defined (`06-risks.md`) subject to REQ-F004-027 | §4.2 REQ-F004-010 |
-| N1 event count | "~17" → 18 (matches `catalog.ts`) | §1.2 REQ-F004-002 |
+| N1 event count | rev 2: "~17" → 18; **rev 8 correction: 21 names / 8 families** (matches `catalog.ts`) | §1.2 REQ-F004-002 |
 
 Note: rev 2 M4 (single-drainer scoped to one BFF process) and M5 (bounded graceful drain) are **carried
 forward and refined** by the rev 3 REQ-F004-033 ruling — the drainer is now a **separate supervised
@@ -1204,3 +1256,32 @@ exactly-once/global-ordering need; broker-era re-tuning of retention/backfill) a
 REQ-F004-030 without reopening the ratified GTM decisions. New ids REQ-F004-049..054 were **appended**;
 no existing REQ id or § was renumbered or deleted (REQ-F004-022/030 were edited in place with rev-7
 cross-references).
+
+Rev 8 (resolves the rev-7 adversarial-review BLOCK — 4 blocking findings, two human-ruled, 2026-07-19)
+edits existing REQs in place; **no id or § renumbered, none added**:
+- **Fix 1 — baseline ordering (human ruling).** `admin.baseline_prompt.*` (emitted with
+  `target: { baseline: 'singleton' }`, `baseline.service.ts`) previously fell to `__unkeyed__`, leaving the
+  causal pair `updated → applied` unordered. It now gets a **dedicated `baseline` singleton ordering key**
+  — deliberately **distinct** from the `instance` key used by `admin.raw_env.*`, so baseline writes stay
+  mutually ordered without being false-serialized against raw-env config writes. Applied to the §3
+  derivation table, REQ-F004-029's derivation test, and §9 REQ-F004-031.
+- **Fix 2 — catalog count corrected.** The real `bff/src/events/catalog.ts` has **21 event names across 8
+  families** (the six core families + `admin.baseline_prompt.*` + `admin.feature_toggle.*`). Corrected the
+  stale "18 event names / six families" everywhere (REQ-F004-002, §3, REQ-F004-029 test, §9 REQ-F004-031),
+  and added both extra families to the §3 table: `admin.baseline_prompt.*`→`baseline` (Fix 1) and
+  `admin.feature_toggle.*`→`__unkeyed__` (**intentional** per F-005's own `catalog.ts:69-70` note /
+  REQ-F005-052, `target: { featureKey }`, no cross-event ordering requirement).
+- **Fix 3 — stateful fan-out re-drive (human ruling).** REQ-F004-051 now specifies `HttpPeerTransport` is
+  **stateful across orchestration-driven re-drives**: (a) partial failure rejects and leaves the row
+  `published_at IS NULL` so the backoff re-invokes `deliver()` with the same `deliveryId`; (b) the
+  transport keeps an **in-memory per-`deliveryId` ack map** and re-POSTs **only un-acked peers**; (c) the
+  entry is **evicted** when the row is fully acked (published) or parked/dead-lettered, bounding memory.
+- **Fix 4 — config shapes pinned.** REQ-F004-052 now pins **`EVENT_BUS_URL` as a comma-delimited list**
+  (comma delimiter, whitespace trimmed, empty entries dropped — mirroring `WEB_ORIGINS`) giving the N-peer
+  fan-out a deterministic source, and adds a **separate** selector **`EVENT_BUS_TRANSPORT` ∈ {http,broker},
+  default `http`, evaluated only when `EVENT_BUS_MODE=bus`** — the single config branch the future
+  `BrokerTransport` swaps behind (REQ-F004-049/050), on an axis **orthogonal** to `EVENT_BUS_MODE`
+  (transport ≠ mode). REQ-F004-049/050 cross-references updated to name the selector.
+The catalog-count assertion (REQ-F004-002: 21 names / 8 families) and the baseline-ordering assertion
+(REQ-F004-029/031: `admin.baseline_prompt.*`→`baseline`) now match the grounded `catalog.ts` and
+`baseline.service.ts`, so both tests pass against the real catalog.
