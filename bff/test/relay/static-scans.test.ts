@@ -76,6 +76,47 @@ describe('REQ-F004-049 — no transport-specific logic leaks into the drain/orch
   });
 });
 
+describe('REQ-F004-055/049 — the HTTP status -> permanent/transient classification table lives ONLY in HttpPeerTransport, never in the drainer/orchestration layer', () => {
+  const drainerPath = join(bffSrc, 'relay', 'drainer.ts');
+  const transportPath = join(bffSrc, 'relay', 'transport.ts');
+  // A curated set of tokens from the REQ-F004-055 table least likely to appear coincidentally
+  // for an unrelated reason (batch sizes, ports, etc.) — the two named special-cased transient
+  // codes, a representative permanent 4xx set, and the range-check idioms a status-bucketing
+  // implementation would plausibly use.
+  const CLASSIFICATION_TOKENS = [
+    /\b408\b/,
+    /\b429\b/,
+    /\b403\b/,
+    /\b404\b/,
+    /\b422\b/,
+    /statusCode\s*>=\s*500/,
+    /statusCode\s*>=\s*400/,
+    /Math\.floor\(\s*status(Code)?\s*\/\s*100\s*\)/,
+  ];
+
+  it.skipIf(!existsSync(drainerPath))('drainer.ts contains none of the REQ-F004-055 HTTP-status classification tokens', () => {
+    const text = readFileSync(drainerPath, 'utf8');
+    const hits = CLASSIFICATION_TOKENS.filter((re) => re.test(text)).map((re) => re.toString());
+    expect(hits, `drainer.ts must not encode HTTP status/classification logic (owned by HttpPeerTransport, REQ-F004-049/055): ${hits.join(', ')}`).toEqual([]);
+  });
+
+  it.skipIf(!existsSync(transportPath))('transport.ts (the seam/factory) contains none of the REQ-F004-055 HTTP-status classification tokens either (that logic is HttpPeerTransport-internal, not seam-level)', () => {
+    const text = readFileSync(transportPath, 'utf8');
+    const hits = CLASSIFICATION_TOKENS.filter((re) => re.test(text)).map((re) => re.toString());
+    expect(hits, `transport.ts must not encode HTTP-specific classification logic: ${hits.join(', ')}`).toEqual([]);
+  });
+
+  it('flags pre-implementation state explicitly (RED signal until drainer.ts/http-peer-transport.ts exist)', () => {
+    const httpTransportPath = join(bffSrc, 'relay', 'http-peer-transport.ts');
+    if (!existsSync(drainerPath) || !existsSync(httpTransportPath)) {
+      expect.fail(
+        'bff/src/relay/drainer.ts and/or bff/src/relay/http-peer-transport.ts do not exist yet — ' +
+          'the REQ-F004-055 seam-isolation check above cannot fully run. Expected pre-implementation RED signal.',
+      );
+    }
+  });
+});
+
 describe('REQ-F004-022 — mutating routes/services are untouched by the transport axis', () => {
   it('no file under bff/src/routes or bff/src/services imports anything from bff/src/relay/**', () => {
     const files = [...walk(join(bffSrc, 'routes')), ...walk(join(bffSrc, 'services'))];

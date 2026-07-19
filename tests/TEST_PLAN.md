@@ -927,10 +927,16 @@ function names / component paths (see those sections' "Design notes / how ambigu
 - `bff/test/relay/backoff.test.ts` — 5 tests. Capped-exponential shape, `MAX_ATTEMPTS` constant.
 - `bff/test/relay/transport.test.ts` — 7 tests. `TransportError` shape, `EVENT_BUS_TRANSPORT`
   factory (`http` default; `broker`/out-of-set hard-refuse in ALL environments).
-- `bff/test/relay/http-peer-transport.test.ts` — 10 tests. Fan-out ack (resolve-only-on-full-2xx),
+- `bff/test/relay/http-peer-transport.test.ts` — 29 tests. Fan-out ack (resolve-only-on-full-2xx),
   byte-for-byte envelope, delivery-id header carriage, stateful per-`deliveryId` re-drive
-  (re-POST only un-acked peers), eviction via `release()`, transient classification (5xx /
-  unreachable).
+  (re-POST only un-acked peers), eviction via `release()`. **Phase-2 addendum (REQ-F004-055, rev
+  11, §4.4 — RULED):** the full single-peer HTTP-status/network-failure -> permanent/transient
+  classification table (ack 2xx incl. 200/204; transient 500/502/503/408/429 + connection-refused
+  + DNS failure + socket reset; permanent 400/401/403/404/422 + 301/302) and the REQ-F004-051
+  fan-out composition rule (a permanent response from any not-yet-acked peer makes the WHOLE
+  `deliver()` reject permanent even against an already-acked or transient-failing peer; with no
+  permanent peer, a transient peer makes `deliver()` reject transient and re-drive re-POSTs only
+  the still-un-acked peer).
 - `bff/test/relay/drainer.test.ts` — 20 tests. THE priority file: basic delivery, crash/restart
   backfill (never-zero, same-delivery-id redelivery), first-connection backfill (all rows, no
   horizon), per-key ordering (skip-across / block-within), poison isolation (never-acked park vs
@@ -948,10 +954,13 @@ function names / component paths (see those sections' "Design notes / how ambigu
   hard-refuse postures.
 - `bff/test/config.f004.test.ts` — 6 tests. BFF-side `EVENT_BUS_MODE` production hard-refuse
   (REQ-F004-021/039/046), isolated from the pre-existing `config.test.ts` (not edited).
-- `bff/test/relay/static-scans.test.ts` — 9 tests. No `web/` change, `listUnpublished` has no
+- `bff/test/relay/static-scans.test.ts` — 12 tests. No `web/` change, `listUnpublished` has no
   non-repo caller, no transport-specific logic leaks into the orchestration layer, mutating
   routes/services untouched, `EVENT_BUS_URL` never reaches a route response, relay never
-  references a second application's database.
+  references a second application's database. **Phase-2 addendum (REQ-F004-055/049):** neither
+  `drainer.ts` nor `transport.ts` (the seam/factory) contains any of the REQ-F004-055 HTTP-status
+  classification tokens (408/429/403/404/422, `>= 500`/`>= 400` range-check idioms, a
+  `status/100`-bucketing idiom) — that table is HttpPeerTransport-internal only.
 - `bff/test/relay/consumer-contract.test.ts` — 4 tests. Self-contained reference `Consumer` +
   two transport doubles proving dedupe + cross-key-reorder-tolerance is broker-swap-invariant —
   runs GREEN today (validates the contract itself, independent of the not-yet-built relay).
@@ -959,8 +968,56 @@ function names / component paths (see those sections' "Design notes / how ambigu
   parallel-dispatch-in-one-tick, explicitly NOT a rigorous load test (same convention as
   `bff/test/routes/{baseline-prompt,feature-toggles}.performance.test.ts`).
 
-**Total: 16 files (1 shared helper + 15 test files), 163 test cases** as actually collected by
-`vitest run` (see "Suite status" below for the exact pass/fail/skip breakdown).
+**Total: 16 files (1 shared helper + 15 test files), 185 test cases** as actually collected by
+`vitest run` (163 from the original pass + 22 from the REQ-F004-055 Phase-2 addendum below; see
+"Suite status" for the exact pass/fail/skip breakdown).
+
+## Phase-2 addendum (REQ-F004-055, rev 11 — HTTP status -> permanent/transient classification, RULED)
+
+The spec's rev 11 (`specs/F-004-production-event-bus.md` §4.4) resolved the one genuine
+`SPEC-AMBIGUITY` this suite originally flagged (HttpPeerTransport's concrete HTTP-status ->
+classification mapping) as a new binding requirement, **REQ-F004-055**:
+
+- **Ack:** 2xx.
+- **Transient** (retry w/ backoff to the max-attempt bound, then park — REQ-F004-013/014):
+  connection-refused / timeout / DNS failure / socket reset (network-level); ALL 5xx; 408; 429.
+- **Permanent** (immediate park, no backoff — REQ-F004-047/051(d)): all other 4xx; any 3xx; any
+  other unexpected non-2xx.
+- **Fan-out composition** (REQ-F004-051): a permanent response from any not-yet-acked peer ->
+  the whole `deliver()` rejects permanent (immediate park), even against an already-acked or
+  transient-failing peer; with no permanent peer, a not-yet-acked transient peer -> `deliver()`
+  rejects transient (re-drive re-POSTs only the still-un-acked peers).
+
+**Tests added** (both to already-existing files, matching the established structure — no new
+files needed):
+
+- `bff/test/relay/http-peer-transport.test.ts` — **+19 test cases**: a single-peer classification
+  table (`it.each` over 200/204 ack; 500/502/503/408/429 transient + connection-refused + DNS
+  failure + a fast, deterministic socket-reset double (`startResetPeer()`, destroys the TCP
+  socket on connect rather than waiting out a real response timeout) + 400/401/403/404/422/301/302
+  permanent) and 4 fan-out composition tests (permanent-wins regardless of peer order, permanent
+  wins even over an already-acked peer, transient-only re-drives only the un-acked peer).
+- `bff/test/relay/static-scans.test.ts` — **+3 test cases**: a new `describe` block asserting
+  neither `drainer.ts` nor `transport.ts` contains any REQ-F004-055 HTTP-status classification
+  token (the table is HttpPeerTransport-internal, kept out of the seam per REQ-F004-049), plus the
+  explicit pre-implementation RED-signal test.
+
+**Testing-practicality note (not a spec gap):** an actual network-level *timeout* (as opposed to
+connection-refused/DNS-failure/socket-reset, all three of which fail fast and deterministically)
+is not independently exercised with a real elapsed-timeout wait, because HttpPeerTransport's
+concrete per-request timeout value is not spec-pinned and waiting out an unknown real timeout
+would make the suite slow/flaky. The other three network-level transient cases the REQ-F004-055
+table names are each covered by a fast, deterministic double instead — the same testing-practicality
+tradeoff already documented for REQ-F004-020's `busy_timeout`/`SQLITE_BUSY` scenario above.
+
+Suite re-run after this addendum: `Test Files 13 failed | 46 passed | 1 skipped (60)` — identical
+file-level counts to before (no regression, no new failing file — both touched files were already
+counted as "failed" for their pre-existing module-resolution RED signal). `Tests 36 failed | 953
+passed | 134 skipped (1123)` (was `35 failed | 953 passed | 113 skipped (1101)`): +22 new test
+cases total, of which +1 is a new genuine failing assertion (the new explicit
+pre-implementation-state flag added to `static-scans.test.ts`) and +21 cleanly self-skip via
+`describe.skipIf`/`it.skipIf` until `HttpPeerTransport`/`drainer.ts`/`transport.ts` exist. `tsc
+--noEmit -p bff` still exits 0.
 
 ## Suite status as of this run
 
@@ -1048,7 +1105,7 @@ open-questions sections (no independent test, would just re-test the REQ it reso
 | REQ-F004-040 | Production-readiness gate framing (informational ruling) | not independently tested — informational, no code behavior hinges on it |
 | REQ-F004-041 | Eligibility query (drain-selection contract) | `outbox.repo.f004.test.ts` selectEligible (the spec's own two seeded scenarios verbatim) |
 | REQ-F004-042 | Head-of-line: skip across / block within | `outbox.repo.f004.test.ts` head-of-line tests; `drainer.test.ts` per-key-ordering block |
-| REQ-F004-043 | Conforming-transport contract (ack/id-carriage/perm-transient) | `transport.test.ts`; `http-peer-transport.test.ts` (id-carriage + transient cases; permanent-HTTP-status mapping flagged SPEC-AMBIGUITY, see below) |
+| REQ-F004-043 | Conforming-transport contract (ack/id-carriage/perm-transient) | `transport.test.ts`; `http-peer-transport.test.ts` (id-carriage + full REQ-F004-055 classification table) |
 | REQ-F004-044 | Separate `/ready` on the relay | `ready.test.ts` |
 | REQ-F004-045 | `bus`+no-URL relay hard-refuse | `relay-config.test.ts` bus-mode-without-URL block |
 | REQ-F004-046 | `EVENT_BUS_MODE` closed-set validation | `config.f004.test.ts` |
@@ -1056,16 +1113,18 @@ open-questions sections (no independent test, would just re-test the REQ it reso
 | REQ-F004-048 | Delivery-id epoch | `delivery-id.test.ts`; `outbox.repo.f004.test.ts` getEpoch |
 | REQ-F004-049 | Two-layer transport seam; fake-transport swap proof; no-leak | `drainer.test.ts` (built entirely against `FakeTransport`); `static-scans.test.ts` no-leak block; `transport.test.ts` |
 | REQ-F004-050 | HTTP-to-known-peer for GTM; broker future drop-in | `transport.test.ts`; `http-peer-transport.test.ts` |
-| REQ-F004-051 | Multi-peer fan-out ack, stateful re-drive, eviction, permanent-immediate-park, partial-park distinct signal | `http-peer-transport.test.ts` fan-out block (a-c uncontroversial); `drainer.test.ts` permanent-immediate-park test (d, transport-agnostic); `metrics.test.ts` park-split counters (e, SPEC-AMBIGUITY on the transport->drainer signal, see below) |
+| REQ-F004-051 | Multi-peer fan-out ack, stateful re-drive, eviction, permanent-immediate-park, partial-park distinct signal | `http-peer-transport.test.ts` fan-out block (a-c) + REQ-F004-055 fan-out-composition block (d, concrete HTTP-status-driven); `drainer.test.ts` permanent-immediate-park test (d, transport-agnostic); `metrics.test.ts` park-split counters (e, SPEC-AMBIGUITY on the transport->drainer signal shape remains open, see below) |
 | REQ-F004-052 | `EVENT_BUS_URL` comma-list + `EVENT_BUS_TRANSPORT` selector, broker all-env refuse | `relay-config.test.ts`; `transport.test.ts` broker-refuse block |
 | REQ-F004-053 | Broker-swap-invariant consumer contract (dedupe + reorder tolerance) | `consumer-contract.test.ts` |
 | REQ-F004-054 | Per-app relay pattern | `static-scans.test.ts` REQ-F004-054 block |
+| REQ-F004-055 | HTTP status/network-failure -> permanent/transient classification (RULED, rev 11, §4.4); fan-out composition | `http-peer-transport.test.ts` REQ-F004-055 single-peer classification-table block (`it.each` over ack/transient/permanent) + fan-out-composition block; `static-scans.test.ts` REQ-F004-055/049 seam-isolation block (classification tokens live only in HttpPeerTransport) |
 
-**Coverage: 54/54 REQ-F004-### ids mapped** (14 "traced"/informational — REQ-F004-004/005/007/008
-plus the ten §9 ruling-record items REQ-F004-030..040 whose behavior is realized entirely by the
-operative REQ(s) they decided or, for REQ-F004-040, is purely informational — matching the
-F-002/F-005 `TEST_PLAN.md` precedent for open-questions sections; the remaining 40 REQ ids each
-have at least one independent, executable test). No REQ id was left unmapped.
+**Coverage: 55/55 REQ-F004-### ids mapped** (rev 11 appended REQ-F004-055; 14 "traced"/
+informational — REQ-F004-004/005/007/008 plus the ten §9 ruling-record items REQ-F004-030..040
+whose behavior is realized entirely by the operative REQ(s) they decided or, for REQ-F004-040, is
+purely informational — matching the F-002/F-005 `TEST_PLAN.md` precedent for open-questions
+sections; the remaining 41 REQ ids, including the new REQ-F004-055, each have at least one
+independent, executable test). No REQ id was left unmapped.
 
 ## Design notes / how ambiguity was handled
 
@@ -1094,24 +1153,20 @@ have at least one independent, executable test). No REQ id was left unmapped.
 
 ## SPEC-AMBIGUITY findings requiring human ruling
 
-1. **HttpPeerTransport's concrete HTTP-status-code -> permanent/transient classification mapping
-   is genuinely unpinned.** The spec precisely defines the conforming-transport CONTRACT
-   (REQ-F004-043(c): the transport MUST be able to signal permanent vs. transient) and the
-   ORCHESTRATION-level consequence (REQ-F004-047/014/051(d): permanent -> immediate park), but
-   never states which concrete HTTP status codes `HttpPeerTransport` itself must treat as
-   "permanent" (design §1.1 explicitly calls "status-code mapping" transport-internal,
-   deliberately kept out of the orchestration layer — but that same design doc never pins it for
-   the transport either). `http-peer-transport.test.ts` therefore tests only the UNCONTROVERSIAL
-   transient cases directly cited by REQ-F004-047's own prose ("errors, timeouts ... an
-   unreachable transport ... treated as transient") — a 5xx response and a refused connection —
-   and deliberately does NOT assert a specific 4xx status is classified "permanent" at the HTTP
-   transport layer, to avoid encoding an invented convention as if it were spec-derived. The
-   REQ-F004-051(d) orchestration-level "permanent rejection parks immediately" behavior IS fully
-   tested, transport-agnostically, against `FakeTransport` in `drainer.test.ts` (which can inject
-   an exact `permanent` classification deterministically), so the *orchestration* behavior this
-   protects is not left unverified — only the *HTTP-status-to-classification* mapping specifically
-   is open. **Needs a human/architect ruling**: e.g., "4xx (except 429) = permanent; 5xx/network
-   error = transient" or an explicit response header/body convention.
+**Status update (Phase-2 addendum): item 1 below (the HTTP-status -> permanent/transient mapping)
+was the one genuine ambiguity this suite originally flagged. It has since been RULED and pinned as
+REQ-F004-055 (spec rev 11, §4.4) and is now fully tested** — see "Phase-2 addendum" above and the
+`http-peer-transport.test.ts`/`static-scans.test.ts` blocks it added. Retained here, struck
+through, for the historical record rather than silently deleted (the QA workflow instruction is to
+list ambiguities found, not to erase the record once a human rules on one).
+
+~~1. HttpPeerTransport's concrete HTTP-status-code -> permanent/transient classification mapping
+   was genuinely unpinned.~~ **RESOLVED by REQ-F004-055 (rev 11) — see the Phase-2 addendum
+   above.** (Original finding: the spec precisely defined the conforming-transport CONTRACT,
+   REQ-F004-043(c), and the ORCHESTRATION-level consequence, REQ-F004-047/014/051(d), but never
+   stated which concrete HTTP status codes `HttpPeerTransport` itself must treat as "permanent."
+   REQ-F004-055 now pins the exact table; `http-peer-transport.test.ts` exercises it in full.)
+
 2. **How the drain/orchestration layer learns "this park was partial" vs. "this park was
    never-delivered" from `HttpPeerTransport`, for the REQ-F004-025/051(e) split park counters, is
    not pinned.** REQ-F004-051(e) itself states a partially-delivered park STILL has row-level
