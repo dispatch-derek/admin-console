@@ -4,6 +4,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 
 // Ensure the parent directory exists before opening the DB file.
@@ -12,6 +13,83 @@ mkdirSync(dirname(config.dbPath), { recursive: true });
 export const db: Database.Database = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+// F-004 (REQ-F004-020): two writers now share this file — the BFF and the separate outbox
+// relay process. busy_timeout makes a writer BLOCK briefly on a held write lock instead of
+// erroring SQLITE_BUSY immediately; a transient contention retries under the wait rather than
+// failing. 5000ms is the design's transient-contention window (design §3.1 / §5).
+// NOTE FOR IMPLEMENTER: the RELAY opens its OWN connection to this DB file (bff/src/relay/*);
+// it MUST set this same `busy_timeout` pragma on that connection — this line only covers the
+// BFF's handle. The pragma is per-connection, not stored in the file.
+db.pragma('busy_timeout = 5000');
+
+// ── F-004 one-time ordering_key backfill (REQ-F004-029/015) ─────────────────────────────────
+// The ordering key derives from PARSING each stored envelope JSON (event name + a named target
+// field), so it cannot be computed in pure SQL. The block below is a FAITHFUL ONE-TIME COPY of
+// the implementer-owned derivation specified for `bff/src/events/ordering-key.ts` (design §3.3 /
+// spec §3) — inlined here ONLY for the migration backfill, because this (migration) agent owns
+// schema evolution, not application modules, and that module does not exist yet.
+//
+// IMPLEMENTER: when you add `deriveOrderingKey(envelope)`, its result MUST match this table
+// byte-for-byte. The enqueue path (OutboxRelayBus.publish) and THIS backfill have to produce
+// identical keys, or the relay's per-key ordering silently diverges between pre-F-004 rows
+// (keyed here) and post-F-004 rows (keyed by your module). Prefer having the module be the single
+// source of truth and re-deriving this table from it if you touch either.
+const UNKEYED = '__unkeyed__';
+
+// Prefixes are matched on the FULL dotted segment INCLUDING the trailing '.' (spec §3 N6):
+// 'admin.workspace_user.' must NOT be misparsed as 'admin.workspace.' — with the trailing dot the
+// two prefixes are disjoint (after 'admin.workspace' the membership name has '_', not '.').
+function deriveOrderingKeyForBackfill(envelopeJson: string): string {
+  let env: unknown;
+  try {
+    env = JSON.parse(envelopeJson);
+  } catch {
+    return UNKEYED; // unparseable envelope → never abort, never NULL (REQ-F004-029 N4)
+  }
+  const name = (env as { event?: unknown } | null)?.event;
+  if (typeof name !== 'string') return UNKEYED; // no usable event name → total fallback
+  const target = ((env as { target?: unknown }).target ?? {}) as Record<string, unknown>;
+
+  // A target field usable as a key component: a non-empty string or a number. Absent / empty /
+  // array / object → null, which triggers the '__unkeyed__' totality fallback (never 'ws:undefined').
+  const field = (k: string): string | null => {
+    const v = target[k];
+    if (typeof v === 'number') return String(v);
+    if (typeof v === 'string' && v.length > 0) return v;
+    return null;
+  };
+
+  if (name.startsWith('admin.workspace_user.')) { const w = field('workspace'); return w ? `ws:${w}` : UNKEYED; }
+  if (name.startsWith('admin.workspace.'))       { const id = field('id'); return id ? `ws:${id}` : UNKEYED; }
+  if (name.startsWith('admin.user.'))            { const id = field('id'); return id ? `user:${id}` : UNKEYED; }
+  if (name.startsWith('admin.instance.'))        return 'instance';
+  if (name.startsWith('admin.raw_env.'))         return 'instance';           // instance-scoped config
+  if (name.startsWith('admin.invite.'))          { const id = field('id'); return id ? `invite:${id}` : UNKEYED; }
+  if (name.startsWith('admin.baseline_prompt.')) return 'baseline';           // dedicated singleton (rev-7 Fix 1)
+  if (name.startsWith('admin.feature_toggle.'))  return UNKEYED;              // intentional (F-005 REQ-F005-052)
+  return UNKEYED;                                                             // no rule → __unkeyed__
+}
+
+// Backfill in BATCHES so a large pre-F-004 backlog (≥10k rows, REQ-F004-027) is not rewritten
+// under one long-held write lock — important under two-writer BFF+relay contention
+// (REQ-F004-020). Guarded on `ordering_key IS NULL`, so it is restart-safe (re-runnable after a
+// partial failure), idempotent, and a no-op once complete.
+function backfillOrderingKeys(): void {
+  const selectBatch = db.prepare(
+    `SELECT id, envelope FROM event_outbox WHERE ordering_key IS NULL ORDER BY id LIMIT 500`,
+  );
+  const update = db.prepare(
+    `UPDATE event_outbox SET ordering_key = ? WHERE id = ? AND ordering_key IS NULL`,
+  );
+  const applyBatch = db.transaction((rows: Array<{ id: number; envelope: string }>) => {
+    for (const r of rows) update.run(deriveOrderingKeyForBackfill(r.envelope), r.id);
+  });
+  for (;;) {
+    const rows = selectBatch.all() as Array<{ id: number; envelope: string }>;
+    if (rows.length === 0) break;
+    applyBatch(rows);
+  }
+}
 
 // Idempotent schema: every statement uses IF NOT EXISTS so migrate() is safe to
 // re-run on every boot. Columns/types mirror 03-data-models.md exactly.
@@ -79,7 +157,27 @@ export function migrate(): void {
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       ts           TEXT NOT NULL,
       envelope     TEXT NOT NULL,
-      published_at TEXT
+      published_at TEXT,
+      -- F-004 delivery bookkeeping (REQ-F004-029/038). Declared here so a FRESH DB reaches the
+      -- final shape via CREATE, AND repeated in the PRAGMA-guarded additive list below so a
+      -- PRE-F-004 DB reaches the same shape via ALTER — mirroring the staff.failed_attempts
+      -- pattern. This is DELIVERY state only: the transactional INSERT path (REQ-F004-005) and
+      -- the frozen event contract (REQ-F004-004) are unchanged; new rows populate these at INSERT.
+      ordering_key    TEXT,                       -- per-key partition (REQ-F004-031); backfilled non-null; a NULL is read as '__unkeyed__'
+      attempt_count   INTEGER NOT NULL DEFAULT 0, -- delivery + persistent post-ack-mark failures; NOT reset on ack (REQ-F004-011/013)
+      next_attempt_at TEXT,                       -- NULL ⇒ immediately eligible; else ISO time it becomes eligible again (REQ-F004-013/041)
+      last_error      TEXT,                       -- last delivery/mark error; NO secret values (REQ-F004-013/028)
+      parked_at       TEXT,                       -- non-null ⇒ isolated, never-fully-acked poison; excluded from eligibility (REQ-F004-014)
+      acked_at        TEXT                        -- non-null ⇒ transport fully acked ≥ once; routes the post-ack cap (REQ-F004-011)
+    );
+
+    -- F-004 delivery-id epoch (REQ-F004-048). Singleton (CHECK id=1) holding a UUID generated
+    -- ONCE per event_outbox provisioning, constant for the DB lifetime, so the transport delivery
+    -- id "<epoch>:<row-id>" (REQ-F004-018) stays globally unique across a DB rebuild that recycles
+    -- SQLite rowids. Seeded idempotently via INSERT OR IGNORE after this block.
+    CREATE TABLE IF NOT EXISTS outbox_meta (
+      id    INTEGER PRIMARY KEY CHECK (id = 1),
+      epoch TEXT NOT NULL
     );
 
     -- F-002 customer-wide baseline system prompt (spec §4, REQ-F002-010/010a/010c/010d).
@@ -159,6 +257,16 @@ export function migrate(): void {
     // later: F-003 adds its own read/write/validate on the same column with no further
     // migration to this column's default behavior. DO NOT change this to `TEXT DEFAULT ...`.
     ['workspace_baseline_state', 'composition_mode', 'TEXT'],
+    // F-004 delivery-bookkeeping columns for DBs created before F-004 (REQ-F004-029/038).
+    // ordering_key is added NULLABLE here and then backfilled non-null below (it cannot carry a
+    // SQL default — the value is derived per-row from the stored envelope). Adding
+    // `attempt_count INTEGER NOT NULL DEFAULT 0` via ALTER back-fills every existing row with 0.
+    ['event_outbox', 'ordering_key', 'TEXT'],
+    ['event_outbox', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['event_outbox', 'next_attempt_at', 'TEXT'],
+    ['event_outbox', 'last_error', 'TEXT'],
+    ['event_outbox', 'parked_at', 'TEXT'],
+    ['event_outbox', 'acked_at', 'TEXT'],
   ];
   for (const [table, column, definition] of additive) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -166,6 +274,27 @@ export function migrate(): void {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
   }
+
+  // F-004: eligibility partial index over the LIVE working set (REQ-F004-029/041). Partial
+  // (published_at IS NULL AND parked_at IS NULL) so it indexes only undelivered, non-parked
+  // rows — keeping the relay's per-key "oldest undelivered row" selection cheap even against a
+  // ≥10k backfill (REQ-F004-027). Created after the additive loop so ordering_key/parked_at exist.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_outbox_eligible
+      ON event_outbox (ordering_key, id)
+      WHERE published_at IS NULL AND parked_at IS NULL;
+  `);
+
+  // F-004: seed the delivery-id epoch exactly once (REQ-F004-048). INSERT OR IGNORE is idempotent
+  // — generated on the FIRST migrate() that runs this, then never changed (the CHECK(id=1) row is
+  // the single source of truth for the DB's lifetime).
+  db.prepare(`INSERT OR IGNORE INTO outbox_meta (id, epoch) VALUES (1, ?)`).run(randomUUID());
+
+  // F-004: backfill ordering_key for every pre-existing row (REQ-F004-029/015 — the pre-F-004
+  // unpublished backlog the first-connection replay must drain in per-key order). Runs AFTER the
+  // additive ALTER added the column. Batched + guarded so it is restart-safe and idempotent, and
+  // never leaves a NULL / never aborts on a malformed envelope. See backfillOrderingKeys().
+  backfillOrderingKeys();
 
   // Append-only runtime guard for audit_log (REQ-093a): triggers raise on any
   // UPDATE/DELETE so no code path — accidental or otherwise — can mutate history.
@@ -220,6 +349,65 @@ export function rollbackF005(): void {
   db.exec(`
     DROP TABLE IF EXISTS feature_toggle_state;
   `);
+}
+
+// Down-migration (rollback) for the F-004 event-bus delivery-bookkeeping schema
+// (REQ-F004-029/038/048). Same convention as rollbackF002/F005: this codebase has no external
+// migration runner, so the DOWN direction is a documented, idempotent function that removes
+// EXACTLY what the F-004 block of migrate() adds. Tested up→down→up.
+//
+// Reverses via a TABLE REBUILD (not ALTER … DROP COLUMN) — deliberately:
+//   1. DROP the eligibility partial index.
+//   2. REBUILD event_outbox back to its original 4-column shape (id/ts/envelope/published_at),
+//      copying every row and its EXPLICIT id. A rebuild is used instead of `ALTER TABLE … DROP
+//      COLUMN` because DROP COLUMN rewrites the table's stored CREATE text; across repeated
+//      up→down→up cycles (ADD COLUMN re-appends to the rewritten text, DROP COLUMN rewrites it
+//      again) that accumulated text can become unparseable and SQLite raises "incomplete input".
+//      The rebuild is deterministic and comment-immune. Ids are copied verbatim and AUTOINCREMENT
+//      is preserved, so sqlite_sequence keeps the high-water mark — a later INSERT never reuses a
+//      recycled id, keeping the delivery id "<epoch>:<row-id>" (REQ-F004-018) stable across a
+//      round trip. event_outbox rows (the actual events) are fully PRESERVED — no emitted event
+//      is lost.
+//   3. DROP the outbox_meta epoch table.
+//
+// DATA-LOSS NOTE — IRREVERSIBLE bookkeeping/epoch loss; HUMAN-GATED on a live DB. On a store where
+// the relay has run this destroys delivery state that cannot be reconstructed:
+//   • parked_at / attempt_count / last_error — WHICH rows are poisoned and their retry history.
+//     After rollback the relay can no longer distinguish a poison row from a fresh one.
+//   • outbox_meta.epoch — dropping it and then re-running migrate() (up) generates a NEW epoch, so
+//     every delivery id "<epoch>:<row-id>" CHANGES. Consumers dedupe on the delivery id
+//     (REQ-F004-018), so already-processed rows can be RE-DELIVERED under new ids and processed
+//     twice. If the epoch must be preserved across a temporary rollback, back it up first (see the
+//     runbook) and re-seed the SAME value instead of letting up generate a fresh one.
+//   • ordering_key is the ONE column that survives a round trip losslessly — the next up re-derives
+//     it from each envelope, so no ordering information is permanently lost by dropping it.
+// On a GREENFIELD DB (relay not yet deployed: all attempt_count=0, no parked rows, epoch unused)
+// this destroys nothing operational. On a LIVE DB: back up the SQLite file first and gate on
+// explicit human confirmation (migrations/NOTES-F004.md). Envelopes/published_at are NEVER touched,
+// so this rollback NEVER loses an emitted event — only delivery bookkeeping.
+export function rollbackF004(): void {
+  const run = db.transaction(() => {
+    // 1. Index first.
+    db.exec(`DROP INDEX IF EXISTS idx_outbox_eligible;`);
+    // 2. Rebuild event_outbox to its original 4-column shape, preserving rows + ids. Idempotent:
+    //    if the F-004 columns are already gone this simply recreates an identical 4-column table.
+    db.exec(`
+      DROP TABLE IF EXISTS event_outbox__f004_rollback;
+      CREATE TABLE event_outbox__f004_rollback (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts           TEXT NOT NULL,
+        envelope     TEXT NOT NULL,
+        published_at TEXT
+      );
+      INSERT INTO event_outbox__f004_rollback (id, ts, envelope, published_at)
+        SELECT id, ts, envelope, published_at FROM event_outbox;
+      DROP TABLE event_outbox;
+      ALTER TABLE event_outbox__f004_rollback RENAME TO event_outbox;
+    `);
+    // 3. Drop the epoch singleton table.
+    db.exec(`DROP TABLE IF EXISTS outbox_meta;`);
+  });
+  run();
 }
 
 // Run migrations at module load so the schema exists BEFORE any repository module
