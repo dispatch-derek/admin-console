@@ -36,9 +36,16 @@ export class TransportError extends Error {
 // Factory selected by the EVENT_BUS_TRANSPORT axis (REQ-F004-052), mirroring how getEventBus
 // switches on EVENT_BUS_MODE. `http` → HttpPeerTransport (the single GTM implementation). `broker`
 // → hard-refuse (no BrokerTransport exists in this build); any other value refuses likewise.
-export function createTransport(opts: { kind: string | undefined; peerUrls: string[] }): EventTransport {
+export function createTransport(opts: {
+  kind: string | undefined;
+  peerUrls: string[];
+  // Per-peer request timeout, threaded from the relay-scoped config (EVENT_BUS_PEER_TIMEOUT_MS).
+  // Optional here so callers/tests may omit it and take the transport's built-in default; the value
+  // is passed straight through as a wire concern the transport owns (REQ-F004-049 seam).
+  peerTimeoutMs?: number;
+}): EventTransport {
   const kind = opts.kind ?? 'http';
-  if (kind === 'http') return new HttpPeerTransport(opts.peerUrls);
+  if (kind === 'http') return new HttpPeerTransport(opts.peerUrls, opts.peerTimeoutMs);
   if (kind === 'broker') {
     throw new Error('broker transport not available in this build (EVENT_BUS_TRANSPORT=broker)');
   }

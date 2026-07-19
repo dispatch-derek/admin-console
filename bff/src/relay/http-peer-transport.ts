@@ -9,13 +9,15 @@ import { TransportError, type EventTransport } from './transport.js';
 // distinct from the frozen envelope body (REQ-F004-004).
 const DELIVERY_ID_HEADER = 'x-event-delivery-id';
 
-// Per-peer request timeout — a documented constant of record alongside the backoff constants
-// (backoff.ts BASE_MS/FACTOR/CAP_MS). Bounds a peer that accepts the socket but never responds so
+// Default per-peer request timeout — a provisional constant of record, operator-tunable via
+// EVENT_BUS_PEER_TIMEOUT_MS (threaded in through the relay-scoped config → createTransport → this
+// constructor; the value stays a WIRE concern inside the transport, never seen by the drainer, to
+// preserve the REQ-F004-049 seam). Bounds a peer that accepts the socket but never responds so
 // deliver() cannot hang indefinitely and wedge an ordering key with no backoff/retry/metric. On
 // timeout the fetch aborts and is classified TRANSIENT (REQ-F004-055 "connection timeout" /
 // network-level), so the row retries with backoff and eventually parks at the cap like any other
 // transient failure — never a silent, unbounded stall.
-const PEER_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_PEER_REQUEST_TIMEOUT_MS = 10_000;
 
 type PeerOutcome = 'ack' | 'transient' | 'permanent';
 
@@ -37,7 +39,10 @@ export class HttpPeerTransport implements EventTransport {
   // terminal outcome via release() (REQ-F004-051(c)) — bounded memory.
   private readonly ackMap = new Map<string, Set<string>>();
 
-  constructor(private readonly peerUrls: string[]) {}
+  constructor(
+    private readonly peerUrls: string[],
+    private readonly peerTimeoutMs: number = DEFAULT_PEER_REQUEST_TIMEOUT_MS,
+  ) {}
 
   async deliver(envelope: string, deliveryId: string): Promise<void> {
     let acked = this.ackMap.get(deliveryId);
@@ -58,7 +63,7 @@ export class HttpPeerTransport implements EventTransport {
             body: envelope,
             // Bound a peer that never responds (REQ-F004-055 connection-timeout / network-level
             // transient); the abort surfaces in the catch below and is classified transient.
-            signal: AbortSignal.timeout(PEER_REQUEST_TIMEOUT_MS),
+            signal: AbortSignal.timeout(this.peerTimeoutMs),
           });
           return { url, outcome: classifyStatus(res.status) };
         } catch {

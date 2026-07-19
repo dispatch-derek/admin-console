@@ -18,16 +18,20 @@ import { outboxRepo } from '../store/repositories/outbox.repo.js';
 const POLL_INTERVAL_MS = 1_000;
 const SHUTDOWN_DRAIN_MS = 10_000;
 const READY_PORT = Number.parseInt(process.env['RELAY_READY_PORT'] ?? '3003', 10);
-// Outbox retention (REQ-F004-019/035): published rows older than this window are pruned so the
-// outbox does not grow without bound; unpublished and parked rows are NEVER pruned regardless of
-// age. The spec leaves the concrete window to the implementer ("e.g. N days") as a documented
-// constant of record — 7 days here. The prune runs periodically, once every PRUNE_EVERY_CYCLES
-// poll ticks (~hourly at a 1s cadence), rather than every tick.
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const PRUNE_EVERY_CYCLES = 3_600;
+// Outbox retention (REQ-F004-019/035): published rows older than the window are pruned so the outbox
+// does not grow without bound; unpublished and parked rows are NEVER pruned regardless of age. The
+// window and the prune cadence are provisional constants of record, operator-tunable via
+// EVENT_BUS_RETENTION_MS / EVENT_BUS_PRUNE_EVERY_CYCLES (relay-scoped config; defaults 7 days /
+// 3600 ticks, unchanged). The prune runs once every `pruneEveryCycles` poll ticks, not every tick.
+const RETENTION_MS = config.retentionMs;
+const PRUNE_EVERY_CYCLES = config.pruneEveryCycles;
 
 async function main(): Promise<void> {
-  const transport = createTransport({ kind: config.transportKind, peerUrls: config.peerUrls });
+  const transport = createTransport({
+    kind: config.transportKind,
+    peerUrls: config.peerUrls,
+    peerTimeoutMs: config.peerTimeoutMs, // EVENT_BUS_PEER_TIMEOUT_MS → wire timeout inside the transport
+  });
   const drainer = createDrainer({ transport });
 
   // Transport reachability for /ready is derived from the last drain outcome (design open Q#4

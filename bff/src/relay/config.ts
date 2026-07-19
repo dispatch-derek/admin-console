@@ -47,6 +47,12 @@ export const config = {
   transportKind, // 'http' (broker already refused above)
   backlogThreshold: intEnv('EVENT_BUS_BACKLOG_THRESHOLD', 1000),
   lagThresholdMs: intEnv('EVENT_BUS_LAG_THRESHOLD_MS', 30_000),
+  // Provisional constants of record, operator-tunable (same integer-parse-with-fallback style as the
+  // /ready thresholds above; blank/invalid → default). Defaults are byte-identical to the previously
+  // hard-coded values so production behavior is unchanged.
+  retentionMs: intEnv('EVENT_BUS_RETENTION_MS', 7 * 24 * 60 * 60 * 1000), // REQ-F004-019/035 prune window (7 days)
+  pruneEveryCycles: intEnv('EVENT_BUS_PRUNE_EVERY_CYCLES', 3_600), // prune cadence in poll ticks (~hourly at 1s)
+  peerTimeoutMs: intEnv('EVENT_BUS_PEER_TIMEOUT_MS', 10_000), // per-peer request timeout (REQ-F004-055 wire concern)
   // Re-export the SHARED, secret-free path resolution (store/db-path.ts) — the same value store/db.ts
   // opens — so the relay's config and its real DB handle can never drift (matches bff/src/config.ts).
   dbPath,
