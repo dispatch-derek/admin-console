@@ -48,6 +48,12 @@ export function createDrainer(deps: { transport: EventTransport }): Drainer {
   // A delivery failure (transient or permanent). Applies retry/backoff, poison isolation, and the
   // acked_at-routed post-ack cap (REQ-F004-011/013/014/047).
   function handleFailure(row: OutboxRow, deliveryId: string, err: unknown): void {
+    // Structural duck-typing on `classification`/`partialAck` (below) is DELIBERATE, not a shortcut:
+    // an `instanceof TransportError` check would let a non-conforming transport implementation throw
+    // an opaque error and silently fall through the transient/permanent seam. Reading the shape
+    // instead keeps the REQ-F004-049 transport boundary enforceable for ANY EventTransport
+    // implementation, not just the one this repo ships (a unit test throws a plain non-Error to pin
+    // this guarantee).
     const classification = (err as { classification?: unknown })?.classification === 'permanent'
       ? 'permanent'
       : 'transient';

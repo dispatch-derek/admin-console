@@ -1,9 +1,9 @@
 // bff/src/events/ordering-key.ts — pure, TOTAL deriveOrderingKey(envelope) (spec §3; design
 // docs/design/09-F004-production-event-bus.md §3.3; REQ-F004-016/029/031). This is the single
-// source of truth shared by the enqueue path (OutboxRelayBus.publish) and — byte-for-byte — the
-// one-time migration backfill copy inlined in bff/src/store/db.ts's
-// `deriveOrderingKeyForBackfill`. The two MUST agree so pre-F-004 rows (keyed by the backfill)
-// and post-F-004 rows (keyed here) partition identically; if you touch either, reconcile both.
+// source of truth shared by the enqueue path (OutboxRelayBus.publish) and the one-time migration
+// backfill in bff/src/store/db.ts's `deriveOrderingKeyForBackfill`, which imports this module
+// directly (no duplicated copy) so pre-F-004 rows (keyed by the backfill) and post-F-004 rows
+// (keyed here) always partition identically.
 //
 // Matches on the FULL dotted prefix INCLUDING the trailing '.' (spec §3 N6): 'admin.workspace_user.'
 // must NOT be misparsed as 'admin.workspace.' — with the trailing dot the two prefixes are

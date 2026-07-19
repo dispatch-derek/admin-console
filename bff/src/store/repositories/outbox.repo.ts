@@ -23,7 +23,10 @@ const insertStmt = db.prepare(
   `INSERT INTO event_outbox (ts, envelope, published_at, ordering_key)
    VALUES (@ts, @envelope, @published_at, @ordering_key)`,
 );
-const markPublishedStmt = db.prepare(
+// Shared by markPublished (normal ack path) and forcePublish (REQ-F004-011 post-ack-cap path,
+// see below) — both write the exact same column, only the CALLER's intent differs, so one
+// prepared statement backs both repo methods.
+const setPublishedAtStmt = db.prepare(
   `UPDATE event_outbox SET published_at = ? WHERE id = ?`,
 );
 const listUnpublishedStmt = db.prepare(
@@ -77,9 +80,6 @@ const setLastErrorStmt = db.prepare(
 const writableProbeStmt = db.prepare(
   `UPDATE outbox_meta SET epoch = epoch WHERE id = 1`,
 );
-const forcePublishStmt = db.prepare(
-  `UPDATE event_outbox SET published_at = ? WHERE id = ?`,
-);
 // Retention (REQ-F004-019/035): delete ONLY published rows older than the cutoff; unpublished
 // and parked rows survive regardless of age.
 const pruneShippedStmt = db.prepare(
@@ -97,7 +97,7 @@ export const outboxRepo = {
     return Number(info.lastInsertRowid);
   },
   markPublished(id: number, publishedAt: string): void {
-    markPublishedStmt.run(publishedAt, id);
+    setPublishedAtStmt.run(publishedAt, id);
   },
   listUnpublished(): OutboxRow[] {
     return listUnpublishedStmt.all() as OutboxRow[];
@@ -128,7 +128,7 @@ export const outboxRepo = {
     }
   },
   forcePublish(id: number, iso: string): void {
-    forcePublishStmt.run(iso, id);
+    setPublishedAtStmt.run(iso, id);
   },
   pruneShipped(before: string): number {
     return pruneShippedStmt.run(before).changes;

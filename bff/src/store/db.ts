@@ -9,6 +9,12 @@ import { randomUUID } from 'node:crypto';
 // REQ-F004-033/045): the separate relay process shares this DB and must open it with only
 // DB_PATH set, never the BFF's ANYTHINGLLM_*/SESSION_SECRET/SECRETS_ENC_KEY. See db-path.ts.
 import { dbPath } from './db-path.js';
+// Shared derivation for the one-time ordering_key backfill below (REQ-F004-029/015). Safe to
+// import here: ordering-key.ts is a pure, dependency-free leaf module (no imports of its own), so
+// pulling it into the migration introduces no cycle and — unlike config.ts — cannot transitively
+// drag secret-requiring env into the relay's boot chain (relay/index → outbox.repo → db.ts). See
+// ordering-key.ts's header for the full single-source-of-truth rationale.
+import { deriveOrderingKey } from '../events/ordering-key.js';
 
 // Ensure the parent directory exists before opening the DB file.
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -27,21 +33,14 @@ db.pragma('busy_timeout = 5000');
 
 // ── F-004 one-time ordering_key backfill (REQ-F004-029/015) ─────────────────────────────────
 // The ordering key derives from PARSING each stored envelope JSON (event name + a named target
-// field), so it cannot be computed in pure SQL. The block below is a FAITHFUL ONE-TIME COPY of
-// the implementer-owned derivation specified for `bff/src/events/ordering-key.ts` (design §3.3 /
-// spec §3) — inlined here ONLY for the migration backfill, because this (migration) agent owns
-// schema evolution, not application modules, and that module does not exist yet.
-//
-// IMPLEMENTER: when you add `deriveOrderingKey(envelope)`, its result MUST match this table
-// byte-for-byte. The enqueue path (OutboxRelayBus.publish) and THIS backfill have to produce
-// identical keys, or the relay's per-key ordering silently diverges between pre-F-004 rows
-// (keyed here) and post-F-004 rows (keyed by your module). Prefer having the module be the single
-// source of truth and re-deriving this table from it if you touch either.
+// field), so it cannot be computed in pure SQL. deriveOrderingKey (imported above) is the single
+// source of truth for this derivation, shared with the enqueue path (OutboxRelayBus.publish) — see
+// ordering-key.ts's header for why the two must never diverge. This wrapper only adds the
+// migration-specific concern: the backfill reads the envelope as a raw JSON string off disk, so it
+// must parse it first, and a malformed/unparseable row must still resolve totally rather than abort
+// the migration (REQ-F004-029 N4).
 const UNKEYED = '__unkeyed__';
 
-// Prefixes are matched on the FULL dotted segment INCLUDING the trailing '.' (spec §3 N6):
-// 'admin.workspace_user.' must NOT be misparsed as 'admin.workspace.' — with the trailing dot the
-// two prefixes are disjoint (after 'admin.workspace' the membership name has '_', not '.').
 function deriveOrderingKeyForBackfill(envelopeJson: string): string {
   let env: unknown;
   try {
@@ -49,28 +48,7 @@ function deriveOrderingKeyForBackfill(envelopeJson: string): string {
   } catch {
     return UNKEYED; // unparseable envelope → never abort, never NULL (REQ-F004-029 N4)
   }
-  const name = (env as { event?: unknown } | null)?.event;
-  if (typeof name !== 'string') return UNKEYED; // no usable event name → total fallback
-  const target = ((env as { target?: unknown }).target ?? {}) as Record<string, unknown>;
-
-  // A target field usable as a key component: a non-empty string or a number. Absent / empty /
-  // array / object → null, which triggers the '__unkeyed__' totality fallback (never 'ws:undefined').
-  const field = (k: string): string | null => {
-    const v = target[k];
-    if (typeof v === 'number') return String(v);
-    if (typeof v === 'string' && v.length > 0) return v;
-    return null;
-  };
-
-  if (name.startsWith('admin.workspace_user.')) { const w = field('workspace'); return w ? `ws:${w}` : UNKEYED; }
-  if (name.startsWith('admin.workspace.'))       { const id = field('id'); return id ? `ws:${id}` : UNKEYED; }
-  if (name.startsWith('admin.user.'))            { const id = field('id'); return id ? `user:${id}` : UNKEYED; }
-  if (name.startsWith('admin.instance.'))        return 'instance';
-  if (name.startsWith('admin.raw_env.'))         return 'instance';           // instance-scoped config
-  if (name.startsWith('admin.invite.'))          { const id = field('id'); return id ? `invite:${id}` : UNKEYED; }
-  if (name.startsWith('admin.baseline_prompt.')) return 'baseline';           // dedicated singleton (rev-7 Fix 1)
-  if (name.startsWith('admin.feature_toggle.'))  return UNKEYED;              // intentional (F-005 REQ-F005-052)
-  return UNKEYED;                                                             // no rule → __unkeyed__
+  return deriveOrderingKey(env as { event?: unknown; target?: unknown });
 }
 
 // Backfill in BATCHES so a large pre-F-004 backlog (≥10k rows, REQ-F004-027) is not rewritten
