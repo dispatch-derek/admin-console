@@ -27,28 +27,39 @@ npm test
 | `tests/crash-restart.e2e.test.ts` | Crash (`SIGKILL`) mid-delivery, restart against the same DB, at-least-once backfill |
 | `tests/failure-retry-park.e2e.test.ts` | Transient 5xx retried with backoff and eventually delivered; permanent 4xx parked immediately; poison isolation (other keys unaffected) |
 | `tests/ready-probe.e2e.test.ts` | `GET /ready` 503 while backlog/lag over threshold, 200 once healthy |
-| `tests/boot-config.e2e.test.ts` | **Bug documentation** (`it.fails`) -- see below |
+| `tests/boot-config.e2e.test.ts` | Boots and serves a healthy `/ready` using ONLY `DB_PATH` + `EVENT_BUS_*` -- no BFF secrets (regression test, see below) |
+| `tests/retention-pruning.e2e.test.ts` | Phase 7: retention prune is wired into the running drain loop (`EVENT_BUS_RETENTION_MS`/`EVENT_BUS_PRUNE_EVERY_CYCLES`) -- old published rows deleted, fresh/unpublished/parked rows never touched |
+| `tests/ready-store-writable.e2e.test.ts` | Phase 7: `GET /ready` surfaces `store-unwritable` distinctly from backlog/lag when the real write-probe fails; recovers to 200 |
+| `tests/peer-timeout.e2e.test.ts` | Phase 7 / security F1: `EVENT_BUS_PEER_TIMEOUT_MS` bounds a peer that never responds -- transient retry, not an indefinite hang; sibling on a different key unaffected |
 
-## Known bug this suite documents (not fixed here -- out of scope for `tests/e2e/`)
+## Bug this suite found and its fix (history)
 
 `bff/src/relay/config.ts` states the relay is a separate process that deliberately does not import
 the BFF's main `config.ts` (which requires `ANYTHINGLLM_BASE_URL`/`ANYTHINGLLM_API_KEY`/
-`SESSION_SECRET`/`SECRETS_ENC_KEY`). In practice `bff/src/relay/index.ts` -> `drainer.ts` ->
-`store/repositories/outbox.repo.ts` -> `store/db.ts` -> `import { config } from '../config.js'`
-pulls in that main config anyway, so the relay process **cannot boot** without those BFF-only
-secrets set, contradicting its own documented contract. `tests/boot-config.e2e.test.ts` asserts the
-documented (bug-free) behavior directly with `it.fails`, so it reports as a suite failure (the
-signal to un-skip it) once the wiring is fixed, without blocking this suite in the meantime. Every
-other journey works around it via `BFF_CONFIG_WORKAROUND_ENV` in `fixtures/relayProcess.ts`.
+`SESSION_SECRET`/`SECRETS_ENC_KEY`). `bff/src/relay/index.ts` -> `drainer.ts` ->
+`store/repositories/outbox.repo.ts` -> `store/db.ts` used to transitively pull in that main config
+anyway, so the relay process could not boot without those BFF-only secrets set, contradicting its
+own documented contract. `tests/boot-config.e2e.test.ts` originally asserted the documented
+(bug-free) behavior with `it.fails` so the defect was red-to-fixed rather than silently masked;
+every other journey worked around it via a `BFF_CONFIG_WORKAROUND_ENV` injected into the child
+env. Fixed via `bff/src/store/db-path.ts` (a secret-free DB-path resolver shared by `store/db.ts`
+and `relay/config.ts`). `boot-config.e2e.test.ts` is now a normal, genuinely-passing `it`, and the
+workaround has been removed from `fixtures/relayProcess.ts` -- every journey now spawns the relay
+with `BFF_ONLY_SECRET_ENV_VARS` actively stripped (not just "not added"), proving the fix holds for
+every journey, not just the dedicated regression test.
 
 ## Fixtures (`fixtures/`)
 
 - `relayProcess.ts` -- spawns/kills the real relay child process, polls `/ready`, captures stdio.
+  `spawnRelay()` accepts the Phase 7 knobs (`retentionMs`, `pruneEveryCycles`, `peerTimeoutMs`)
+  alongside the original backlog/lag/transport options, and always strips the four BFF-only secrets
+  from the child's env.
 - `stubPeer.ts` -- an ephemeral real `node:http` server double for a peer, with scriptable
   status/hang/release behavior and full request capture (headers, raw body).
 - `db.ts` -- opens/seeds a real SQLite outbox DB file matching the documented `event_outbox` /
   `outbox_meta` schema (migrations/NOTES-F004.md); the relay's own migration runs additively on top
-  when it boots.
+  when it boots. Also exposes `breakStoreWritability()`/`restoreOutboxMeta()` for the
+  store-unwritable journey (see that test file's header comment for why).
 - `tmp.ts` -- unique temp DB dir per test, cleaned up in `afterEach`.
 
 ## Isolation

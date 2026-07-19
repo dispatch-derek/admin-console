@@ -118,6 +118,34 @@ export class OutboxTestDb {
     ).n;
   }
 
+  rowExists(id: number): boolean {
+    return this.row(id) !== undefined;
+  }
+
+  // ── store-unwritable journey support ──────────────────────────────────────────────────────────
+  // The relay's own real write-probe (bff/src/store/repositories/outbox.repo.ts `isWritable()`) is
+  // `UPDATE outbox_meta SET epoch = epoch WHERE id = 1` -- it succeeds iff that statement does not
+  // throw. Dropping the table it targets, FROM THIS SEPARATE CONNECTION while the relay's own
+  // connection stays open (same DB file, WAL mode -- both connections coexist normally), makes the
+  // relay's next probe throw "no such table: outbox_meta" deterministically and instantly (no lock
+  // contention / busy-timeout wait, unlike simulating this via a held write lock; and no OS-level
+  // read-only-file gymnastics, which would instead fail relay/db.ts's `new Database(path)` itself at
+  // process boot rather than surfacing as a live, recoverable 503 -- see boot-config test for that
+  // failure mode). Restorable via restoreOutboxMeta() so the same test can also prove recovery.
+  breakStoreWritability(): void {
+    this.db.exec(`DROP TABLE outbox_meta`);
+  }
+
+  restoreOutboxMeta(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS outbox_meta (
+        id    INTEGER PRIMARY KEY CHECK (id = 1),
+        epoch TEXT NOT NULL
+      );
+    `);
+    this.db.prepare(`INSERT OR IGNORE INTO outbox_meta (id, epoch) VALUES (1, ?)`).run(this.epoch);
+  }
+
   close(): void {
     this.db.close();
   }

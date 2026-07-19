@@ -71,6 +71,11 @@ export interface SpawnRelayOpts {
   lagThresholdMs?: number;
   transport?: string;
   nodeEnv?: string;
+  // Phase 7 review-gate remediation knobs (bff/src/relay/config.ts), left undefined = relay
+  // default (7d retention / 3600-cycle cadence / 10s peer timeout).
+  retentionMs?: number; // EVENT_BUS_RETENTION_MS (REQ-F004-019/035)
+  pruneEveryCycles?: number; // EVENT_BUS_PRUNE_EVERY_CYCLES
+  peerTimeoutMs?: number; // EVENT_BUS_PEER_TIMEOUT_MS (REQ-F004-055 wire concern / security F1)
   extraEnv?: Record<string, string | undefined>;
 }
 
@@ -86,6 +91,11 @@ export async function spawnRelay(opts: SpawnRelayOpts): Promise<RelayHandle> {
     EVENT_BUS_BACKLOG_THRESHOLD: String(opts.backlogThreshold ?? 1000),
     EVENT_BUS_LAG_THRESHOLD_MS: String(opts.lagThresholdMs ?? 30_000),
     RELAY_READY_PORT: String(readyPort),
+    ...(opts.retentionMs !== undefined ? { EVENT_BUS_RETENTION_MS: String(opts.retentionMs) } : {}),
+    ...(opts.pruneEveryCycles !== undefined
+      ? { EVENT_BUS_PRUNE_EVERY_CYCLES: String(opts.pruneEveryCycles) }
+      : {}),
+    ...(opts.peerTimeoutMs !== undefined ? { EVENT_BUS_PEER_TIMEOUT_MS: String(opts.peerTimeoutMs) } : {}),
     ...opts.extraEnv,
   };
   // Strip any of the four BFF-only secrets the relay must never need (REQ-F004-033/045), even if

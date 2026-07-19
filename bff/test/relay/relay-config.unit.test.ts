@@ -8,6 +8,11 @@
 // Also covers an EVENT_BUS_URL comma-list edge the spec suite's parsing-edge block doesn't:
 // whitespace-only entries between commas, and the production hard-refuse boundary when the URL
 // is present but parses down to an EMPTY peer list (not just literally unset).
+//
+// Phase 7 review-gate remediation additions (coordinator-directed, 2026-07-19): the three new
+// EVENT_BUS_RETENTION_MS / EVENT_BUS_PRUNE_EVERY_CYCLES / EVENT_BUS_PEER_TIMEOUT_MS vars, which
+// share the exact same `intEnv` contract (default on unset/blank/invalid, parsed override
+// otherwise) as the pre-existing threshold vars above.
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
@@ -16,6 +21,9 @@ const RELAY_ONLY_KEYS = [
   'EVENT_BUS_TRANSPORT',
   'EVENT_BUS_BACKLOG_THRESHOLD',
   'EVENT_BUS_LAG_THRESHOLD_MS',
+  'EVENT_BUS_RETENTION_MS',
+  'EVENT_BUS_PRUNE_EVERY_CYCLES',
+  'EVENT_BUS_PEER_TIMEOUT_MS',
   'DB_PATH',
   'NODE_ENV',
 ] as const;
@@ -88,7 +96,7 @@ describe('relay/config.ts — intEnv non-numeric fallback branch (config.ts:48, 
   });
 });
 
-describe('relay/config.ts — dbPath nullish-coalescing default (config.ts:48, `process.env[\'DB_PATH\'] ?? \'data/console.db\'`)', () => {
+describe('relay/config.ts — dbPath nullish-coalescing default (shared with store/db-path.ts, same value as before the F-004 db-path.ts extraction)', () => {
   it('DB_PATH entirely unset falls back to the literal "data/console.db" default', async () => {
     snapshotEnv();
     process.env['EVENT_BUS_URL'] = 'https://a.example';
@@ -103,6 +111,108 @@ describe('relay/config.ts — dbPath nullish-coalescing default (config.ts:48, `
     process.env['DB_PATH'] = '/tmp/custom-relay.db';
     const { config } = await loadRelayConfig();
     expect(config.dbPath).toBe('/tmp/custom-relay.db');
+  });
+});
+
+describe('relay/config.ts — EVENT_BUS_RETENTION_MS (default 604800000 = 7 days)', () => {
+  it('defaults to 604800000ms when unset', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    delete process.env['EVENT_BUS_RETENTION_MS'];
+    const { config } = await loadRelayConfig();
+    expect(config.retentionMs).toBe(604_800_000);
+  });
+
+  it('honors an explicit override', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_RETENTION_MS'] = '86400000';
+    const { config } = await loadRelayConfig();
+    expect(config.retentionMs).toBe(86_400_000);
+  });
+
+  it('blank string falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_RETENTION_MS'] = '  ';
+    const { config } = await loadRelayConfig();
+    expect(config.retentionMs).toBe(604_800_000);
+  });
+
+  it('a non-numeric value falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_RETENTION_MS'] = 'forever';
+    const { config } = await loadRelayConfig();
+    expect(config.retentionMs).toBe(604_800_000);
+  });
+});
+
+describe('relay/config.ts — EVENT_BUS_PRUNE_EVERY_CYCLES (default 3600)', () => {
+  it('defaults to 3600 when unset', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    delete process.env['EVENT_BUS_PRUNE_EVERY_CYCLES'];
+    const { config } = await loadRelayConfig();
+    expect(config.pruneEveryCycles).toBe(3_600);
+  });
+
+  it('honors an explicit override', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PRUNE_EVERY_CYCLES'] = '10';
+    const { config } = await loadRelayConfig();
+    expect(config.pruneEveryCycles).toBe(10);
+  });
+
+  it('blank string falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PRUNE_EVERY_CYCLES'] = '';
+    const { config } = await loadRelayConfig();
+    expect(config.pruneEveryCycles).toBe(3_600);
+  });
+
+  it('a non-numeric value falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PRUNE_EVERY_CYCLES'] = 'often';
+    const { config } = await loadRelayConfig();
+    expect(config.pruneEveryCycles).toBe(3_600);
+  });
+});
+
+describe('relay/config.ts — EVENT_BUS_PEER_TIMEOUT_MS (default 10000)', () => {
+  it('defaults to 10000ms when unset', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    delete process.env['EVENT_BUS_PEER_TIMEOUT_MS'];
+    const { config } = await loadRelayConfig();
+    expect(config.peerTimeoutMs).toBe(10_000);
+  });
+
+  it('honors an explicit override', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PEER_TIMEOUT_MS'] = '2500';
+    const { config } = await loadRelayConfig();
+    expect(config.peerTimeoutMs).toBe(2_500);
+  });
+
+  it('blank string falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PEER_TIMEOUT_MS'] = '   ';
+    const { config } = await loadRelayConfig();
+    expect(config.peerTimeoutMs).toBe(10_000);
+  });
+
+  it('a non-numeric value falls back to the default', async () => {
+    snapshotEnv();
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PEER_TIMEOUT_MS'] = 'slow';
+    const { config } = await loadRelayConfig();
+    expect(config.peerTimeoutMs).toBe(10_000);
   });
 });
 
