@@ -8,7 +8,9 @@ ordering key; corrected 21-event/8-family catalog count; stateful per-`deliveryI
 2026-07-19: shutdown drains the SET of in-flight deliveries; fan-out permanent-peer rejection parks
 immediately; `EVENT_BUS_TRANSPORT=broker` hard-refuses in the GTM build; + notes N1–N6), and applies the
 round-2 PASS-WITH-NOTES clarity pass (rev 10, 2026-07-19: broker refuses to boot in ALL environments;
-term/edge/cross-ref clarity — no MUST semantics changed); for implementation and QA review
+term/edge/cross-ref clarity — no MUST semantics changed), and pins the `HttpPeerTransport` HTTP-response →
+permanent/transient classification (rev 11, 2026-07-19: REQ-F004-055, standard webhook convention); for
+implementation and QA review
 Feature brief (authoritative intent): `briefs/F-004-production-event-bus.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `bff/src/events/bus.ts`, `bff/src/events/emitter.ts`, `bff/src/events/catalog.ts`,
@@ -438,7 +440,8 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   has accepted** the event (HTTP 2xx). The stateful re-drive model is specified concretely:
   - **(a) Partial failure rejects; the row stays unpublished.** On **partial failure** (some peers
     accepted, others errored / timed out / returned 4xx-5xx) `deliver()` does **NOT** resolve — it
-    **rejects** (with the transient-vs-permanent classification, REQ-F004-047) — so the row stays
+    **rejects** (with the transient-vs-permanent classification, REQ-F004-047; concrete HTTP-outcome
+    mapping REQ-F004-055) — so the row stays
     `published_at IS NULL` and the orchestration backoff (REQ-F004-013) **later re-invokes `deliver()` with
     the SAME `deliveryId`**.
   - **(b) In-memory per-`deliveryId` ack map; re-POST only un-acked peers.** The transport MUST **persist
@@ -452,7 +455,8 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
     long-retrying key: a terminal outcome (published or parked) always evicts the entry.
   - **(d) Permanent-peer rejection parks IMMEDIATELY (rev-9 fix — reconciles with REQ-F004-047/014).** If
     **any not-yet-acked peer** returns a **permanent** rejection (the transport's permanent-vs-transient
-    signal, REQ-F004-043(c); classified per REQ-F004-047), `deliver()` **rejects as
+    signal, REQ-F004-043(c); classified per REQ-F004-047, with the concrete HTTP-outcome mapping in
+    REQ-F004-055), `deliver()` **rejects as
     permanent** and the orchestration layer **parks the row immediately** per REQ-F004-047/014 — with **no**
     backoff retries and **regardless** of the attempt bound. The **"after the bound"** path (retry with
     capped backoff up to max attempts, then park) applies **only** to **transiently**-failing peers
@@ -490,6 +494,42 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   park** signal (REQ-F004-025), not the never-delivered-park signal. *Test (schema invariant):* swapping
   `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049) requires **no** migration or column
   change to `event_outbox`.
+- REQ-F004-055 — **HTTP response → permanent/transient classification (RATIFIED 2026-07-19 — standard
+  webhook convention).** The concrete mapping from a peer's HTTP outcome to the **permanent-vs-transient
+  signal** (REQ-F004-043(c)) is a **transport-specific wire concern owned by `HttpPeerTransport`** and is
+  kept **OUT of the transport-agnostic drainer** (REQ-F004-049 seam) — the drainer only ever sees the
+  abstract ack / transient-reject / permanent-reject outcomes, never HTTP status codes. `HttpPeerTransport`
+  MUST classify each **per-peer** POST outcome exactly as follows:
+  - **Ack (success) — gates `markPublished` (REQ-F004-012).** The peer responds **2xx**.
+  - **Transient — `deliver()` rejects transient ⇒ orchestration retries with capped backoff up to the
+    max-attempt bound, then parks (REQ-F004-013/014).** Any **network / connection-level failure**
+    (connection refused, connection timeout, DNS-resolution failure, socket reset / dropped connection),
+    **every 5xx** response, **and** the two throttling/timeout status codes **408 (Request Timeout)** and
+    **429 (Too Many Requests)**.
+  - **Permanent — `deliver()` rejects permanent ⇒ the row parks IMMEDIATELY, no backoff
+    (REQ-F004-047/051(d)).** **All other 4xx** (e.g. 400, 401, 403, 404, 422), **and any other unexpected
+    non-2xx response, including any 3xx** (a webhook peer is expected to accept at its final URL, so a
+    redirect is treated as a misconfiguration, not a retry).
+  This closed mapping is total over every possible outcome (2xx ack; the enumerated transient set; **all
+  else** permanent), so no response is left unclassified. **Fan-out composition (cross-ref REQ-F004-051):**
+  in the multi-peer case the per-peer classification composes with the existing fan-out rules — a
+  **permanent** response from **any not-yet-acked peer** makes the **whole `deliver()` reject permanent**
+  (immediate park, REQ-F004-051(d)); if **no** not-yet-acked peer is permanent but **at least one** is
+  **transient**, `deliver()` **rejects transient** and the transport re-drives **only the un-acked peers**
+  on the next backoff-driven call (REQ-F004-051(a)/(b)); `deliver()` **resolves (acks)** only when **every**
+  peer has returned 2xx. The classification carries **no** HTTP-specific detail into the outbox schema or
+  the drainer; a later `BrokerTransport` supplies its own equivalent mapping behind the same
+  REQ-F004-043(c) signal (REQ-F004-049). *Test (single-peer table):* drive one peer through each outcome and
+  assert the resulting signal — **2xx → ack** (row published); **500/502/503, 408, 429, connection-refused,
+  timeout, DNS-failure, socket-reset → transient** (row stays `published_at IS NULL`, `attempt_count`
+  advances, retried with backoff, parked only after the max-attempt bound, REQ-F004-013/014); **400/401/403/
+  404/422, any 3xx, any other non-2xx → permanent** (row `parked_at` set immediately, no backoff retries,
+  REQ-F004-047). *Test (fan-out composition):* with N peers where one returns 400 (permanent) and others are
+  2xx or 5xx, `deliver()` rejects **permanent** and the row parks immediately (REQ-F004-051(d)); with no
+  permanent peer but one returning 503 (transient), `deliver()` rejects **transient** and only the 503 peer
+  is re-POSTed on the next attempt while already-2xx peers are not (REQ-F004-051(a)/(b)). *Test (seam):* a
+  static check confirms HTTP status-code constants live only in `HttpPeerTransport`, not in the drain /
+  orchestration module (REQ-F004-049).
 
 ---
 
@@ -686,9 +726,15 @@ This section encodes the resolved delivery-transport decision (§9 REQ-F004-030)
   retried with backoff up to max attempts, then parked. Because the concrete transport is deferred
   (§9, REQ-F004-030), the **rev 2 provisional default when the transport gives no explicit permanent
   signal is: treat every failure as transient until max-attempts** (fail-safe toward retry, not toward
-  dropping). *Test:* a transport reply flagged permanent parks the row on the first failure with no
+  dropping). **For the GTM `HttpPeerTransport` this provisional default is SUPERSEDED by an explicit,
+  total classification (rev-11):** REQ-F004-055 pins the concrete HTTP-response → permanent/transient
+  mapping (2xx ack; 5xx / 408 / 429 / network errors transient; all other 4xx, any 3xx, any other non-2xx
+  permanent), so under HTTP the transport always emits an explicit signal and never falls back to
+  treat-all-as-transient. The provisional default still governs any transport that gives no explicit
+  signal. *Test:* a transport reply flagged permanent parks the row on the first failure with no
   backoff retries; an error/timeout/unreachable failure increments `attempt_count`, sets
-  `next_attempt_at`, and is retried, parking only after max attempts.
+  `next_attempt_at`, and is retried, parking only after max attempts. (HTTP-specific outcome-to-signal
+  cases are tested under REQ-F004-055.)
 
 ### §6.3 Backfill after outage
 - REQ-F004-015 — **Backfill after the transport is unavailable.** While the transport is unreachable,
@@ -1238,6 +1284,7 @@ seam — are cited.
 | Transport seam: transport-agnostic drain + narrow `EventTransport` interface (broker-swap-ready; fake-transport test) | §4.4 REQ-F004-049 |
 | GTM transport = HTTP-to-known-peer; broker a future drop-in adapter (zero-churn boundary) | §4.4 REQ-F004-050 + §9 REQ-F004-030 |
 | Multi-peer fan-out ack; `published_at` keeps its meaning; outbox schema invariant across swap | §4.4 REQ-F004-051 |
+| HTTP response → permanent/transient classification (webhook convention); fan-out composition | §4.4 REQ-F004-055 + §6.2 REQ-F004-047 + §5 REQ-F004-043(c) |
 | Config surface: `EVENT_BUS_URL` comma-delimited peer list + separate `EVENT_BUS_TRANSPORT` {http,broker} selector | §6.6 REQ-F004-052 |
 | Ordering: `admin.baseline_prompt.*` → dedicated `baseline` singleton key; `admin.feature_toggle.*` → intentional `__unkeyed__` | §3 def; §9 REQ-F004-031; §6.6 REQ-F004-029 |
 | Catalog count corrected to 21 event names / 8 families | §1.2 REQ-F004-002; §3 def |
@@ -1498,3 +1545,24 @@ vs recoverable-missing-config); the corrected `REQ-F004-043(c)` citations point 
 the permanent signal (REQ-F004-043); and the abandon-does-not-advance-`attempt_count` clause is consistent
 with REQ-F004-011's `acked_at`-routed cap and REQ-F004-020's at-least-once + dedupe restart safety. No MUST
 was added, removed, or weakened in rev 10.
+
+Rev 11 (pins a previously-unspecified classification the qa-engineer flagged; human ruled the standard
+webhook convention, 2026-07-19). **Adds ONE new requirement, REQ-F004-055; no existing REQ renumbered and
+no existing MUST changed** — this only fills a genuine gap (the concrete HTTP-response → permanent/transient
+mapping inside `HttpPeerTransport` was unpinned). REQ-F004-055 (§4.4, in the `HttpPeerTransport` area) pins,
+as a **transport-specific wire concern kept OUT of the drainer per the REQ-F004-049 seam** and surfaced via
+the REQ-F004-043(c) permanent-vs-transient signal: **2xx → ack**; **transient** = network/connection-level
+failures (connection refused, timeout, DNS failure, socket reset) + **all 5xx** + **408** + **429**
+(→ retry with backoff up to the max-attempt bound, then park, REQ-F004-013/014); **permanent** = all other
+4xx (400/401/403/404/422), any 3xx, and any other unexpected non-2xx (→ immediate park, REQ-F004-047/051(d)).
+The mapping is **total** (every outcome classified). **Fan-out composition** is cross-referenced both ways
+with REQ-F004-051: a permanent response from any not-yet-acked peer ⇒ whole `deliver()` rejects permanent
+(immediate park, REQ-F004-051(d)); no permanent but ≥1 transient ⇒ `deliver()` rejects transient and
+re-drives only the un-acked peers (REQ-F004-051(a)/(b)); ack only when every peer is 2xx. REQ-F004-047's
+rev-2 provisional "treat-all-as-transient when the transport gives no explicit signal" default is noted as
+**superseded for the GTM HTTP transport** by this explicit total classification (and still governs any
+signal-less transport). Cross-refs touched: §4.4 REQ-F004-051 (bullets (a)/(d) now cite REQ-F004-055),
+§6.2 REQ-F004-047 (notes the HTTP supersession), §10 traceability table (new row). Seam preserved: HTTP
+status-code constants live only in `HttpPeerTransport`, never in the drain/orchestration module
+(REQ-F004-049), asserted by a static-check test. No MUST was added to, removed from, or weakened in any
+existing requirement in rev 11.
