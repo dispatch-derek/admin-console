@@ -1,6 +1,8 @@
 // Config via requireEnv (mirrors sibling bff/src/config.ts). See 04-cross-cutting.md §h.
 // Missing required vars throw at load → process exits at startup (REQ-001, REQ-019a).
 
+import { dbPath } from './store/db-path.js';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -64,7 +66,7 @@ export const config = {
   adminBootstrapToken: process.env['ADMIN_BOOTSTRAP_TOKEN'],
   sessionSecret: requireSecret('SESSION_SECRET'), // cookie signing (>= 32 chars)
   secretsKey: requireSecret('SECRETS_ENC_KEY'), // encrypt totp secrets at rest (>= 32 chars)
-  dbPath: process.env['DB_PATH'] ?? 'data/console.db',
+  dbPath, // shared, secret-free resolution (store/db-path.ts) so BFF + relay never diverge
   isProduction,
   // Session cookie Secure flag: default true (fail closed); an explicit dev-only opt-out via
   // COOKIE_INSECURE=1 allows plain-HTTP local dev. Production is ALWAYS secure (sec review M-1).

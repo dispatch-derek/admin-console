@@ -5,12 +5,15 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { config } from '../config.js';
+// Resolve the shared DB path WITHOUT importing the secret-requiring BFF config (F-004
+// REQ-F004-033/045): the separate relay process shares this DB and must open it with only
+// DB_PATH set, never the BFF's ANYTHINGLLM_*/SESSION_SECRET/SECRETS_ENC_KEY. See db-path.ts.
+import { dbPath } from './db-path.js';
 
 // Ensure the parent directory exists before opening the DB file.
-mkdirSync(dirname(config.dbPath), { recursive: true });
+mkdirSync(dirname(dbPath), { recursive: true });
 
-export const db: Database.Database = new Database(config.dbPath);
+export const db: Database.Database = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 // F-004 (REQ-F004-020): two writers now share this file — the BFF and the separate outbox
