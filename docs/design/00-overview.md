@@ -27,6 +27,10 @@ admin-console/
 `web` dev server proxies `/api/*` to the BFF (mirrors the sibling app). Package
 manifests, tsconfig, and `type: module` mirror `front-end-custom/{bff,web}`.
 
+Port allocation (no clash with the sibling app): admin-console keeps `:3002` (BFF) / `:5173`
+(web dev); customer-web-app claims `:3004` (BFF) / `:5175` (web dev) per customer-web-app
+F-001 (REQ-F001-072).
+
 ## Dependency direction (one way, inward to the engine)
 
 ```
