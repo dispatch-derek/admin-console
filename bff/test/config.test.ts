@@ -128,6 +128,10 @@ describe('config.ts — PORT (REQ-020)', () => {
 describe('config.ts — corsMode (REQ-095)', () => {
   it('is "strict" when NODE_ENV=production', async () => {
     process.env['NODE_ENV'] = 'production';
+    // REQ-F004-021/039: production requires EVENT_BUS_MODE='bus' or config load hard-refuses.
+    // This test is about corsMode, not the event bus, so supply a valid mode — the dedicated
+    // EVENT_BUS_MODE throw/hard-refuse behavior is already owned by config.f004.test.ts.
+    process.env['EVENT_BUS_MODE'] = 'bus';
     const { config } = await loadConfig();
     expect(config.corsMode).toBe('strict');
   });
@@ -284,6 +288,7 @@ describe('config.ts — cookieSecure (sec review M-1)', () => {
 
   it('is true in production EVEN with COOKIE_INSECURE=1 (fail closed, cannot be overridden)', async () => {
     process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_MODE'] = 'bus'; // REQ-F004-021/039: valid mode so prod config loads
     process.env['COOKIE_INSECURE'] = '1';
     const { config } = await loadConfig();
     expect(config.cookieSecure).toBe(true);
@@ -291,6 +296,7 @@ describe('config.ts — cookieSecure (sec review M-1)', () => {
 
   it('is true in production when COOKIE_INSECURE is unset', async () => {
     process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_MODE'] = 'bus'; // REQ-F004-021/039: valid mode so prod config loads
     delete process.env['COOKIE_INSECURE'];
     const { config } = await loadConfig();
     expect(config.cookieSecure).toBe(true);
@@ -306,6 +312,7 @@ describe('config.ts — corsOrigins (REQ-095, sec review M-1: never a bare `true
 
   it('is [] in production when WEB_ORIGINS is unset (fail closed)', async () => {
     process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_MODE'] = 'bus'; // REQ-F004-021/039: valid mode so prod config loads
     delete process.env['WEB_ORIGINS'];
     const { config } = await loadConfig();
     expect(config.corsOrigins).toEqual([]);
@@ -320,6 +327,7 @@ describe('config.ts — corsOrigins (REQ-095, sec review M-1: never a bare `true
 
   it('honors an explicit WEB_ORIGINS allowlist even in production', async () => {
     process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_MODE'] = 'bus'; // REQ-F004-021/039: valid mode so prod config loads
     process.env['WEB_ORIGINS'] = 'https://console.example.com';
     const { config } = await loadConfig();
     expect(config.corsOrigins).toEqual(['https://console.example.com']);
@@ -333,6 +341,7 @@ describe('config.ts — corsOrigins (REQ-095, sec review M-1: never a bare `true
     expect(Array.isArray(dev.config.corsOrigins)).toBe(true);
 
     process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_MODE'] = 'bus'; // REQ-F004-021/039: valid mode so prod config loads
     const prod = await loadConfig();
     expect(prod.config.corsOrigins).not.toBe(true);
     expect(Array.isArray(prod.config.corsOrigins)).toBe(true);

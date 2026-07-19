@@ -84,7 +84,11 @@ describe('OutboxRelayBus.publish (EVENT_BUS_MODE=bus)', () => {
 
     await bus.publish(envelope);
 
-    expect(insert).toHaveBeenCalledWith(envelope.timestamp, JSON.stringify(envelope));
+    // REQ-F004-029: OutboxRelayBus.publish now also derives + passes the ordering_key as a 3rd
+    // arg to insert(). This envelope's target is { workspaceId: 42 } — the admin.workspace.*
+    // derivation rule keys on target.id (not target.workspaceId), which is absent here, so per
+    // the §3 totality fallback it correctly derives to '__unkeyed__' (never a false 'ws:undefined').
+    expect(insert).toHaveBeenCalledWith(envelope.timestamp, JSON.stringify(envelope), '__unkeyed__');
     expect(markPublished).not.toHaveBeenCalled();
   });
 });
