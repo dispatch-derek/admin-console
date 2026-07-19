@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-002 rev 5 (verify R4 fixes + fresh pass on the four resolved modes)
 
 Spec reviewed: `specs/F-002-customer-system-prompt.md` (Draft **rev 5**)
-Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 4), `docs/spec-review-F002-rev4.md` (rev-4 review)
+Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 4), `docs/spec-reviews/spec-review-F002-rev4.md` (rev-4 review)
 Reviewer posture: adversarial, read-only on the spec.
 
 Scope (two parts):

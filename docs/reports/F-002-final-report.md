@@ -62,7 +62,7 @@ Web: `web/src/features/baseline-prompt/*` (8 components), `web/src/components/Da
 
 Tests: `bff/test/routes/baseline-prompt.*.test.ts` (4 files), `bff/test/store/baseline-migration.test.ts`, `bff/test/baseline/*.test.ts`, `bff/test/services/baseline.service.test.ts`, `bff/test/store/repositories/baseline.repo.test.ts`, `web/src/components/DangerConfirm.test.tsx` (extended), `tests/e2e/` (new Playwright package, introduced for this feature).
 
-Docs: `docs/design/07-F002-baseline-prompt.md`, `docs/design/ux/F-002-baseline-prompt.md`, `docs/F-002-migration-runbook.md`, `tests/TEST_PLAN.md`.
+Docs: `docs/design/07-F002-baseline-prompt.md`, `docs/design/ux/F-002-baseline-prompt.md`, `docs/runbooks/F-002-migration-runbook.md`, `tests/TEST_PLAN.md`.
 
 ## Remaining human actions
 

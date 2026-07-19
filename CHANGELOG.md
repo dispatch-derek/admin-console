@@ -206,7 +206,7 @@ All notable changes to the Admin Console are documented here. This project follo
 - **Specification:** `specs/F-005-per-customer-feature-toggle-console.md` (rev 6, fully ruled).
 - **Architecture design:** `docs/design/08-F005-feature-toggle-console.md`.
 - **UX design:** `docs/design/ux/F-005-feature-toggle-console.md`.
-- **Migration runbook:** `docs/F-005-migration-runbook.md` (covers the new `feature_toggle_state`
+- **Migration runbook:** `docs/runbooks/F-005-migration-runbook.md` (covers the new `feature_toggle_state`
   table and catalog manifest setup).
 
 ## [F-001 — Adhere to a Design System]

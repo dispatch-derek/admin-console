@@ -349,7 +349,7 @@ export function rollbackF002(): void {
 // once dropped, effective state silently reverts to catalog defaults for every feature. The audit_log
 // history of who-set-what survives (it is a separate append-only table), but the live override state
 // does not. On a store that holds real overrides, back up the SQLite file first and gate the drop on
-// explicit human confirmation (see docs/F-005-migration-runbook.md). Greenfield today: no environment
+// explicit human confirmation (see docs/runbooks/F-005-migration-runbook.md). Greenfield today: no environment
 // holds F-005 overrides yet, so running this now destroys nothing.
 export function rollbackF005(): void {
   db.exec(`

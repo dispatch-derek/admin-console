@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-004 Production-Ready Event Bus (rev-4 delta)
 
 Spec reviewed: `specs/F-004-production-event-bus.md` (Draft **rev 4**, `REQ-F004-###` namespace)
-Prior review: `docs/spec-review-F004-rev3.md` (BR1/BR2 blocking; MJ1/MJ2 major; MN1–MN5 notes)
+Prior review: `docs/spec-reviews/spec-review-F004-rev3.md` (BR1/BR2 blocking; MJ1/MJ2 major; MN1–MN5 notes)
 Parent: `specs/admin-console.md` (v1, rev 7) — REQ-024 health, REQ-029* chain, §14 catalog
 Grounding re-verified this pass: `bff/src/events/catalog.ts` (18 names), `bus.ts:40` factory,
 `bff/src/services/{user,workspace,settings}.service.ts` emit-site `target` shapes.

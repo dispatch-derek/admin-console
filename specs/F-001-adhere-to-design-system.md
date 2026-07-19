@@ -4,12 +4,12 @@ Status: Draft rev 6 — resolves the **two spec defects Phase 1 architecture sur
 RISK-2 in `docs/design/F-001/00-design.md`), both **ruled by the human on 2026-07-08** and recorded in
 §9 as OQ-11 (RISK-1) and OQ-12 (RISK-2), each RESOLVED. Builds on rev 5, which folded in the human
 rulings of **2026-07-08** on OQ-9 and OQ-10 (both ratified as the recommended defaults) and cleared the
-two non-blocking findings of the rev-4 re-review `docs/spec-review-F001-rev4.md` (verdict ACCEPT; NEW-1,
+two non-blocking findings of the rev-4 re-review `docs/spec-reviews/spec-review-F001-rev4.md` (verdict ACCEPT; NEW-1,
 NEW-2), preserving the full rev-3/rev-4/rev-5 lineage below. **§9 still carries zero open questions —
 F-001 is fully ruled and implementation-ready.** For implementation and QA review.
 
 **Revision history.**
-- rev 3 → resolved the earlier spec-review `docs/spec-review-F001.md` (B1–B5, M1–M2, N1–N4), folded
+- rev 3 → resolved the earlier spec-review `docs/spec-reviews/spec-review-F001.md` (B1–B5, M1–M2, N1–N4), folded
   in the vendored DS ground truth at `web/vendor/design-system/`, and applied the six §9 human
   rulings of 2026-07-07 (OQ-3 on-demand re-sync; OQ-4 internal-only exposure; OQ-5 small operator
   base <25; OQ-6 WCAG 2.1 AA, non-gating; OQ-7 GTM is a **hard gate**; OQ-8 phasing acceptable).
@@ -41,7 +41,7 @@ F-001 is fully ruled and implementation-ready.** For implementation and QA revie
   - **N-1** — "small bridge layer" wording reconciled against the no-size-budget rule (REQ-F001-026/027).
   - **N-2** — pre-migration baseline (a11y/contrast snapshot + gzipped bundle size) must be captured
     as an artifact **before** migration begins (new REQ-F001-049, referenced by REQ-F001-030/033).
-- **rev 5 (this revision)** — resolves the rev-4 re-review (`docs/spec-review-F001-rev4.md`, verdict
+- **rev 5 (this revision)** — resolves the rev-4 re-review (`docs/spec-reviews/spec-review-F001-rev4.md`, verdict
   **ACCEPT**) and applies the **2026-07-08 human rulings** on the two open questions rev 4 surfaced.
   All rev-3/rev-4 §9 rulings (OQ-3…OQ-8) and every REQ id are preserved (no renumbering). Changes:
   - **OQ-9 → RESOLVED (ruling: stylelint CSS gate).** The REQ-F001-047 stylelint gate over

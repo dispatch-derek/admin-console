@@ -1100,7 +1100,7 @@ for traceability; each decision is folded into the requirements cited below.
 
 ## §13 Spec-review resolutions
 
-Rev 3 applies the review at `docs/spec-review.md`. Verified API-auth facts (header) are treated
+Rev 3 applies the review at `docs/spec-reviews/admin-console-spec-review.md`. Verified API-auth facts (header) are treated
 as ground truth. Each item below is addressed:
 
 - **BL-1** — `manage-users` (slug, `{userIds[], reset}`) is the single normative membership
@@ -1175,7 +1175,7 @@ architectural. Changes:
 
 ## §13.2 rev-5 spec-review resolutions
 
-Rev 5 applies the review at `docs/spec-review-rev4.md`. No OQ-1..OQ-6, BL-1..NI-3, or rev-4
+Rev 5 applies the review at `docs/spec-reviews/admin-console-spec-review-rev4.md`. No OQ-1..OQ-6, BL-1..NI-3, or rev-4
 architecture-alignment decision is reopened. Each item:
 
 - **BLK-1** (event cardinality) — REQ-029 changed from "exactly one" to "**one or more**", one
@@ -1224,7 +1224,7 @@ architecture-alignment decision is reopened. Each item:
 
 ## §13.3 rev-6 spec-review resolutions
 
-Rev 6 applies the review at `docs/spec-review-rev5.md`. No OQ-1..OQ-6, BL-1..NI-3, rev-4
+Rev 6 applies the review at `docs/spec-reviews/admin-console-spec-review-rev5.md`. No OQ-1..OQ-6, BL-1..NI-3, rev-4
 architecture-alignment, or rev-5 (BLK-1..NIT-2) decision is reopened except where a rev-5 item is
 explicitly superseded below. Each finding:
 
@@ -1264,7 +1264,7 @@ explicitly superseded below. Each finding:
 
 ## §13.4 rev-7 spec-review resolutions
 
-Rev 7 applies the review at `docs/spec-review-rev6.md` (the rev-6 verification pass; all rev-5
+Rev 7 applies the review at `docs/spec-reviews/admin-console-spec-review-rev6.md` (the rev-6 verification pass; all rev-5
 findings N-1..N-7 CLOSED). These are the final editorial reconciliations to reach ACCEPT. No
 OQ-1..OQ-6, BL-1..NI-3, rev-4 architecture-alignment, rev-5 (BLK-1..NIT-2), or rev-6 (N-1..N-7)
 decision is reopened; each rev-7 item only tightens wording that the rev-6 edits left inconsistent.

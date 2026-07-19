@@ -1,7 +1,7 @@
 # Adversarial Spec Re-Review — F-001 "Adhere to a Design System" (rev 4)
 
 - **Spec under review:** `specs/F-001-adhere-to-design-system.md` (Draft rev 4)
-- **Prior review resolved:** `docs/spec-review-F001-rev3.md` (BLOCK; F-1, F-2 blocking; F-3, F-4, F-5 major; N-1..N-5 notes)
+- **Prior review resolved:** `docs/spec-reviews/spec-review-F001-rev3.md` (BLOCK; F-1, F-2 blocking; F-3, F-4, F-5 major; N-1..N-5 notes)
 - **Review mode:** round-1 re-review (delta focus). Verifies (a) each rev-3 finding is genuinely
   resolved on disk, (b) the changed requirements survive a fresh adversarial pass, (c) no
   previously-clean requirement regressed and the rev-3 §9 rulings (OQ-3..OQ-8) survive intact.
