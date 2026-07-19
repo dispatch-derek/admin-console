@@ -849,7 +849,7 @@ updated accordingly (see "Post-ruling test update" below).
 Spec: `specs/F-004-production-event-bus.md` (Draft rev 10 — final, review-gated; every
 `REQ-F004-###` is binding). Design: `docs/design/09-F004-production-event-bus.md`. Parent spec:
 `specs/admin-console.md` (v1, rev 7). Migration runbook (already implemented by a prior agent):
-`migrations/NOTES-F004.md`; migration test (PRE-EXISTING, not touched by this task):
+`docs/runbooks/F-004-migration-runbook.md`; migration test (PRE-EXISTING, not touched by this task):
 `bff/test/store/f004-outbox-migration.test.ts`.
 
 ## Framework & harness choice

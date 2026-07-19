@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-004 Production-Ready Event Bus (rev-3 delta)
 
 Spec reviewed: `specs/F-004-production-event-bus.md` (Draft **rev 3**, `REQ-F004-###` namespace)
-Prior review: `docs/spec-review-F004.md` (rev 1/2 — already-resolved findings NOT re-raised)
+Prior review: `docs/spec-reviews/spec-review-F004.md` (rev 1/2 — already-resolved findings NOT re-raised)
 Parent: `specs/admin-console.md` (v1, rev 7) — REQ-024 health, REQ-029* chain, §14 catalog
 Grounding verified: `bff/src/events/catalog.ts`, `bus.ts`, `emitter.ts`,
 `bff/src/store/repositories/outbox.repo.ts`, `bff/src/services/{user,workspace,settings}.service.ts`

@@ -1,7 +1,7 @@
 # Spec Review — rev-7 Follow-up Verification
 
 **Spec:** `specs/admin-console.md` (rev 7) · **Grounding:** `docs/anythingllm-surface.md` · **Governing:** `docs/governing-architecture.md`
-**Prior review:** `docs/spec-review-rev6.md` (findings R-1..R-5)
+**Prior review:** `docs/spec-reviews/admin-console-spec-review-rev6.md` (findings R-1..R-5)
 **Reviewer:** spec-reviewer subagent, 2026-07-04 · Scope: verify R-1..R-5 resolved + regression-hunt the rev-7 `verified`-contract reconciliation.
 **Verdict: ACCEPT.** All rev-6 findings closed; the `verified` scalar-vs-map contract is now internally consistent; ID integrity holds. Two non-blocking NOTES tracked for implementation.
 

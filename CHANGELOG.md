@@ -95,7 +95,7 @@ All notable changes to the Admin Console are documented here. This project follo
 
 - **Specification:** `specs/F-004-production-event-bus.md` (rev 11, binding).
 - **Architecture design:** `docs/design/09-F004-production-event-bus.md`.
-- **Migration runbook:** `migrations/NOTES-F004.md` (schema delta, backfill, deploy phasing).
+- **Migration runbook:** `docs/runbooks/F-004-migration-runbook.md` (schema delta, backfill, deploy phasing).
 - **Security review:** `security/F-004-review.md` (pass with notes; two medium findings).
 - **Relay operator guide:** `bff/src/relay/README.md` (boot, config, `/ready`, troubleshoot).
 - **E2E test harness:** `tests/e2e/relay/README.md` (journey coverage, fixtures).
@@ -206,7 +206,7 @@ All notable changes to the Admin Console are documented here. This project follo
 - **Specification:** `specs/F-005-per-customer-feature-toggle-console.md` (rev 6, fully ruled).
 - **Architecture design:** `docs/design/08-F005-feature-toggle-console.md`.
 - **UX design:** `docs/design/ux/F-005-feature-toggle-console.md`.
-- **Migration runbook:** `docs/F-005-migration-runbook.md` (covers the new `feature_toggle_state`
+- **Migration runbook:** `docs/runbooks/F-005-migration-runbook.md` (covers the new `feature_toggle_state`
   table and catalog manifest setup).
 
 ## [F-001 — Adhere to a Design System]

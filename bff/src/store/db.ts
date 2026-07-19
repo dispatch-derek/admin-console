@@ -349,7 +349,7 @@ export function rollbackF002(): void {
 // once dropped, effective state silently reverts to catalog defaults for every feature. The audit_log
 // history of who-set-what survives (it is a separate append-only table), but the live override state
 // does not. On a store that holds real overrides, back up the SQLite file first and gate the drop on
-// explicit human confirmation (see docs/F-005-migration-runbook.md). Greenfield today: no environment
+// explicit human confirmation (see docs/runbooks/F-005-migration-runbook.md). Greenfield today: no environment
 // holds F-005 overrides yet, so running this now destroys nothing.
 export function rollbackF005(): void {
   db.exec(`
@@ -389,7 +389,7 @@ export function rollbackF005(): void {
 //     it from each envelope, so no ordering information is permanently lost by dropping it.
 // On a GREENFIELD DB (relay not yet deployed: all attempt_count=0, no parked rows, epoch unused)
 // this destroys nothing operational. On a LIVE DB: back up the SQLite file first and gate on
-// explicit human confirmation (migrations/NOTES-F004.md). Envelopes/published_at are NEVER touched,
+// explicit human confirmation (docs/runbooks/F-004-migration-runbook.md). Envelopes/published_at are NEVER touched,
 // so this rollback NEVER loses an emitted event — only delivery bookkeeping.
 export function rollbackF004(): void {
   const run = db.transaction(() => {

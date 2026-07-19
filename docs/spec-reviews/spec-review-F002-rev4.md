@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-002 rev 4 (companion change for F-003 REQ-F003-042)
 
 Spec reviewed: `specs/F-002-customer-system-prompt.md` (Draft **rev 4**)
-Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 3), `docs/spec-review-F002.md` (rev-1 review)
+Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 3), `docs/spec-reviews/spec-review-F002.md` (rev-1 review)
 Reviewer posture: adversarial, read-only on the spec.
 
 Scope: the **rev-4 delta only** — per-workspace `composition_mode` resolution in the fan-out.

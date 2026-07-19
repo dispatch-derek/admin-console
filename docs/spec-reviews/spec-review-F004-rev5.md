@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-004 Production-Ready Event Bus (rev-5 delta)
 
 Spec reviewed: `specs/F-004-production-event-bus.md` (Draft **rev 5**, `REQ-F004-###` namespace)
-Prior review: `docs/spec-review-F004-rev4.md` (B1 blocking regression; MJ-A major; N1–N5 notes)
+Prior review: `docs/spec-reviews/spec-review-F004-rev4.md` (B1 blocking regression; MJ-A major; N1–N5 notes)
 Parent: `specs/admin-console.md` (v1, rev 7)
 Scope: (1) verify each rev-4 finding is genuinely resolved; (2) fresh adversarial pass on the
 changed areas — the B1 force-mark-published mechanism, the shared `attempt_count`/cap disposition,

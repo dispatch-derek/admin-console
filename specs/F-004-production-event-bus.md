@@ -1,6 +1,6 @@
 # F-004: Production-Ready Event Bus (Replace the In-Process Bus) — Specification
 
-Status: Draft rev 9 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6), folds in the resolved
+Status: Draft rev 9 — resolves spec-review `docs/spec-reviews/spec-review-F004-rev5.md` (rev 6), folds in the resolved
 delivery-transport decision (rev 7, 2026-07-19: HTTP-to-known-peer for GTM; broker as a future `EventTransport`
 adapter), resolves the rev-7 adversarial BLOCK (rev 8, 2026-07-19: baseline `baseline` singleton
 ordering key; corrected 21-event/8-family catalog count; stateful per-`deliveryId` fan-out re-drive; pinned
@@ -1311,7 +1311,7 @@ seam — are cited.
 | Timing: October 2026 GTM production-readiness gate | §1.1, §9 REQ-F004-040 |
 | Parent REQ-029d fulfilled in production; web still cannot read the bus | §1.3 REQ-F004-003 |
 
-### §10.1 Spec-review resolution (rev 2 — `docs/spec-review-F004.md`)
+### §10.1 Spec-review resolution (rev 2 — `docs/spec-reviews/spec-review-F004.md`)
 
 | Finding | Resolution | Where |
 |---|---|---|
@@ -1383,7 +1383,7 @@ deferred to ops); the transport-level, epoch-qualified delivery id (REQ-F004-048
 the frozen `AdminEventEnvelope` (REQ-F004-004); and requirement IDs are unchanged — every item was edited
 in place, none renumbered or deleted. §9 now contains **no open questions**.
 
-Rev 5 (resolves spec-review `docs/spec-review-F004-rev4.md`, 2026-07-08) closes the one regression the
+Rev 5 (resolves spec-review `docs/spec-reviews/spec-review-F004-rev4.md`, 2026-07-08) closes the one regression the
 rev-4 MN2 fix introduced plus one gap, and folds in the notes. **B1 (blocking regression):** a persistent
 post-ack `markPublished` failure is no longer **parked** (which kept `published_at IS NULL` and so, under
 per-key head-of-line, permanently wedged the key — contradicting the very goal MN2 raised). Because the
@@ -1396,7 +1396,7 @@ pre-F-004 backlog REQ-F004-015 replays) from each stored envelope, and enqueue p
 "lazily on first drain" (circular) is removed, and eligibility defensively treats any NULL key as
 `__unkeyed__` (REQ-F004-029/015/041).
 
-Rev 6 (resolves spec-review `docs/spec-review-F004-rev5.md`, 2026-07-08) closes the deeper contradiction
+Rev 6 (resolves spec-review `docs/spec-reviews/spec-review-F004-rev5.md`, 2026-07-08) closes the deeper contradiction
 the rev-5 B1 fix left open. **B1-new (blocking):** routing the post-ack cap on the *type of the final
 failing attempt* (never-acked→park, ever-acked→force-publish) was undecidable from persisted state — both
 cases leave `published_at IS NULL` and share one `attempt_count` — so a **mixed-history** row (acked, mark
@@ -1410,7 +1410,7 @@ attempt cap neither can nor needs to bound it); the cap now bounds only persiste
 write failures. Notes: `store-unwritable` added to the `/ready` reason codes for a relay that cannot land
 `acked_at`/`published_at` (N-b, REQ-F004-044); `attempt_count` explicitly does **not** reset on ack (N-c).
 
-Rev 5 (resolves spec-review `docs/spec-review-F004-rev4.md`, 2026-07-08) — superseded in part by rev 6
+Rev 5 (resolves spec-review `docs/spec-reviews/spec-review-F004-rev4.md`, 2026-07-08) — superseded in part by rev 6
 above for the post-ack mechanism. Notes: the boot-refuse rationale is corrected to the real hazard —
 the in-proc bus marks rows **published without delivering**, so a later switch to `bus` never re-drains
 them: silent loss (N1, REQ-F004-021/039); two-writer `SQLITE_BUSY` contention gets a `busy_timeout` +

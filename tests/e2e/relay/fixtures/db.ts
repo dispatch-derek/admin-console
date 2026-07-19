@@ -1,5 +1,5 @@
 // Seeds/reads a real SQLite outbox DB file, matching the F-004 `event_outbox` / `outbox_meta`
-// contract documented in migrations/NOTES-F004.md and bff/src/store/db.ts's CREATE TABLE block.
+// contract documented in docs/runbooks/F-004-migration-runbook.md and bff/src/store/db.ts's CREATE TABLE block.
 // Deliberately does NOT import bff/src/** (E2E tests exercise the relay only through its real,
 // documented seams: a DB file on disk and HTTP) -- this is the "user"-facing contract a DB
 // migration is allowed to add columns to but not silently rename/drop.

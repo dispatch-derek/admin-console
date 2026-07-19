@@ -1,7 +1,7 @@
 # Adversarial Spec Review — F-002 rev 6 (verify R5 fixes + fresh pass)
 
 Spec reviewed: `specs/F-002-customer-system-prompt.md` (Draft **rev 6**)
-Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 4), `docs/spec-review-F002-rev5.md`
+Cross-referenced: `specs/F-003-workspace-system-prompt.md` (Draft rev 4), `docs/spec-reviews/spec-review-F002-rev5.md`
 Reviewer posture: adversarial, read-only on the spec.
 Checks executed: 8/8 (misinterpretation attack, one-line-test, error-coverage sweep, example-vs-prose,
 definition audit, boundary audit, non-goal probe, cross-reference).

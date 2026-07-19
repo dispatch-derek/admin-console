@@ -57,7 +57,7 @@ every journey, not just the dedicated regression test.
 - `stubPeer.ts` -- an ephemeral real `node:http` server double for a peer, with scriptable
   status/hang/release behavior and full request capture (headers, raw body).
 - `db.ts` -- opens/seeds a real SQLite outbox DB file matching the documented `event_outbox` /
-  `outbox_meta` schema (migrations/NOTES-F004.md); the relay's own migration runs additively on top
+  `outbox_meta` schema (docs/runbooks/F-004-migration-runbook.md); the relay's own migration runs additively on top
   when it boots. Also exposes `breakStoreWritability()`/`restoreOutboxMeta()` for the
   store-unwritable journey (see that test file's header comment for why).
 - `tmp.ts` -- unique temp DB dir per test, cleaned up in `afterEach`.

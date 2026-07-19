@@ -4,9 +4,9 @@ Status: Draft rev 9 — records a human ruling on REQ-F002-044 (native Default S
 adds a UI warning requirement (REQ-F002-060); NOT a review-fix round;
 for implementation and QA review
 (rev 8 baseline: resolves two BLOCKING findings from adversarial review of rev 7, round 1 of ≤2)
-(rev 7 baseline: resolves spec-review `docs/spec-review-F002-rev6.md`)
+(rev 7 baseline: resolves spec-review `docs/spec-reviews/spec-review-F002-rev6.md`)
 (rev 4 baseline: companion change for F-003 ruling REQ-F003-042 — fan-out honors per-workspace composition_mode)
-(rev 3 baseline: revised against `docs/spec-review-F002.md` and four human rulings A–D on REQ-F002-041/042/043/053/054)
+(rev 3 baseline: revised against `docs/spec-reviews/spec-review-F002.md` and four human rulings A–D on REQ-F002-041/042/043/053/054)
 Feature brief (authoritative intent): `briefs/F-002-customer-system-prompt.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `docs/anythingllm-surface.md` (engine surface), `docs/design/01-bff-architecture.md`,
@@ -1151,7 +1151,7 @@ added. No REQ ids were renumbered, deleted, or newly created; no item was marked
 achievable by tightening REQ-F002-023 in place and adding cross-references. The rev-7 NOTE about
 status-line bookkeeping was not touched (left no worse).
 
-Rev 7 (resolves spec-review `docs/spec-review-F002-rev6.md`, 2026-07-08) closes two narrow reconciliation
+Rev 7 (resolves spec-review `docs/spec-reviews/spec-review-F002-rev6.md`, 2026-07-08) closes two narrow reconciliation
 gaps the rev-6 edits left: (R6-1) REQ-F002-025's mandatory two-candidate preserve/discard choice is now
 **scoped to `prepend`-resolved** overridden workspaces, with `baseline-only` overridden workspaces
 explicitly exempt — their no-silent-clobber guarantee is met by the §8 destructive blast-radius count and
@@ -1163,7 +1163,7 @@ from the stored mode only, NULL→prepend, outcome-correct because untracked des
 empty remainder) (R6-N1); and REQ-F002-045's stale "bulk-apply progress model" wording is updated to the
 synchronous bounded model + escape valve (R6-N2). No REQ ids were renumbered or deleted.
 
-Rev 6 (resolves spec-review `docs/spec-review-F002-rev5.md`, 2026-07-08) reconciles the rev-5
+Rev 6 (resolves spec-review `docs/spec-reviews/spec-review-F002-rev5.md`, 2026-07-08) reconciles the rev-5
 `baseline-only` write with two rev-3 requirements it collided with: (R5-1) the sync-state classifier
 (REQ-F002-023) is made **mode-aware** — it compares the live prompt against `effective(B, remainder,
 resolvedMode)` (`= B` for a stored-`inherit`/`baseline-only` workspace), matching F-003's own classifier
