@@ -1054,6 +1054,56 @@ Test Files  13 failed | 46 passed | 1 skipped (60)
   transform is what "compiles" the test files, and it succeeded for all 60 files with zero
   transform errors).
 
+**Status update (post-implementation):** F-004 has since been implemented (`bff/src/relay/**`,
+`bff/src/events/ordering-key.ts`, the `outbox.repo.ts`/`bus.ts`/`config.ts` edits all now exist).
+Two follow-up QA passes were made against the built implementation, kept as separate dated
+addenda below rather than silently rewritten into this pre-implementation snapshot: (1) the
+REQ-F004-055 addendum (rev-11 ruling), and (2) the Phase-3 addendum immediately below (a
+Phase-8-perf-incident regression guard). As of the Phase-3 addendum the full `bff/` suite is
+`Test Files 70 passed (70)` / `Tests 1229 passed (1229)`, `tsc --noEmit -p bff` exits 0 — the
+70-vs-60 file-count growth includes both this task's additions and a separate `*.unit.test.ts`
+batch owned by the unit-test-writer agent (outside this document's scope, not touched here).
+
+## Phase-3 addendum (Phase-8 perf incident — REQ-F004-027/034 query-PLAN regression guard)
+
+**Incident:** Phase-8 perf testing found `selectEligible` was `O(total-table-size)`, not
+`O(backlog)` — the 7-day retention window keeps published rows around, and the outer scan (plus
+the correlated per-key head-of-line subquery) fell back to a full-table/rowid-range scan once
+enough published rows accumulated: median 4.5ms @5k rows -> **4851ms @205k rows**, blowing the
+REQ-F004-027 p95 SLO. This was invisible to `bff/test/relay/perf.test.ts`, which only seeds ~500
+rows — too small for SQLite's query planner to ever consider, let alone need, a full scan. The fix
+(implementation, not touched by this task) added two partial indexes in `bff/src/store/db.ts`
+(`idx_outbox_live_id`, `idx_outbox_unpublished_key`); `outbox.repo.ts`'s `selectEligibleStmt` SQL
+text is byte-for-byte unchanged.
+
+**Test added:** a new `describe` block appended to
+`bff/test/store/repositories/outbox.repo.f004.test.ts` — **2 test cases**:
+
+1. **Query-PLAN assertion (the actual regression guard).** Seeds 4,000 retained-published rows +
+   400 unpublished rows across 40 ordering keys (large enough for SQLite's planner to genuinely
+   prefer an index — verified manually: dropping the two indexes against an equivalent seed
+   reproduces `"SCAN o"` (bare) + `"SEARCH e USING INTEGER PRIMARY KEY (rowid<?)"`, i.e. this test
+   would correctly FAIL against the pre-fix schema). The exact SQL under test is **extracted
+   directly from `outbox.repo.ts`'s own `selectEligibleStmt` source text** (via
+   `extractSelectEligibleSql()`, a small text-marker extraction, not a re-typed copy) so the guard
+   can never silently drift from the real query. Runs `EXPLAIN QUERY PLAN` against that exact SQL
+   and asserts: the outer scan's plan step mentions `idx_outbox_live_id`; the correlated subquery's
+   plan step mentions `idx_outbox_unpublished_key`; and **no** plan step is a bare `SCAN` (matches
+   `/\bSCAN\b/` without `USING INDEX`) — i.e. no full-table scan survived. This guards the query
+   **plan shape**, not wall-clock timing, so it is deterministic and non-flaky in CI.
+2. **Correctness-on-the-same-large-dataset assertion.** Layers five precise marker rows on top of
+   the 4,400-row noise set (an older-parked-row-blocks-its-key pair, a clean single-row key, and an
+   older-parked/newer-eligible `__unkeyed__` pair) and asserts `selectEligible` still returns
+   exactly the spec-correct set — guarding against exactly the trap the implementer avoided: an
+   "index-friendly" rewrite that becomes fast by silently breaking per-key head-of-line or
+   `__unkeyed__` independence (e.g. adding `parked_at IS NULL` to `idx_outbox_unpublished_key`'s
+   partial predicate would make the subquery index-driven too, but would drop parked rows from the
+   blocker set and un-stall a key that must stay stalled — this test would catch that).
+
+Both cases run in ~11ms each (real SQLite, no mocking), confirmed by re-running with the two new
+indexes manually dropped (see above) that they fail for the right reason before the fix, and pass
+after it.
+
 ## REQ-F004-### -> test coverage map (every MUST mapped)
 
 Legend: **NEW** = a test in the files above. **EXISTING** = the pre-existing, untouched
@@ -1089,7 +1139,7 @@ open-questions sections (no independent test, would just re-test the REQ it reso
 | REQ-F004-024 | Backlog metric | `metrics.test.ts` getBacklogCount |
 | REQ-F004-025 | Failure/attempt/park-split/post-ack-cap counters | `metrics.test.ts` event-counters block |
 | REQ-F004-026 | `/ready` threshold-driven readiness, named config keys | `ready.test.ts`; `relay-config.test.ts` thresholds |
-| REQ-F004-027 | Latency/throughput SLO | `perf.test.ts` |
+| REQ-F004-027 | Latency/throughput SLO | `perf.test.ts`; `outbox.repo.f004.test.ts` REQ-F004-027/034 query-PLAN regression guard (Phase-8 addendum — see below) |
 | REQ-F004-028 | Security & log hygiene | `static-scans.test.ts` |
 | REQ-F004-029 | Delivery-bookkeeping schema + total derivation | EXISTING `f004-outbox-migration.test.ts`; NEW `ordering-key.test.ts`, `outbox.repo.f004.test.ts`, `bus.f004.test.ts` |
 | REQ-F004-030 | Transport/broker deferred to ops (ruling) | traced via REQ-F004-049/050 tests |

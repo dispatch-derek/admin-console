@@ -18,7 +18,8 @@
 //   outboxRepo.getEpoch(): string
 
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { seedRow, envJson } from '../../relay/helpers.js';
 
 const dbPath = process.env['DB_PATH'] as string;
@@ -233,5 +234,145 @@ describe.skipIf(!repo.getEpoch)('getEpoch — REQ-F004-018/048 delivery-id epoch
     expect(epoch.length).toBeGreaterThan(0);
     const raw = (db.prepare(`SELECT epoch FROM outbox_meta WHERE id = 1`).get() as { epoch: string }).epoch;
     expect(epoch).toBe(raw);
+  });
+});
+
+// ── REQ-F004-027/034 — selectEligible query-PLAN regression guard ──────────────────────────────
+// Phase-8 perf finding: selectEligible degraded to a full-table SCAN as retained PUBLISHED rows
+// accumulated (7-day retention keeps them around) — invisible at the small scale
+// bff/test/relay/perf.test.ts exercises (~500 rows), but O(total-table-size) rather than
+// O(backlog): median 4.5ms @5k rows -> 4851ms @205k, blowing the p95 SLO (REQ-F004-027). The fix
+// added two partial indexes in bff/src/store/db.ts (idx_outbox_live_id,
+// idx_outbox_unpublished_key); the selectEligible SQL itself is UNCHANGED. This guards the QUERY
+// PLAN (not wall-clock timing, which is flaky in CI) so a future edit that silently drops index
+// usage — or "optimizes" by breaking per-key correctness — is caught deterministically.
+//
+// The SQL under test is extracted DIRECTLY from outbox.repo.ts's own selectEligibleStmt source
+// text (not re-typed here) so this guard can never drift from the real query.
+function extractSelectEligibleSql(): string {
+  const repoTsPath = resolve(import.meta.dirname, '../../../src/store/repositories/outbox.repo.ts');
+  const text = readFileSync(repoTsPath, 'utf8');
+  const marker = 'const selectEligibleStmt = db.prepare(';
+  const markerIdx = text.indexOf(marker);
+  if (markerIdx === -1) {
+    throw new Error(
+      'outbox.repo.ts: could not find "const selectEligibleStmt = db.prepare(" — source shape changed, update extractSelectEligibleSql()',
+    );
+  }
+  const backtickStart = text.indexOf('`', markerIdx);
+  const backtickEnd = text.indexOf('`', backtickStart + 1);
+  if (backtickStart === -1 || backtickEnd === -1) {
+    throw new Error('outbox.repo.ts: selectEligibleStmt is not backtick-templated as expected — update extractSelectEligibleSql()');
+  }
+  return text.slice(backtickStart + 1, backtickEnd);
+}
+
+interface PlanRow {
+  id: number;
+  parent: number;
+  notused: number;
+  detail: string;
+}
+
+describe.skipIf(!repo.selectEligible)('selectEligible — REQ-F004-027/034 query-PLAN regression guard (Phase-8 perf fix)', () => {
+  // Seed enough rows that SQLite's query planner would genuinely prefer a full scan if the two
+  // partial indexes did not exist (a few thousand is plenty — no need for the 205k-row scale the
+  // perf incident itself reproduced at; this is a plan-shape guard, not a timing benchmark).
+  const KEYS = 40;
+  const PUBLISHED_COUNT = 4000;
+  const UNPUBLISHED_COUNT = 400;
+  const NOW = '2026-07-19T12:00:00.000Z';
+  const PAST = '2026-07-19T11:00:00.000Z';
+
+  function seedBulkNoise(): void {
+    const insert = db.prepare(
+      `INSERT INTO event_outbox (ts, envelope, published_at, ordering_key) VALUES (@ts, @envelope, @published_at, @ordering_key)`,
+    );
+    const insertMany = db.transaction((rows: Array<{ ts: string; envelope: string; published_at: string | null; ordering_key: string }>) => {
+      for (const r of rows) insert.run(r);
+    });
+    const publishedRows = Array.from({ length: PUBLISHED_COUNT }, (_, i) => ({
+      ts: PAST,
+      envelope: envJson('admin.user.updated', { id: `noise-${i}` }),
+      published_at: PAST, // retained (within retention window) — this is what bloated the outer scan
+      ordering_key: `noise:${i % KEYS}`,
+    }));
+    insertMany(publishedRows);
+    const unpublishedRows = Array.from({ length: UNPUBLISHED_COUNT }, (_, i) => ({
+      ts: PAST,
+      envelope: envJson('admin.user.updated', { id: `unpub-noise-${i}` }),
+      published_at: null,
+      ordering_key: `noise:${i % KEYS}`,
+    }));
+    insertMany(unpublishedRows);
+  }
+
+  it('EXPLAIN QUERY PLAN uses idx_outbox_live_id for the outer scan and idx_outbox_unpublished_key for the correlated head-of-line subquery — NO bare full-table scan', () => {
+    seedBulkNoise();
+    const sql = extractSelectEligibleSql();
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all({ now: NOW, batch: 500 }) as PlanRow[];
+    const details = plan.map((r) => r.detail);
+
+    const outerUsesLiveIdIndex = details.some((d) => /idx_outbox_live_id/.test(d));
+    const subqueryUsesUnpublishedKeyIndex = details.some((d) => /idx_outbox_unpublished_key/.test(d));
+    const bareTableScans = details.filter((d) => /\bSCAN\b/.test(d) && !/USING INDEX/.test(d));
+
+    expect(outerUsesLiveIdIndex, `plan: ${JSON.stringify(details, null, 2)}`).toBe(true);
+    expect(subqueryUsesUnpublishedKeyIndex, `plan: ${JSON.stringify(details, null, 2)}`).toBe(true);
+    expect(bareTableScans, `a bare (non-indexed) SCAN of event_outbox regressed to O(total-table-size): ${JSON.stringify(details, null, 2)}`).toEqual([]);
+  });
+
+  it('eligibility RESULT semantics are still correct against the large seeded dataset (guards against an "index-friendly" rewrite that breaks per-key correctness)', () => {
+    seedBulkNoise();
+
+    // Marker rows layered on top of the bulk noise, id-ordered AFTER it (higher ids), so they are
+    // unambiguous regardless of the noise's own ordering_key collisions.
+    const keyAOlderParked = seedRow(db, {
+      envelope: envJson('admin.user.created', { id: 'markerA' }),
+      orderingKey: 'marker:a',
+      ts: PAST,
+      parkedAt: PAST,
+    });
+    const keyANewerBlocked = seedRow(db, {
+      envelope: envJson('admin.user.updated', { id: 'markerA' }),
+      orderingKey: 'marker:a',
+      ts: NOW,
+    });
+    const keyBOldestEligible = seedRow(db, {
+      envelope: envJson('admin.user.created', { id: 'markerB' }),
+      orderingKey: 'marker:b',
+      ts: PAST,
+    });
+    const unkeyedOlderParked = seedRow(db, {
+      envelope: envJson('admin.feature_toggle.changed', { featureKey: 'markerU1' }),
+      orderingKey: '__unkeyed__',
+      ts: PAST,
+      parkedAt: PAST,
+    });
+    const unkeyedNewerEligible = seedRow(db, {
+      envelope: envJson('admin.feature_toggle.changed', { featureKey: 'markerU2' }),
+      orderingKey: '__unkeyed__',
+      ts: NOW,
+    });
+
+    const eligibleIds = repo.selectEligible!(NOW, 10_000).map((r) => r.id);
+
+    // Per-key head-of-line: the older parked row blocks its key entirely; the newer row on that
+    // same key is NOT eligible while the parked row stands.
+    expect(eligibleIds).not.toContain(keyAOlderParked);
+    expect(eligibleIds).not.toContain(keyANewerBlocked);
+    // A key with no blocker: its oldest (only) row is eligible.
+    expect(eligibleIds).toContain(keyBOldestEligible);
+    // __unkeyed__ rows are independent (ruling BR1): the newer one is eligible DESPITE an older
+    // parked __unkeyed__ row — no head-of-line among unkeyed rows.
+    expect(eligibleIds).not.toContain(unkeyedOlderParked);
+    expect(eligibleIds).toContain(unkeyedNewerEligible);
+
+    // Sanity: none of the 4000 retained-published noise rows are ever selected (they are the
+    // exact rows the Phase-8 bug scanned needlessly).
+    const noisePublishedSample = (
+      db.prepare(`SELECT id FROM event_outbox WHERE ordering_key LIKE 'noise:%' AND published_at IS NOT NULL LIMIT 5`).all() as { id: number }[]
+    ).map((r) => r.id);
+    for (const id of noisePublishedSample) expect(eligibleIds).not.toContain(id);
   });
 });
