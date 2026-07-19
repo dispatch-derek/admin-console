@@ -1,6 +1,8 @@
 # F-004: Production-Ready Event Bus (Replace the In-Process Bus) — Specification
 
-Status: Draft rev 6 — resolves spec-review `docs/spec-review-F004-rev5.md`; for implementation and QA review
+Status: Draft rev 7 — resolves spec-review `docs/spec-review-F004-rev5.md` (rev 6) and folds in the resolved
+delivery-transport decision (rev 7, 2026-07-19: HTTP-to-known-peer for GTM; broker as a future `EventTransport`
+adapter); for implementation and QA review
 Feature brief (authoritative intent): `briefs/F-004-production-event-bus.md`
 Parent spec (conventions, architecture, shared requirements): `specs/admin-console.md` (v1, rev 7)
 Grounding references: `bff/src/events/bus.ts`, `bff/src/events/emitter.ts`, `bff/src/events/catalog.ts`,
@@ -121,7 +123,16 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
 - **Transport / broker** — the real on-box/durable bus the relay delivers to, reachable at
   `EVENT_BUS_URL`, satisfying the **conforming-transport contract** (REQ-F004-043: ack, delivery-id
   carriage, permanent-vs-transient rejection signal). Its concrete technology/wire protocol is deferred
-  (§9, REQ-F004-030; `docs/design/06-risks.md` R1).
+  (§9, REQ-F004-030; `docs/design/06-risks.md` R1). For the October 2026 GTM it is concretely
+  **HTTP-to-a-known-peer** (`HttpPeerTransport`, REQ-F004-050), **not** a message broker.
+- **`EventTransport` / `HttpPeerTransport` / `BrokerTransport`** — the **narrow transport-adapter
+  interface** (REQ-F004-049) the transport-agnostic drain/orchestration layer delivers through
+  (`deliver(envelope, deliveryId)` resolving on ack, rejecting with the transient-vs-permanent
+  classification, REQ-F004-047). **`HttpPeerTransport`** is the **single GTM implementation** — POST each
+  envelope to every configured peer endpoint and ack only on full fan-out (REQ-F004-050/051/052).
+  **`BrokerTransport`** is the **future** (post-GTM) implementation added behind the same interface as a
+  **new class plus one config branch**, with zero churn above the seam (REQ-F004-050). The
+  drain/orchestration layer is written once and is transport-agnostic (REQ-F004-049).
 - **Delivery / publish (to the bus)** — handing an envelope to the transport and receiving its
   acknowledgement (ack, REQ-F004-043). Distinct from the outbox INSERT.
 - **Per-key-ordered, effectively-once-or-isolated (the guarantee)** — every emitted event is delivered
@@ -343,6 +354,73 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   key A; A2 is **not** delivered while A1 is stuck (per-key order preserved) — it is delivered only after
   A1 is delivered (or, if A1 is parked, key A stalls and A2 waits until A1 is resolved).
 
+### §4.4 Transport seam (drain orchestration vs pluggable transport; broker-swap-ready)
+This section encodes the resolved delivery-transport decision (§9 REQ-F004-030): the GTM transport is
+**HTTP-to-a-known-peer**, and the design must guarantee that swapping to a real broker later is a
+**drop-in adapter change** with zero churn to producers, the emitter, the outbox, routes, or services.
+
+- REQ-F004-049 — **Two-layer transport seam (the core swap-ability guarantee).** The relay MUST be built
+  as **two separated layers**: (a) a **transport-agnostic drain / delivery-orchestration layer**, written
+  **once**, that owns everything independent of the wire — polling the eligible rows (REQ-F004-041),
+  per-key ordering and head-of-line (REQ-F004-016/042), retry/backoff (REQ-F004-013), mark-published /
+  `acked_at` bookkeeping (REQ-F004-011/012), park / dead-letter (REQ-F004-014), and metrics (§7); and
+  (b) a **narrow `EventTransport` interface** — a single method such as
+  `deliver(envelope, deliveryId): Promise<void>` (or a batch variant) that **resolves on ack** (gating
+  `markPublished`, REQ-F004-012) and **rejects carrying the transient-vs-permanent classification**
+  (REQ-F004-047) — with a **single concrete implementation for GTM, `HttpPeerTransport`** (REQ-F004-050).
+  A future `BrokerTransport` MUST be introducible as a **new class plus one config branch only**,
+  mirroring the grounded `createEventBus` / `getEventBus` factory that already switches on
+  `EVENT_BUS_MODE` (`bus.ts:38-43`). **No transport-specific logic — HTTP client, peer list, POST,
+  status-code mapping, per-peer retry (or, later, broker client / topics / partitions) — may leak into
+  the orchestration layer**, which sees only the `EventTransport` interface and the conforming-transport
+  contract (REQ-F004-043). *Test (transport-agnostic drain — the broker swap in miniature):* substitute a
+  **fake / second in-memory `EventTransport`** for `HttpPeerTransport` with **zero** changes to the
+  drain / ordering / retry / park / metrics code; the full drain-orchestration suite (retry/backoff
+  REQ-F004-013, park REQ-F004-014, crash/restart backfill REQ-F004-011/015, per-key order
+  REQ-F004-016/042) passes against the fake transport — proving the later broker swap is exercised now by
+  transport substitution. *Test (no leak):* a static check confirms the orchestration/drain module imports
+  only the `EventTransport` interface (not `HttpPeerTransport`, an HTTP client, or peer-list / URL
+  parsing).
+- REQ-F004-050 — **GTM transport is HTTP-to-a-known-peer, NOT a broker; broker is a future adapter
+  (zero-churn swap boundary).** For the **October 2026 GTM** the single concrete `EventTransport`
+  (REQ-F004-049) is **`HttpPeerTransport`**: the relay **POSTs each drained envelope to each configured
+  peer endpoint** (REQ-F004-052) and acks the orchestration layer per the fan-out rule (REQ-F004-051).
+  This is deliberately **not** a message broker. A real broker (Kafka / NATS / etc.) is **future state**
+  (post-GTM, as more subscribers to **both** applications' events appear) and MUST be introducible
+  **solely** as a new `EventTransport` implementation behind the REQ-F004-049 interface, selected by one
+  config branch, with **zero churn to producers, the emitter (`emitAdminEvent`), the `AdminEventEnvelope`,
+  the `event_outbox` write, mutating routes, or services** (reinforcing REQ-F004-004/005/006/022 for the
+  transport axis specifically): F-004 changes delivery only, and the *choice of* delivery transport —
+  HTTP now, broker later — changes nothing **above** the `EventTransport` seam. *Test (zero-churn swap
+  boundary):* introducing a second `EventTransport` (the REQ-F004-049 fake, standing in for a future
+  broker) requires **no** edit to `emitter.ts`, `catalog.ts`, the `outbox.repo.ts` write path, any
+  mutating route/service, or the envelope shape; a static scan confirms the only files touched to add a
+  transport are the transport class itself and the one factory/config branch.
+- REQ-F004-051 — **Multi-peer fan-out ack (at-least-once per peer); `published_at` still means "handed to
+  transport"; schema invariant across the swap.** `HttpPeerTransport` **owns the peer / subscriber list
+  and the per-peer retry state** (REQ-F004-052). A `deliver()` call **resolves (acks) — and the row is
+  marked `published_at` (REQ-F004-012) — ONLY when EVERY configured peer has accepted** the event
+  (HTTP 2xx). On **partial failure** (some peers accepted, others errored / timed out / returned
+  4xx-5xx), `deliver()` does **NOT** resolve: the row stays `published_at IS NULL` and is retried under
+  the orchestration layer's backoff (REQ-F004-013), and within the transport's retry of that delivery
+  **only the un-acked peers are re-POSTed** (an already-accepted peer is not re-POSTed within the same
+  delivery's retry cycle). A peer whose rejection is **permanent** (REQ-F004-047) drives the row to
+  **park** after the bound (REQ-F004-014) without blocking other ordering keys. Because the entire fan-out
+  and per-peer bookkeeping are **encapsulated inside the transport**, `published_at` keeps its **single
+  meaning — "successfully handed off to the transport"** — and the `event_outbox` schema (REQ-F004-029)
+  **does NOT need to change when the transport is later swapped** to a broker (which acks once, from the
+  broker itself, with no peer list). Delivery remains **at-least-once per peer**: after a **process crash**
+  the transport's in-memory per-peer ack state is lost and the whole row is re-driven to **all** peers on
+  restart, so a peer may see a duplicate — collapsed to one effect by consumer dedupe on the stable
+  delivery id (REQ-F004-018). *Test (fan-out ack):* with **N** peers configured, a row is marked
+  `published_at` **only after all N accept**; with one peer failing, the row stays unpublished and on the
+  next attempt **only the failing peer is re-POSTed** (the already-acked peers are not), and once it
+  accepts the row is published. *Test (partial-failure re-drive + dedupe):* a peer that fails once then
+  succeeds yields exactly-one net effect at the succeeding peer and at-most-one duplicate at the
+  already-acked peer (same delivery id, REQ-F004-018). *Test (schema invariant):* swapping
+  `HttpPeerTransport` for the fake single-ack transport (REQ-F004-049) requires **no** migration or column
+  change to `event_outbox`.
+
 ---
 
 ## §5 Delivery Semantics (guarantee, ordering, idempotency)
@@ -444,6 +522,22 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   (REQ-F004-004). *Test:* two rows with the same numeric `id` but produced under different
   `outbox_epoch` values (simulating a DB reset) yield **different** delivery ids; two re-deliveries of
   the same row under the same epoch yield the **same** delivery id.
+- REQ-F004-053 — **Consumer contract is broker-swap-invariant: dedupe + reorder-tolerance are baked in
+  NOW.** So that introducing a later **partitioned broker** (REQ-F004-050) causes **no behavioral change**
+  for consumers, the consumer contract F-004 publishes under the GTM HTTP transport already bakes in both
+  weaknesses a broker would exhibit: (a) **duplicates** — consumers MUST dedupe on the **stable transport
+  delivery id** (REQ-F004-018/048), which is the **same** id under HTTP now and under a broker later; and
+  (b) **reorder across keys** — consumers MUST tolerate events arriving in a different order than emitted
+  **across** ordering keys (F-004 promises order only **within** an ordering key, REQ-F004-016/031, and
+  `__unkeyed__` events carry no mutual order at all). F-004 does **NOT** promise strict global ordering to
+  consumers under HTTP, precisely so a future broker's per-partition ordering is a **subset** of what
+  consumers already tolerate — the swap adds no new consumer-visible failure mode. Because a **stable,
+  load-bearing delivery id already exists** at the transport/message level (REQ-F004-018), the swap forces
+  **no** envelope-contract change (REQ-F004-004/036) and no consumer rewrite. *Test:* a consumer built
+  against the GTM HTTP transport that dedupes on the delivery id and does not assume cross-key order
+  processes a stream correctly under (i) duplicate redelivery (REQ-F004-011) and (ii) cross-key
+  reordering, and processes the **same** stream with **no code change** when it is later delivered by a
+  partitioned-broker transport double.
 
 ---
 
@@ -571,6 +665,17 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   arrived within the timeout) **or** unpublished (timeout elapsed / hard kill), never partially written;
   after the supervisor restarts the relay, every remaining unpublished eligible row is delivered in
   per-key order, and a mid-drain kill produces at most a same-delivery-id duplicate, never a loss.
+- REQ-F004-054 — **The relay is a PER-APP pattern (each app drains its own outbox).** Consistent with the
+  grounded **copy-and-renamespace** precedent used for the bus / catalog / emitter (each application
+  carries its own `bff/src/events/*` and its own `event_outbox`), the relay is instantiated **once per
+  application**: the admin-console relay drains the **admin-console** `event_outbox` in the admin-console's
+  own process/deployment, and the **customer-web-app twin** — **out of scope for this spec**, tracked by
+  that app's own F-004 instantiation — runs its **own** relay draining its **own** outbox. F-004 does
+  **NOT** introduce a single cross-app worker reaching across multiple applications' databases; the
+  single-drainer constraint (REQ-F004-017) is **per-app-outbox**. This holds identically under the GTM
+  HTTP transport and a future broker (each app's relay simply targets the shared transport via its own
+  `EventTransport`, REQ-F004-049). *Test:* the admin-console relay selects only from the admin-console
+  `event_outbox`; no F-004 code path opens or drains another application's database.
 
 ### §6.5 Retention & pruning
 - REQ-F004-019 — **Outbox retention & pruning.** Published rows are retained for a configurable window
@@ -628,7 +733,9 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   `06-risks.md` R1 ("adopting the real bus later is a new adapter behind `EventBus`, with no route or
   service changes"). *Test:* enabling `bus` mode and pointing `EVENT_BUS_URL` at a conforming transport
   requires no edits to mutating routes/services or to `emitAdminEvent`; only relay/transport/config code
-  changes.
+  changes. The two-layer split that makes the transport a genuine drop-in — a transport-agnostic drain
+  orchestration layer plus a narrow `EventTransport` interface, with `HttpPeerTransport` for GTM and a
+  future `BrokerTransport` behind one config branch — is specified in §4.4 (REQ-F004-049/050/051).
 - REQ-F004-029 — **Delivery-bookkeeping schema (migration).** The relay's drain selection
   (REQ-F004-041), retry/backoff (REQ-F004-013), parking (REQ-F004-014), and observability require
   per-row DELIVERY bookkeeping the current `event_outbox` lacks. F-004 adds, via a migration (in
@@ -697,6 +804,22 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
   masquerading as healthy. In development an unrecognized value MAY warn and default to `inproc`.
   *Test:* `EVENT_BUS_MODE=buss` under production causes the BFF to **refuse to boot** with an error citing
   the invalid mode; the same value in development warns but starts.
+- REQ-F004-052 — **Peer-endpoint configuration (HTTP transport), consistent with the `EVENT_BUS_MODE` /
+  `EVENT_BUS_URL` convention.** The GTM `HttpPeerTransport` (REQ-F004-050) reads its **peer endpoint(s)**
+  from configuration that **extends the existing `EVENT_BUS_URL` convention** (`config.ts:52`) — a single
+  peer URL, or a delimited / enumerated list of peer URLs for multi-peer fan-out (REQ-F004-051) — read
+  **only by the relay process** (the BFF reads neither `EVENT_BUS_URL` nor any peer list, REQ-F004-021/045).
+  Transport selection stays gated by `EVENT_BUS_MODE=bus` (REQ-F004-021/046); `inproc` remains
+  development-only (REQ-F004-021). With `bus` mode and **no** peer endpoint configured the relay has
+  nowhere to deliver, so it **refuses to start in production** and reports `/ready` not-ready in
+  development — exactly the REQ-F004-045 posture for an unset `EVENT_BUS_URL` (the peer config **is** the
+  transport's `EVENT_BUS_URL`), while the BFF boots and keeps enqueuing regardless. A later
+  `BrokerTransport` reads its **own** connection config behind the **same single config branch**
+  (REQ-F004-049) — imposing **no** new production-config shape on producers, the emitter, or the BFF.
+  *Test:* the relay resolves its peer list from the `EVENT_BUS_URL`-convention config; `bus` mode with no
+  peer configured trips the REQ-F004-045 refuse-to-boot (production) / not-ready (dev) posture while the
+  BFF boots and enqueues; no peer/transport config is ever read by the BFF or reaches the browser
+  (REQ-F004-028).
 
 ---
 
@@ -793,15 +916,35 @@ Mirrors the brief's Out of Scope. Each is a boundary a QA engineer can assert F-
 These were the decisions F-004 could not responsibly make alone (aligned with the brief's Open Questions
 and `docs/design/06-risks.md` R1's deferred items). As of the **2026-07-07 human rulings** every item is
 resolved: each is marked **RATIFIED (2026-07-07)** where the adopted default was confirmed, or
-**DECIDED (2026-07-07)** with the change described where the ruling diverged from the default. No item
-remains open. The governing REQ(s) — updated in rev 3 to match — are cited.
+**DECIDED (2026-07-07)** with the change described where the ruling diverged from the default. As of the
+2026-07-07 rulings every item that **gates F-004** is resolved; **rev 7 (2026-07-19)** further resolves the
+**delivery-transport choice** for GTM (REQ-F004-030 below — HTTP-to-known-peer, broker as a future
+`EventTransport` adapter) and records a small set of **genuinely-open, non-gating post-GTM (broker-era)**
+items under that same REQ. The governing REQ(s) — updated in rev 3 to match, and rev 7 for the transport
+seam — are cited.
 
 - REQ-F004-030 — **Target transport/broker (external dependency?).** What is "the real on-box bus"
   concretely — a specific broker product, a socket/wire protocol, a platform service? Does
   `EVENT_BUS_URL` point at something that already exists, or must it be provisioned (an ops/platform
   dependency, not a console-code build, REQ-F004-008)? **RATIFIED (2026-07-07):** build the relay + a
   thin transport-adapter interface against `EVENT_BUS_URL`; the concrete broker is **deferred to ops**
-  (`06-risks.md` R1 keeps technology/protocol deferred). Governing: REQ-F004-008/022/043.
+  (`06-risks.md` R1 keeps technology/protocol deferred).
+  **RESOLVED (2026-07-19, rev 7):** for the **October 2026 GTM** the delivery transport is
+  **HTTP-to-a-known-peer** — `HttpPeerTransport` POSTs each drained envelope to configured peer
+  endpoint(s) (REQ-F004-050/051/052) — **NOT** a message broker. The "thin transport-adapter interface"
+  ratified above is now concretely the **`EventTransport` seam** (REQ-F004-049): a future broker is a
+  **drop-in `BrokerTransport`** (new class + one config branch, zero churn above the seam, REQ-F004-050),
+  and the transport-agnostic drain/orchestration layer is written once and proven swap-ready by a fake
+  second transport in tests (REQ-F004-049). **Swap trigger:** move to a broker when the **per-peer fan-out /
+  retry bookkeeping inside `HttpPeerTransport`** (REQ-F004-051) becomes the operational pain point — i.e.
+  as the **subscriber / peer count grows** (more subscribers to both applications' events, post-GTM).
+  **Genuinely still open (post-GTM, non-gating — do NOT block the GTM HTTP transport):** (a) the
+  **concrete broker product / wire protocol**; (b) whether any **specific future consumer** requires
+  guarantees stronger than per-key-order + effectively-once (e.g. **exactly-once** or **strict global
+  ordering**, REQ-F004-031); and (c) **broker-era re-tuning** of outbox retention (REQ-F004-035) and
+  first-connection backfill horizon (REQ-F004-037) at broker-scale volume — the **GTM decisions for
+  retention and backfill stand and are not reopened here**, only their broker-era re-evaluation is open.
+  Governing: REQ-F004-008/022/043/049/050/051/052.
 - REQ-F004-031 — **Delivery semantics: ordering / exactly-once.** At-least-once is the assumed floor
   (REQ-F004-011). Does any consumer require **exactly-once** or **strict ordering**? If ordering
   matters, is it **per-key** (e.g. per workspace/user id) or **global**? **DECIDED (2026-07-07):**
@@ -903,6 +1046,13 @@ remains open. The governing REQ(s) — updated in rev 3 to match — are cited.
 | Proposed Direction: outbox retention/pruning | §6.5 REQ-F004-019 + §9 REQ-F004-035 |
 | Proposed Direction: make `bus` production, demote `inproc` to dev-only (hard-refuse in prod) | §6.6 REQ-F004-021/045 + §7 REQ-F004-044 + §9 REQ-F004-039 |
 | Delivery mechanics: conforming transport contract (ack, delivery-id, permanent/transient) | §5 REQ-F004-043 |
+| Transport seam: transport-agnostic drain + narrow `EventTransport` interface (broker-swap-ready; fake-transport test) | §4.4 REQ-F004-049 |
+| GTM transport = HTTP-to-known-peer; broker a future drop-in adapter (zero-churn boundary) | §4.4 REQ-F004-050 + §9 REQ-F004-030 |
+| Multi-peer fan-out ack; `published_at` keeps its meaning; outbox schema invariant across swap | §4.4 REQ-F004-051 |
+| Peer-endpoint config extends the `EVENT_BUS_MODE`/`EVENT_BUS_URL` convention | §6.6 REQ-F004-052 |
+| Consumer contract broker-swap-invariant (dedupe + reorder-tolerance baked in now) | §5 REQ-F004-053 |
+| Relay is a per-app pattern (each app drains its own outbox; twin out of scope) | §6.4 REQ-F004-054 |
+| Ruling: delivery-transport RESOLVED — HTTP-to-known-peer for GTM, broker future adapter; swap trigger | §9 REQ-F004-030 (rev 7) |
 | Build behind the existing `EventBus` seam (no route/service changes) | §1.1 REQ-F004-001, §6.6 REQ-F004-022 |
 | Out of scope: event contract/catalog itself | §2 REQ-F004-004 |
 | Out of scope: transactional outbox WRITE | §2 REQ-F004-005 |
@@ -1031,3 +1181,26 @@ retry posture, with transient busy on post-ack `markPublished` explicitly not co
 nominal path, distinct from the tolerated crash-overlap window (N4); and a prefix-matching event missing
 its target id field falls back to `__unkeyed__` rather than a literal `ws:undefined` (N5, §3). No REQ ids
 were renumbered or deleted.
+
+Rev 7 (folds in the resolved delivery-transport decision, 2026-07-19) resolves the last open axis of
+REQ-F004-030: the GTM delivery transport is **HTTP-to-a-known-peer** (`HttpPeerTransport` POSTing each
+drained envelope to configured peers), **not** a message broker, and a real broker is a **post-GTM,
+drop-in `EventTransport` adapter**. The core swap-ability guarantee is now pinned by a **two-layer
+transport seam** (new §4.4, REQ-F004-049): a transport-agnostic drain/orchestration layer written once
+(polling, per-key ordering, retry/backoff, mark-published, park, metrics) behind a **narrow
+`EventTransport` interface** selected the way `getEventBus` already switches on `EVENT_BUS_MODE`, so a
+future `BrokerTransport` is a new class + one config branch with **zero churn** to producers, the emitter,
+the envelope, the outbox write, routes, or services (REQ-F004-050). Fan-out ack semantics
+(REQ-F004-051 — publish only after **every** peer accepts; partial failure re-drives only un-acked peers;
+`published_at` keeps its single meaning and the outbox schema is unchanged when the transport is later
+swapped), peer-endpoint config (REQ-F004-052, extending the `EVENT_BUS_URL` convention), the
+broker-swap-invariant consumer contract (REQ-F004-053 — dedupe + reorder-tolerance baked in now), and the
+per-app relay instantiation note (REQ-F004-054; the customer-web-app twin is out of scope, tracked by its
+own F-004) are added. Swap-ability is locked by tests: a **fake/second `EventTransport`** exercises the
+broker swap in miniature (REQ-F004-049), plus crash/restart backfill (REQ-F004-011/015), poison-event
+parking (REQ-F004-014), **multi-peer fan-out ack** (REQ-F004-051), and **idempotency + reorder tolerance**
+(REQ-F004-053). Genuinely-open, non-gating post-GTM items (concrete broker choice; any future consumer's
+exactly-once/global-ordering need; broker-era re-tuning of retention/backfill) are recorded under
+REQ-F004-030 without reopening the ratified GTM decisions. New ids REQ-F004-049..054 were **appended**;
+no existing REQ id or § was renumbered or deleted (REQ-F004-022/030 were edited in place with rev-7
+cross-references).
