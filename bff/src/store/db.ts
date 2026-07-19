@@ -288,6 +288,31 @@ export function migrate(): void {
       WHERE published_at IS NULL AND parked_at IS NULL;
   `);
 
+  // F-004 perf (REQ-F004-027/034). selectEligible was O(TOTAL table size), not O(backlog): retained
+  // PUBLISHED rows (7-day retention) bloated the outer scan into a full-table SCAN, and the per-key
+  // head-of-line subquery fell back to a rowid range scan — median 4.5ms @5k rows → 4851ms @205k.
+  // The two additional partial indexes below make selectEligible index-driven and FLAT as published
+  // rows accumulate (EXPLAIN: SCAN o USING INDEX idx_outbox_live_id + SEARCH e USING INDEX
+  // idx_outbox_unpublished_key; no full-table scan). The eligibility QUERY is UNCHANGED — semantics
+  // (per-key strict order, __unkeyed__ independence, parked-blocks-its-own-key) are preserved exactly.
+  //  • idx_outbox_live_id: id-ordered over ONLY eligible (unpublished, non-parked) rows, so the outer
+  //    drive scan (WHERE published_at IS NULL AND parked_at IS NULL, ORDER BY id ASC) touches just the
+  //    live working set — no sort, no full-table scan.
+  //  • idx_outbox_unpublished_key: (ordering_key, id) over UNPUBLISHED rows INCLUDING parked ones. Its
+  //    partial predicate is `published_at IS NULL` ONLY (deliberately NOT parked_at), matching the
+  //    subquery's `e.published_at IS NULL` exactly — so a parked older row is still found as a blocker
+  //    and continues to stall its own key (REQ-F004-014/042). Adding parked_at here would let SQLite
+  //    use the index but would DROP parked rows from the blocker set, silently breaking that ratified
+  //    semantic; this predicate keeps correctness while still being index-driven.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_outbox_live_id
+      ON event_outbox (id)
+      WHERE published_at IS NULL AND parked_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_outbox_unpublished_key
+      ON event_outbox (ordering_key, id)
+      WHERE published_at IS NULL;
+  `);
+
   // F-004: seed the delivery-id epoch exactly once (REQ-F004-048). INSERT OR IGNORE is idempotent
   // — generated on the FIRST migrate() that runs this, then never changed (the CHECK(id=1) row is
   // the single source of truth for the DB's lifetime).
@@ -390,8 +415,14 @@ export function rollbackF005(): void {
 // so this rollback NEVER loses an emitted event — only delivery bookkeeping.
 export function rollbackF004(): void {
   const run = db.transaction(() => {
-    // 1. Index first.
-    db.exec(`DROP INDEX IF EXISTS idx_outbox_eligible;`);
+    // 1. Indexes first (the table rebuild in step 2 would drop them anyway, but drop explicitly to
+    //    match the pattern and keep the reversal self-documenting). Includes the two F-004 perf
+    //    indexes added for REQ-F004-027/034.
+    db.exec(`
+      DROP INDEX IF EXISTS idx_outbox_eligible;
+      DROP INDEX IF EXISTS idx_outbox_live_id;
+      DROP INDEX IF EXISTS idx_outbox_unpublished_key;
+    `);
     // 2. Rebuild event_outbox to its original 4-column shape, preserving rows + ids. Idempotent:
     //    if the F-004 columns are already gone this simply recreates an identical 4-column table.
     db.exec(`
