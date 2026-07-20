@@ -60,6 +60,16 @@ Product-owner rulings of 2026-07-19 frame the value:
   diagnose past per-workspace incidents.
 - This is **explicitly not** billing or metering — that use is ruled out, so
   business value should not be argued from revenue-metering grounds.
+- **Product-owner addition, 2026-07-19 (verbatim):** "We view that the data
+  that we would get from observability tools would be of value to our customers
+  and could benefit our revenues as a way to provide customer value through
+  reports or dashboards." This refines the exclusion above: usage
+  *metering/chargeback* remains out of scope, but customer-facing reports and
+  dashboards built on this data are viewed as a revenue-benefiting product
+  capability. As a falsifiable claim: customers value per-workspace
+  usage/performance reporting enough that it strengthens retention or supports
+  revenue — testable against customer adoption of, or willingness to pay for,
+  such reporting once deployed.
 - The feature is bounded by a hard product constraint: zero-cloud, air-gap-
   friendly observability. The product owner's verbatim statement of the value
   proposition this constraint protects:
@@ -227,3 +237,6 @@ Risk scores, does not set them.
 - **Does GTM need the full three-consumer surface,** or an ops-minimum first?
 - **Is alerting/paging in or out?** Provisionally out of scope above; flagged
   here in case a consumer needs it.
+- **Are customer-facing reports/dashboards a packaged/paid capability** (which
+  would harden the revenue link in the Business Rationale) or an included
+  value-add that supports retention only?
