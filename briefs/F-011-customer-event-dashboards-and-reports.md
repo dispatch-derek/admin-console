@@ -272,7 +272,10 @@ likely a new append-only time-ordered table following the existing `audit_log`/
 `event_outbox` shape and the repo's idempotent `CREATE TABLE IF NOT EXISTS` migration
 convention, plus an inbound retention policy which currently has no counterpart in config;
 (3) a **query/read surface** over that table serving all three audiences' access patterns —
-per-customer drill-down, exportable evidence-grade extracts, and cross-customer aggregates;
+per-customer drill-down, exportable evidence-grade extracts, and cross-customer aggregates —
+and, per the 2026-07-20 ruling recorded in Open Question 2, **also serving customer-web-app as
+a second consumer**, which makes this layer a cross-app API contract with per-customer
+authorization rather than an internal-only read path;
 and only then (4) a **presentation layer** in `web/src`, where there is currently no
 charting dependency and no chart component, so tabular/list rendering could reuse the
 existing shared `Table.tsx` and the `ChatOversight.tsx` paging idiom, while any time-series
@@ -286,6 +289,18 @@ all 13 families get equal treatment are open.
 UX complexity and risk reads from the **ux-designer agent** (DESIGN role, 2026-07-19). These
 **inform** the human's later Effort and Risk scores; they do not set them, and no score is
 proposed here. Like the Proposed Direction they attach to, they are non-binding.
+
+> **Both reads predate the 2026-07-20 two-consumer ruling (Open Question 2) and were written
+> against an internal-only reading of this row.** They remain accurate for the console-side
+> surface, but they do not cover the second consumer. Not yet assessed by any design pass:
+> the cross-app query contract itself, per-customer authorization at the query layer, and how
+> a customer-visible retention window should be communicated. The `ux_risk_read` below already
+> calls the export format "the least reversible" decision here — the cross-repo query contract
+> plausibly displaces it, since customer-web-app would depend on its shape. **The row's scores
+> (`effort=6`, `risk=2`) were set the same day on the internal-only reading and have not been
+> revisited against this ruling; `risk=2` ("well-understood; easily reversible") in particular
+> sits awkwardly with a contract another repo consumes.** Re-scoring belongs to
+> `/prioritize-features`, not to this brief.
 
 - **complexity_read:** The Proposed Direction reads as one surface but design-wise it is three
   distinct patterns landing together. (a) Per-record drill-down is the only one with real
@@ -374,13 +389,22 @@ proposed here. Like the Proposed Direction they attach to, they are non-binding.
    admin-console as a data layer; the customer-facing surface that consumes it moves to
    customer-web-app as its own row there. The two rows are therefore **not** competing for one
    surface, and neither owns the other's parts. *(Recorded in F-006's brief the same day.)*
-2. **Is F-011 a precursor to a customer-facing capability?** Ruling 1 (2026-07-19) names three
-   *internal* audiences, and the 2026-07-20 boundary ruling confirms customer-facing
-   consumption belongs in customer-web-app — so F-011 is **internal-only** as scoped. What
-   remains open is narrower: does any part of the `customer.*` record eventually need to reach
-   customers themselves via customer-web-app, and if so does F-011's storage/query layer have
-   to be designed to serve that second consumer, or would that be a separate feed? Nothing on
-   record settles it, and it bears on the persistence/query design.
+2. ~~**Is F-011 a precursor to a customer-facing capability?**~~ **RESOLVED by product-owner
+   ruling, 2026-07-20:** yes. There will be cases where `customer.*` records reach customers
+   via customer-web-app, and **F-011's storage/query layer has to serve that second consumer.**
+   This is a scoping constraint on *this* row, not a deferral: the query layer is a
+   **two-consumer contract** from the outset — internal console surfaces (the three audiences
+   in Affected Users) *and* customer-web-app reading on a customer's behalf — even though the
+   customer-facing presentation itself stays in customer-web-app per the boundary ruling in
+   Open Question 1. Consequences that must not be lost downstream: (a) the read path needs a
+   consumer-facing API surface, not just internal page queries; (b) it needs per-customer
+   authorization/scoping strong enough that customer A can never read customer B's records —
+   an internal-only surface would not have needed that boundary enforced at the query layer;
+   (c) retention (Open Question 3) now has a customer-visible dimension, since customers will
+   perceive the window; (d) the query contract becomes cross-repo and therefore expensive to
+   change once customer-web-app depends on it. **This arrived after the row was scored
+   (`effort=6`, `risk=2`, both set 2026-07-20 on an internal-only reading) — see the note in
+   Design Considerations; re-scoring is `/prioritize-features`' call, not this brief's.**
 3. **Inbound retention policy.** No inbound-event retention configuration exists in the repo
    (the only retention of record is the 7-day outbound outbox prune), and no compliance
    obligation is on record to derive one from. How long must received `customer.*` events be
