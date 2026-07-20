@@ -28,15 +28,22 @@ only after all N peers ack (`bff/src/relay/http-peer-transport.ts:29-34,36-45,55
 `specs/F-004-production-event-bus.md:483`). cwa returns 401 on auth failure, and 401 lands in
 the permanent branch of this app's REQ-F004-055 classifier (2xx ack / 5xx-408-429-network
 transient / everything-else-4xx-and-3xx permanent) — permanent park by design on cwa's side.
-The workbook row's own note describes this work as "config-only on the relay side"; the
-evidence above contradicts that characterization, since a peer added without a credential path
-would be parked permanently by its own consumer on first delivery rather than delivering
-anything.
+The workbook row's own note describes the relay-side work as "config-only on the relay side
+(comma-list peer per REQ-F004-052) **plus credential provisioning/runbook**" — so the note does
+scope credential work in. What the evidence above adds is that the credential cannot be
+*provisioned* into anything, because no code path carries one: a peer added today would be
+parked permanently by its own consumer on first delivery rather than delivering anything. The
+work is therefore a transport change plus config, not configuration alone.
+*(Correction applied 2026-07-20: an earlier revision of this brief claimed the row's note was
+contradicted outright. That overstated it — the note anticipated credential provisioning; only
+the "config-only on the relay side" characterization is off, and the missing code path is the
+substantive finding.)*
 
 Honest statement of who feels this today: **nobody currently does.** cwa's
 `/api/events/ingest` does not exist in code (0 of 41 `bff/src` files and 0 of 9 route modules
 in cwa implement it; it is spec-text only, cwa `specs/F-005-cross-app-identity-sync.md:179-193`),
-and cwa's F-005 row is In Progress with 0 of 7 cwa rows Implemented on the ingest side. The
+and cwa's F-005 row is In Progress; no cwa row covering the ingest endpoint is Implemented
+(cwa's F-001 *is* Implemented, but it is the BFF-layer/domain-events row, not ingest). The
 missing capability is a producer-side precondition for consumer work that has not been built,
 not an outage anyone is presently experiencing.
 

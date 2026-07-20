@@ -20,7 +20,7 @@ in admin-console can see it, hold it, or answer a question from it.
 Observed state of the gap in this repo:
 
 - **No inbound surface.** `bff/src` has 0 matches for `customer.` and 0 for `ingest`;
-  0 of the 30 registered HTTP routes across 8 route files is an event-ingest path;
+  none of the 52 route-method registrations across 8 route files is an event-ingest path;
   `bff/src/relay/http-peer-transport.ts` is outbound-only with no inbound counterpart.
 - **Nowhere for the record to live.** The single better-sqlite3 WAL store has 11 tables
   and 9 repository modules; two are append-only and time-ordered (`audit_log`,
@@ -30,7 +30,7 @@ Observed state of the gap in this repo:
 - **No capability to render the record over time.** `web/package.json` declares 3
   production dependencies (`@phosphor-icons/react`, `react`, `react-dom`); there are 0
   charting/graphing libraries in deps or devDeps, 0 chart/graph/plot/sparkline components
-  across 128 files in `web/src`, and no SVG-plot or canvas rendering code.
+  across 132 files in `web/src`, and no SVG-plot or canvas rendering code.
 
 Consequently, three groups currently have no way to get at cwa customer activity from the
 console: staff investigating what happened on a given customer account, reviewers who need
@@ -85,7 +85,7 @@ Falsifiable claims:
 
 1. **cwa's customer activity record is currently unreachable from admin-console.**
    Falsifiable by grepping `bff/src` for `customer.`/`ingest` (currently 0 matches) and by
-   enumerating the 30 registered routes (0 ingest paths). If any of the three named
+   enumerating the 52 route-method registrations (0 ingest paths). If any of the three named
    audiences needs cwa activity data, admin-console cannot supply it today at any latency.
 2. **cwa has already named admin-console as the intended consumer.** cwa's F-007 brief
    records product-owner ruling (d), 2026-07-19: admin-console is the intended near-term
@@ -190,7 +190,7 @@ Agent-discovered signals (re-verify before scoring):
   `appstate.routes.ts:26,52`; `auth.routes.ts:51,60`; `users.routes.ts:34`;
   `chat.routes.ts:81`.
 - [agent-discovery 2026-07-19] admin-console has no inbound event surface: 0 matches for
-  `customer.` and 0 for `ingest` in `bff/src`; 0 of 30 registered HTTP routes across 8
+  `customer.` and 0 for `ingest` in `bff/src`; 0 of 52 route-method registrations across 8
   route files is an event-ingest path; `bff/src/relay/http-peer-transport.ts` is
   outbound-only with no inbound counterpart.
 - [agent-discovery 2026-07-19] Persistence: better-sqlite3, single WAL file, **0 `.sql`
@@ -201,7 +201,7 @@ Agent-discovered signals (re-verify before scoring):
   events**. `bff/src/store/db.ts:79-222,224-253,318-424`.
 - [agent-discovery 2026-07-19] No charting capability: 3 production deps total
   (`@phosphor-icons/react`, `react`, `react-dom`); 0 charting/graphing libraries in deps or
-  devDeps; 0 chart/graph/plot/sparkline components across 128 files in `web/src`; no
+  devDeps; 0 chart/graph/plot/sparkline components across 132 files in `web/src`; no
   SVG-plot or canvas rendering code. `web/package.json:14-18`.
 - [agent-discovery 2026-07-19] Largest existing read-only surfaces:
   `features/featureToggles/FeatureTogglesPage.tsx` 180 lines;
@@ -299,7 +299,7 @@ proposed here. Like the Proposed Direction they attach to, they are non-binding.
   getting" confirmation, and retention-window communication are all new interaction vocabulary
   here. (c) Cross-customer aggregate/time-series is the genuine discontinuity — `web/package.json`
   carries 3 production dependencies and zero charting libraries, and there are 0
-  chart/graph/plot/sparkline components and no SVG-plot or canvas code across 128 files in
+  chart/graph/plot/sparkline components and no SVG-plot or canvas code across 132 files in
   `web/src`. Any trend rendering is either a new dependency that has to pass 4 build-blocking
   gates (`lint:ds` eslint+oxlint, `lint:css` stylelint, `tsc`, `vite build`) and 688 lines of
   token-conformance tests including a dual-theme harness, or hand-built SVG that has to declare
