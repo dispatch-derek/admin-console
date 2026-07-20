@@ -357,24 +357,30 @@ proposed here. Like the Proposed Direction they attach to, they are non-binding.
   `event_outbox` retention/prune behavior.
 - **Usage metering, chargeback, or billing** off customer event data — F-006's brief already
   records this as out of scope, and nothing here reopens it.
-- **F-006's local-first workspace LLM observability telemetry** — a separate data source
-  with its own row; whether the two share a reporting surface is an Open Question, not an
-  in-scope commitment.
+- **F-006's local-first workspace LLM observability telemetry** — a separate data source with
+  its own row. Per the 2026-07-20 boundary ruling the two rows do not compete for one surface
+  (see Open Question 1); F-006's telemetry is not this row's to ingest, store, or display.
 - **Extracting a shared event/relay package across the two repos** — deferred by the
   2026-07-18 ratified "no shared package yet" decision.
 
 ## Open Questions — an empty section is a red flag.
 
-1. **Boundary with F-006.** F-006's brief already asks "Where does customer-facing reporting
-   live?" F-006 (local LLM observability telemetry) and F-011 (the cwa `customer.*` stream)
-   are two different data sources that could collide on one reporting surface. Are these one
-   reporting capability with two feeds, or two independent surfaces? Which row owns the
-   shared parts? Unresolved, and it materially changes both rows' shape.
-2. **Internal-only or customer-facing?** F-006 records the unresolved question of whether
-   reports/dashboards are a packaged/paid capability. Ruling 1 names three *internal*
-   audiences for F-011, but the strongest business-intent statement on record talks about
-   customer value and revenue. Is F-011 internal-only, or a precursor to a customer-facing
-   capability?
+1. ~~**Boundary with F-006.**~~ **RESOLVED by product-owner ruling, 2026-07-20.** The split is
+   by *audience and purpose*, not by data source: **admin-console is where the data about
+   customers' usage of the system lives; customer-web-app is where the customer's own
+   curiosity is satisfied, by reports of interest to them.** F-011 is reports *about* customer
+   behaviour and activity, consumed by internal staff — so it is correctly placed here, and the
+   three audiences named in Affected Users stand. F-006's telemetry likewise stays in
+   admin-console as a data layer; the customer-facing surface that consumes it moves to
+   customer-web-app as its own row there. The two rows are therefore **not** competing for one
+   surface, and neither owns the other's parts. *(Recorded in F-006's brief the same day.)*
+2. **Is F-011 a precursor to a customer-facing capability?** Ruling 1 (2026-07-19) names three
+   *internal* audiences, and the 2026-07-20 boundary ruling confirms customer-facing
+   consumption belongs in customer-web-app — so F-011 is **internal-only** as scoped. What
+   remains open is narrower: does any part of the `customer.*` record eventually need to reach
+   customers themselves via customer-web-app, and if so does F-011's storage/query layer have
+   to be designed to serve that second consumer, or would that be a separate feed? Nothing on
+   record settles it, and it bears on the persistence/query design.
 3. **Inbound retention policy.** No inbound-event retention configuration exists in the repo
    (the only retention of record is the 7-day outbound outbox prune), and no compliance
    obligation is on record to derive one from. How long must received `customer.*` events be
