@@ -70,6 +70,23 @@ Product-owner rulings of 2026-07-19 frame the value:
   usage/performance reporting enough that it strengthens retention or supports
   revenue — testable against customer adoption of, or willingness to pay for,
   such reporting once deployed.
+- **Product-owner ruling, 2026-07-20 — where each half of that value lands.**
+  admin-console is where the data about customers' usage of the system *lives*;
+  customer-web-app is where the customer's own curiosity is satisfied, by reports
+  that are of interest to them. The two halves of the preceding claim therefore
+  sit in different repos: **F-006's scope in admin-console is the telemetry —
+  capturing, storing, and serving per-workspace usage/performance/resource-load
+  data** (plus the ops and troubleshooting consumers, which are internal and stay
+  here). The **customer-facing reporting surface that consumes it belongs in
+  customer-web-app**, as its own row in that repo's workbook, and is not F-006's
+  to build. Consequence for this row's business case, stated plainly so it is not
+  over-claimed: the revenue/retention argument above is **enabled by** F-006 but
+  **realized in** customer-web-app by work that is not yet tracked there. F-006's
+  own directly-attributable value is the data layer and the two internal
+  consumers. *(This ruling does not change any score on this row; whether the
+  narrower attribution warrants revisiting `business_value` — currently 6, raised
+  5→6 partly on the strength of the 2026-07-19 statement above — is a re-score
+  question for `/prioritize-features`, not for this brief.)*
 - The feature is bounded by a hard product constraint: zero-cloud, air-gap-
   friendly observability. The product owner's verbatim statement of the value
   proposition this constraint protects:
@@ -232,8 +249,15 @@ Risk scores, does not set them.
   cadence balances fidelity against growth?
 - **Retention / rollup policy on the appliance,** and whether observability data
   is included in backups (ties to F-008 backups).
-- **Where does customer-facing reporting live** — inside customer-web-app as a
-  separate workbook row (as i18n is handled), or exported from admin-console?
+- ~~**Where does customer-facing reporting live** — inside customer-web-app as a
+  separate workbook row (as i18n is handled), or exported from admin-console?~~
+  **RESOLVED by product-owner ruling, 2026-07-20:** inside customer-web-app, as a
+  separate row in that repo's workbook. admin-console holds the data about
+  customers' usage; customer-web-app is where the customer's curiosity is
+  satisfied by reports of interest to them. **Follow-up, not yet done:** that
+  customer-web-app row does not exist — the consuming feature is untracked in
+  that repo, the same traceability gap admin-console F-011 was created to close
+  in the opposite direction.
 - **Does GTM need the full three-consumer surface,** or an ops-minimum first?
 - **Is alerting/paging in or out?** Provisionally out of scope above; flagged
   here in case a consumer needs it.
