@@ -296,11 +296,17 @@ proposed here. Like the Proposed Direction they attach to, they are non-binding.
 > the cross-app query contract itself, per-customer authorization at the query layer, and how
 > a customer-visible retention window should be communicated. The `ux_risk_read` below already
 > calls the export format "the least reversible" decision here — the cross-repo query contract
-> plausibly displaces it, since customer-web-app would depend on its shape. **The row's scores
-> (`effort=6`, `risk=2`) were set the same day on the internal-only reading and have not been
-> revisited against this ruling; `risk=2` ("well-understood; easily reversible") in particular
-> sits awkwardly with a contract another repo consumes.** Re-scoring belongs to
-> `/prioritize-features`, not to this brief.
+> plausibly displaces it, since customer-web-app would depend on its shape.
+>
+> **Re-score applied 2026-07-20:** `risk` raised **2 → 6** by the product owner in response to
+> this ruling — anchor 6, *"some technical/market unknowns or third-party dependency"*, in place
+> of anchor 2's "well-understood; easily reversible", which could not hold once another repo
+> consumes the query contract. `priority_score` moved 11.9 → **9.5** (rank 13 → 15). Status is
+> unchanged at **Deferred**: the deferral always rested on the hard sequencing blocker (cwa
+> F-005 → cwa F-007), not on the score, and the lower score only reinforces it. `effort=6` was
+> left as-is and has still not been revisited against the two-consumer scope — the consumer-facing
+> API surface and per-customer authorization in Open Question 2 are additive to what that 6 was
+> estimated against.
 
 - **complexity_read:** The Proposed Direction reads as one surface but design-wise it is three
   distinct patterns landing together. (a) Per-record drill-down is the only one with real
