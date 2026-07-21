@@ -11,7 +11,7 @@ Per the 2026-07-20 product-owner ruling, the party who *should* author those not
 the admin user working in admin-console: notices are instance-wide operational
 communications and are the operator's message, not an individual app's message. That
 capability does not exist here. This repository has no notice data model, no notice API,
-and no notice surface: `bff/src/events/catalog.ts` declares 22 `admin.*` event types
+and no notice surface: `bff/src/events/catalog.ts` declares 21 `admin.*` event types
 (`admin.workspace.*`, `admin.user.*`, `admin.invite.*`, `admin.instance.*`,
 `admin.raw_env.written`, `admin.baseline_prompt.*`, `admin.feature_toggle.changed`) and no
 notice family at all; the only "notice" string matches under `web/src` are unrelated UI
@@ -29,7 +29,11 @@ about *where authorship lives and what record it leaves*, not about whether the
 communication can happen: content originates in a per-app surface, is visible only to that
 app, and leaves no entry in admin-console's central audit trail
 (`recordAudit`, `bff/src/audit/audit.ts:21`, backed by `audit_log`) even though the
-operator's other instance-wide actions do.
+operator's other instance-wide actions do. *Precision added 2026-07-20:* this does not
+mean the write is unaudited — customer-web-app records `notice.create` and `notice.retire`
+in its own audit log (`bff/src/routes/appstate.routes.ts:76,88`). The record exists; it
+lives in the consuming application rather than the operator's console. See Business
+Rationale claim 1.
 
 ## Affected Users
 
@@ -52,7 +56,11 @@ basis to state:
   path, or whether that path is used at all in practice;
 - **whether admin-console's admin population and customer-web-app's admin population are
   the same people.** This is the load-bearing unknown for both affected-user groups (see
-  Open Question 4) and it is not answerable from either repository.
+  Open Question 4). *Updated 2026-07-20:* it is **partially** answerable from the repos —
+  the two are structurally distinct identity planes, but cwa's admin plane is populated by
+  admin-console emission, and only one console operator is provisionable per deployment,
+  so the same human most likely holds both. What no repository can supply is the headcount
+  confirmation. See Open Question 4 for the full finding.
 
 No numbers are estimated here. Establishing headcount, publish frequency, and population
 overlap is work for the scoring-time evidence pass, drawing on sources outside these
@@ -66,11 +74,23 @@ instance-wide operational communications. The falsifiable claims available:
 1. **Instance notices should originate where the operator works and be centrally
    auditable.** admin-console is the operator's surface; its mutation pattern already
    records every verified write to `audit_log` via `recordAudit`
-   (`bff/src/audit/audit.ts:21`) and emits an `admin.*` event. Notices, which are
-   instance-wide operational statements, currently sit outside that discipline entirely.
-   *Falsifiable by:* discovering that customer-web-app's local notice writes are already
-   audited to a comparable standard, or that notice content is not considered
-   governance-relevant by the people accountable for it.
+   (`bff/src/audit/audit.ts:21`) and emits an `admin.*` event.
+   ~~Notices, which are instance-wide operational statements, currently sit outside that
+   discipline entirely.~~
+   **PARTIALLY FALSIFIED at scoring time, 2026-07-20 — this claim's own stated falsifier
+   fired.** The falsifier named below was "discovering that customer-web-app's local
+   notice writes are already audited to a comparable standard." They are: cwa audits both
+   notice mutations — `ctx.audit({ actor, action: 'notice.create', outcome: 'success',
+   target: { id } })` at `bff/src/routes/appstate.routes.ts:76` and
+   `action: 'notice.retire'` at line 88, both behind `requireAdmin`. So notices do **not**
+   sit outside the audit discipline; they are audited in the *other* application's log.
+   The surviving claim is narrower and should be read as such: the gap is audit-**locus**,
+   not audit-**absence** — a record exists, but not in the operator's own console, and not
+   in a single place if more consumer apps are added.
+   *What would falsify the surviving version:* establishing that a per-app audit record is
+   operationally sufficient for whoever is accountable for instance communications, or
+   that no one has ever needed to answer "what was published, by whom, when" from a single
+   place.
 
 2. **The strong version of the problem statement was tested during drafting and fails; the
    weaker version is what stands.** The strong version — "instance notices cannot be
@@ -137,7 +157,7 @@ drafting session. **No discovery scan was run**, so nothing here carries an
 settled fact — file contents and line numbers drift.
 
 **admin-console (this repo) — producer side, does not exist yet:**
-- Zero notice capability. `bff/src/events/catalog.ts` declares 22 `admin.*` event types
+- Zero notice capability. `bff/src/events/catalog.ts` declares 21 `admin.*` event types
   (`admin.workspace.*`, `admin.user.*`, `admin.invite.*`, `admin.instance.*`,
   `admin.raw_env.written`, `admin.baseline_prompt.*`, `admin.feature_toggle.changed`) and
   no notice family. The only "notice" matches under `web/src` are unrelated copy in
@@ -176,6 +196,20 @@ settled fact — file contents and line numbers drift.
   notices store with `insert`, `setActive`, `listActive` (lines 60, 75, 89). Shipped in
   that repo's F-001. This is the evidence that falsifies the strong form of the problem
   statement — see Business Rationale claim 2.
+- [verified 2026-07-20, at scoring time] **Those local notice writes are already audited.**
+  `ctx.audit({ actor, action: 'notice.create', outcome: 'success', target: { id } })` at
+  `bff/src/routes/appstate.routes.ts:76`, and `action: 'notice.retire'` at line 88 — both
+  behind `requireAdmin`. This partially falsifies Business Rationale claim 1: the gap is
+  audit-**locus**, not audit-**absence**.
+- [verified 2026-07-20, at scoring time] **Population-overlap evidence (Open Question 4).**
+  admin-console keeps console operators as `staff` rows (`bff/src/store/db.ts:79`), while
+  Users-screen users are created in the engine only (`bff/src/services/user.service.ts:101,125`)
+  and emitted as `admin.user.*`. customer-web-app's users — including the `role: 'admin'`
+  holders `requireAdmin` gates notice authoring on — are projected from those events
+  (`customer-web-app/bff/src/identity/projection.service.ts`; role mapping
+  `bff/src/auth/user.service.ts:51`). Distinct planes, but one populates the other. With
+  F-009's finding that only the bootstrap account can log into the console, the same human
+  most likely holds both credentials.
 - Event ingest is live and Implemented (its F-005): `POST /api/events/ingest`
   (`bff/src/routes/ingest.routes.ts:80`), session-guard-exempt
   (`bff/src/server/session-guard.ts:14`), with delivery-id dedupe
@@ -369,7 +403,29 @@ and no design reference bundle exists yet.
    already effectively in the operator's hands and only the central-record half of the
    rationale survives. If they are different populations, the misplacement is real. This
    question decides whether Business Rationale claim 2 holds in its weakened form or fails
-   outright, and it is not answerable from either repository.
+   outright, and ~~it is not answerable from either repository~~.
+   **PARTIALLY ANSWERED at scoring time, 2026-07-20 — the "not answerable" claim was
+   wrong.** Architecture answers more of this than drafting assumed:
+   - admin-console runs **two separate identity planes**. Console operators are `staff`
+     rows (`bff/src/store/db.ts:79`); users created through the Users screen are created in
+     the AnythingLLM engine only (`bff/src/services/user.service.ts:101,125`), emitting
+     `admin.user.*`.
+   - customer-web-app's users — **including the `role: 'admin'` holders that `requireAdmin`
+     gates `POST /api/notices` on** — are projected *from those emitted events*
+     (`customer-web-app/bff/src/identity/projection.service.ts`; role mapping at
+     `bff/src/auth/user.service.ts:51`).
+   - So the two populations are structurally **distinct planes**, but cwa's admin plane is
+     *populated by* the admin-console operator's actions.
+   - Combined with F-009's finding that only the first-boot bootstrap account can log into
+     the console and there is no shipped UI to add a second operator
+     (`briefs/F-009-console-login-for-console-created-admin-users.md`), the likely
+     real-world state in the one known deployment is that **the same human holds both
+     credentials**.
+   *What remains genuinely open:* this is inference from architecture, not headcount data.
+   It is not settled, and it points toward Business Rationale claim 2's weakened form
+   weakening *further* — toward the central-record half being all that stands. Confirming
+   or refuting it needs an actual look at who holds which accounts in a real deployment,
+   which no repository can supply.
 5. **What are the exact event names?** `admin.notice.created` / `.updated` / `.retired` is
    the working assumption drawn from `admin.user.*`, but the catalog's existing naming
    conventions (`bff/src/events/catalog.ts`) should govern, and whether "update" and
