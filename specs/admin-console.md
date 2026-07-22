@@ -4,9 +4,8 @@ Status: Draft rev 7 (rev-6 spec-review resolutions applied) — for implementati
 Grounding reference: `docs/anythingllm-surface.md` (authoritative engine surface; captured from
 the live instance on 2026-07-03). Every functional requirement below cites the concrete
 engine endpoint(s)/field(s) it maps to.
-Governing architecture: `docs/governing-architecture.md` (binding white-label strategy; source
-`front-end-custom/web/plan/AnythingLLM_Customization_Strategy.pdf`). §4 and the event model
-below conform to it.
+Governing architecture: `docs/governing-architecture.md` (binding white-label strategy). §4 and the
+event model below conform to it.
 Change history: rev 1 initial draft; rev 2 folded resolved decisions OQ-1..OQ-6 (§12);
 rev 3 applied spec-review resolutions BL-1..NI-3 (§13); rev 4 aligned the architecture to the
 governing white-label strategy — BFF as anti-corruption layer, product-verb API, engine shapes
@@ -66,8 +65,8 @@ administration, enabling multi-user mode) are out of scope for the BFF — see �
 ## §2 Definitions & Glossary
 
 - **BFF** — Backend-for-Frontend: Fastify + TypeScript service that injects the AnythingLLM API
-  key and proxies to `/api/v1`. Mirrors `front-end-custom/bff`.
-- **Web** — React + TypeScript + Vite front-end. Mirrors `front-end-custom/web`.
+  key and proxies to `/api/v1`. Mirrors `customer-web-app/bff`.
+- **Web** — React + TypeScript + Vite front-end. Mirrors `customer-web-app/web`.
 - **Upstream** — the AnythingLLM instance at `ANYTHINGLLM_BASE_URL`, developer API `/api/v1`.
 - **Staff / operator** — an authenticated user of THIS console. Distinct from AnythingLLM
   end-users (grounding §1, §4).

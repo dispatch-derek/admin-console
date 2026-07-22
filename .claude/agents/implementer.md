@@ -19,7 +19,7 @@ strictly to spec and fix defects reported against it.
   explicit `.js` import extensions on relative imports), better-sqlite3,
   argon2, otplib. `web/` = React 18 + TypeScript + Vite (port 5173, proxies
   `/api/*` → BFF). Both mirror the sibling conventions in
-  `/home/derek/front-end-custom/{bff,web}`.
+  `/home/derek/git/customer-web-app/{bff,web}`.
 - **tsconfig is strict** with `noUncheckedIndexedAccess`. Honor it — no `any`
   escapes, guard index access.
 - Tests are **vitest** (BFF: `app.inject()` against exported `buildApp()`;
