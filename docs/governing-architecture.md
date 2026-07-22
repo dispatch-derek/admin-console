@@ -1,8 +1,7 @@
 # Governing Architecture (source of truth)
 
-This admin console MUST conform to the white-label strategy defined in
-`front-end-custom/web/plan/AnythingLLM_Customization_Strategy.pdf`. This file is a faithful summary of
-the parts that bind the BFF and frontend; the PDF is authoritative if they ever disagree.
+This admin console MUST conform to the white-label strategy defined in this document, which is the
+authoritative source of truth for the parts that bind the BFF and frontend.
 
 ## Core stance
 The AnythingLLM engine is a **sealed, replaceable dependency**: run unmodified, pinned to a release,

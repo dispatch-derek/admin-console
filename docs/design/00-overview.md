@@ -16,7 +16,7 @@ sibling docs:
 
 ## Packages (REQ-020)
 
-Two packages, mirroring `front-end-custom`:
+Two packages, mirroring `customer-web-app`:
 
 ```
 admin-console/
@@ -25,7 +25,7 @@ admin-console/
 ```
 
 `web` dev server proxies `/api/*` to the BFF (mirrors the sibling app). Package
-manifests, tsconfig, and `type: module` mirror `front-end-custom/{bff,web}`.
+manifests, tsconfig, and `type: module` mirror `customer-web-app/{bff,web}`.
 
 Port allocation (no clash with the sibling app): admin-console keeps `:3002` (BFF) / `:5173`
 (web dev); customer-web-app claims `:3004` (BFF) / `:5175` (web dev) per customer-web-app

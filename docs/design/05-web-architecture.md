@@ -1,7 +1,7 @@
 # Web App Architecture (React + TypeScript + Vite)
 
 Greenfield frontend that speaks ONLY the product `/api/*` contract and contains no
-knowledge that the engine exists (REQ-021/021a). Mirrors `front-end-custom/web`
+knowledge that the engine exists (REQ-021/021a). Mirrors `customer-web-app/web`
 conventions: `fetch` against relative paths, Vite proxying `/api/*` to the BFF, typed
 API client, `type: module`.
 

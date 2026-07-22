@@ -15,7 +15,7 @@ A **staff/operator console** used by our own staff to administer a single custom
 self-hosted AnythingLLM installation: its workspaces, its users, and all instance-wide
 settings. One deployment targets one customer's engine (one box, one customer, many users).
 It is the administrative counterpart to the customer-facing chat app
-([`front-end-custom`](../../front-end-custom)) and obeys the same governing white-label
+(`customer-web-app`) and obeys the same governing white-label
 strategy: the engine is a **sealed dependency** reached only through `/api/v1`.
 
 ## 2. Logical architecture
