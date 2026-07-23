@@ -2,8 +2,12 @@
 // established convention in bff/test/relay/static-scans.test.ts, which is F-004-owned and left
 // untouched here). Covers: REQ-F010-001 (a real credential-carrying code path exists, not config
 // alone), REQ-F010-002/012/027 (catalog unchanged), REQ-F010-008/023 (the drainer/orchestration
-// layer never sees the credential — transport-swap boundary preserved), REQ-F010-025 (no HMAC/
-// mTLS signing, no https-only peer-URL scheme enforcement introduced — stays with D-006).
+// layer never sees the credential — transport-swap boundary preserved), REQ-F010-025 (F-010 itself
+// introduces no HMAC/mTLS peer authentication — still a valid F-010 non-goal. The https-only
+// peer-URL scheme enforcement clause that previously lived here has been SUPERSEDED: the product
+// owner authorized D-006 (GH #16) to add that enforcement, and bff/src/relay/config.ts now does —
+// see bff/test/relay/relay-config.d006.test.ts for the enforcement's own regression coverage. This
+// file no longer asserts scheme enforcement is absent; it only asserts F-010 didn't add HMAC/mTLS).
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -122,7 +126,7 @@ describe('REQ-F010-008/023 — the credential is transport-internal ONLY: the dr
   });
 });
 
-describe('REQ-F010-025 — no HMAC/mTLS peer authentication and no https-only peer-URL scheme enforcement is introduced by F-010 (stays with D-006, GH #16)', () => {
+describe('REQ-F010-025 — F-010 itself introduces no HMAC/mTLS peer authentication (https-only peer-URL scheme enforcement is now D-006/GH #16 in-scope, not a F-010 non-goal)', () => {
   const relayDir = join(bffSrc, 'relay');
 
   it('no file under bff/src/relay signs requests with HMAC or references mTLS/client-cert auth', () => {
@@ -131,9 +135,11 @@ describe('REQ-F010-025 — no HMAC/mTLS peer authentication and no https-only pe
     expect(hits, JSON.stringify(hits, null, 2)).toEqual([]);
   });
 
-  it('no file under bff/src/relay enforces an https-only peer URL scheme', () => {
-    const files = walk(relayDir);
-    const hits = grep(files, /startsWith\(\s*['"]https:/);
-    expect(hits, JSON.stringify(hits, null, 2)).toEqual([]);
-  });
+  // SPEC-AMBIGUITY resolved: this assertion previously required that NO file under bff/src/relay
+  // enforce an https-only peer URL scheme, to prove F-010 stayed out of that lane. The product
+  // owner has since explicitly authorized D-006 to add https-only peer-URL scheme enforcement
+  // (see bff/src/relay/config.ts and bff/test/relay/relay-config.d006.test.ts), so that premise is
+  // now obsolete by deliberate scope move, not by regression. This clause is intentionally removed
+  // from F-010's static scan; it is superseded by D-006's own regression test, not deleted here to
+  // hide a bug.
 });
