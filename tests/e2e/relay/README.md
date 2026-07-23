@@ -31,6 +31,8 @@ npm test
 | `tests/retention-pruning.e2e.test.ts` | Phase 7: retention prune is wired into the running drain loop (`EVENT_BUS_RETENTION_MS`/`EVENT_BUS_PRUNE_EVERY_CYCLES`) -- old published rows deleted, fresh/unpublished/parked rows never touched |
 | `tests/ready-store-writable.e2e.test.ts` | Phase 7: `GET /ready` surfaces `store-unwritable` distinctly from backlog/lag when the real write-probe fails; recovers to 200 |
 | `tests/peer-timeout.e2e.test.ts` | Phase 7 / security F1: `EVENT_BUS_PEER_TIMEOUT_MS` bounds a peer that never responds -- transient retry, not an indefinite hang; sibling on a different key unaffected |
+| `tests/credential-auth.e2e.test.ts` | F-010 (REQ-F010-024): shared-secret credential on the outbound peer POST -- correct credential -> 3 app-level headers present + published; wrong credential (either env) -> stub 401 -> immediate permanent park; missing credential in dev -> boots soft, POSTs without the header -> 401 -> immediate park; missing credential in production -> the relay REFUSES TO BOOT naming `EVENT_BUS_PEER_AUTH_TOKEN` |
+| `tests/fanout.e2e.test.ts` (2nd case) | F-010 (REQ-F010-015): two peers, one acks and the cwa-stub 401s on the wrong credential -- row not published, ordering key parks immediately, the already-acked peer is not re-POSTed |
 
 ## Bug this suite found and its fix (history)
 

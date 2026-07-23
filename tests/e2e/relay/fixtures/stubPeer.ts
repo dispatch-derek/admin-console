@@ -4,14 +4,25 @@
 // body, parsed JSON) so tests can assert byte-for-byte envelope delivery. Response behavior is
 // scriptable per test (status code queues, hangs, always-status) to drive retry/park/crash
 // journeys deterministically -- no sleep()-based flakiness.
+//
+// F-010 addition: requireAuthToken() turns the stub into a credential-checking peer (standing in
+// for cwa's REQ-F005-061 constant-time comparison, at the level of detail an e2e stub needs) --
+// it inspects an arbitrary request header (case-insensitive, matching HTTP semantics; Node's
+// http parser already lowercases incoming header names) and returns 401 when the value is absent
+// or does not match verbatim, 2xx (or whatever the peer's own status/responder says) when it
+// matches. Every request's full header set is captured on PeerRequest so a test can assert
+// presence of the three F-010 application-level headers without asserting a literal total count
+// (REQ-F010-005: the HTTP client also attaches Host/Content-Length/Accept-Encoding/Connection etc).
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http';
 
 export interface PeerRequest {
   deliveryId: string;
   rawBody: string;
   envelope: unknown;
   receivedAt: number;
+  /** Every header the stub server observed on this request (Node lowercases header names). */
+  headers: IncomingHttpHeaders;
 }
 
 export type PeerResponder = (req: PeerRequest) => number | Promise<number>;
@@ -34,6 +45,12 @@ export interface StubPeer {
    *  clears the "hang the next request for this id" arm so a subsequent (post-restart) request
    *  for the same deliveryId is answered normally instead of hanging forever. */
   clearHang(deliveryId: string): void;
+  /** Require `headerName` (case-insensitive) to equal `expectedValue` on every future request --
+   *  a request missing the header, or carrying any other value, gets 401 (checked BEFORE
+   *  setStatus/setResponder/hang, standing in for cwa's credential rejection). Passing this again
+   *  overrides the previous requirement; there is no way to unset it on a live stub other than
+   *  starting a fresh one -- tests needing "no requirement" simply never call this. */
+  requireAuthToken(headerName: string, expectedValue: string): void;
   requestsFor(deliveryId: string): PeerRequest[];
   close(): Promise<void>;
 }
@@ -42,6 +59,7 @@ export async function startStubPeer(): Promise<StubPeer> {
   const requests: PeerRequest[] = [];
   let status = 200;
   let responder: PeerResponder | null = null;
+  let authRequirement: { header: string; expected: string } | null = null;
   const hanging = new Map<string, ServerResponse>();
   const inflight = new Set<IncomingMessage>();
 
@@ -59,9 +77,19 @@ export async function startStubPeer(): Promise<StubPeer> {
         } catch {
           envelope = undefined;
         }
-        const record: PeerRequest = { deliveryId, rawBody, envelope, receivedAt: Date.now() };
+        const record: PeerRequest = { deliveryId, rawBody, envelope, receivedAt: Date.now(), headers: { ...req.headers } };
         requests.push(record);
         inflight.delete(req);
+
+        if (authRequirement) {
+          const actual = req.headers[authRequirement.header];
+          const actualValue = Array.isArray(actual) ? actual[0] : actual;
+          if (actualValue !== authRequirement.expected) {
+            res.writeHead(401, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, reason: 'unauthorized' }));
+            return;
+          }
+        }
 
         if (hanging.has(deliveryId)) {
           // Guard against an "unhandled 'error' on ServerResponse" crashing the test process if
@@ -108,6 +136,9 @@ export async function startStubPeer(): Promise<StubPeer> {
     },
     clearHang: (deliveryId: string) => {
       hanging.delete(deliveryId);
+    },
+    requireAuthToken: (headerName: string, expectedValue: string) => {
+      authRequirement = { header: headerName.toLowerCase(), expected: expectedValue };
     },
     requestsFor: (deliveryId: string) => requests.filter((r) => r.deliveryId === deliveryId),
     close: () =>
