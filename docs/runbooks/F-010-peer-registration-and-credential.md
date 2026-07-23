@@ -9,7 +9,7 @@ Cross-repo consumer contract: `~/git/customer-web-app/specs/F-005-cross-app-iden
 
 F-010 registers customer-web-app (cwa) as a relay peer and adds one shared-secret credential to
 every outbound peer POST. It introduces **no** new DB state and **no** extra network round-trip: the
-credential rides the existing single POST per peer, as the HTTP header `X-Event-Auth-Token`, carrying
+credential rides the existing single POST per peer, as the HTTP header `X-Event-Ingest-Secret`, carrying
 `EVENT_BUS_PEER_AUTH_TOKEN` byte-for-byte verbatim.
 
 All config lives in the relay-scoped `EVENT_BUS_*` env family (`bff/src/relay/config.ts`); the
@@ -123,7 +123,7 @@ executed here rather than as an in-repo automated test since cwa is a separate d
    `admin.user.created` envelope is enqueued and drained.
 3. Confirm on the cwa side that the ingest endpoint **accepted** (2xx) the delivery — the request
    carried all three wire elements: the frozen envelope body, the `X-Event-Delivery-Id` header, and
-   the `X-Event-Auth-Token` credential header.
+   the `X-Event-Ingest-Secret` credential header.
 4. Confirm on the admin-console side that the outbox row published (`published_at` set) and did not
    park.
 5. If cwa returns 401, the credential does not match cwa's expected value — recheck (b)/(c) and the

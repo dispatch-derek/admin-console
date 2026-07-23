@@ -5,6 +5,32 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [D-009 — Relay Credential Header Name Correction]
+
+### Fixed
+
+- **Relay peer credential header name (D-009 / GH #47):** The relay now sends the shared-secret
+  credential in the HTTP header `X-Event-Ingest-Secret` (matching cwa's `/api/events/ingest`
+  contract) instead of the provisional F-010 header name `X-Event-Auth-Token`. This ensures
+  credentialed deliveries to cwa are accepted (2xx) instead of rejected (401) and permanently
+  parked.
+  
+  **Symptom:** F-010's initial delivery implementation sent the shared-secret credential in the
+  header `X-Event-Auth-Token`, but cwa's `/api/events/ingest` endpoint expects the header
+  `X-Event-Ingest-Secret`. Every credentialed delivery returned 401 and parked permanently in
+  bus mode.
+  
+  **Root cause:** F-010's provisional header name was never reconciled with cwa's frozen contract
+  (`specs/F-005-cross-app-identity-sync.md` §3.6, cwa REQ-F005-062); the runbook and relay code
+  used the provisional name throughout.
+  
+  **Fix:** Corrected the outbound header from `X-Event-Auth-Token` to `X-Event-Ingest-Secret`
+  in the relay's HTTP transport layer (`bff/src/relay/transport.ts`). The environment variable
+  name `EVENT_BUS_PEER_AUTH_TOKEN` is unchanged; only the wire header name was corrected.
+  Parked rows are recoverable per F-010 runbook section (d).
+
+---
+
 ## [D-010 — Relay E2E Test Infrastructure: HTTPS Stub Peer]
 
 ### Fixed
