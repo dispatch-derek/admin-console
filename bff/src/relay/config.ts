@@ -72,6 +72,25 @@ if (isProduction && peerUrls.length > 0 && !isCredentialConfigured(peerAuthToken
   );
 }
 
+// Non-https peer-scheme fail-fast (D-006 / GH #16), mirroring the empty-peer-list (REQ-F004-045)
+// and missing-credential (REQ-F010-017) fail-fasts above. The transport POSTs the
+// X-Event-Auth-Token shared secret + admin.* envelope to each peer, so a plaintext http:// peer
+// would ship both in cleartext. Refuse to boot on any peer whose scheme is not https:// WHENEVER a
+// credential is configured OR the relay runs in production. Bare http:// is allowed ONLY in
+// development with no credential configured (dev-loopback convenience). The offending scheme is
+// named in the message so the misconfiguration is obvious.
+if (isCredentialConfigured(peerAuthToken) || isProduction) {
+  for (const url of peerUrls) {
+    if (!url.toLowerCase().startsWith('https://')) {
+      throw new Error(
+        `EVENT_BUS_URL peer "${url}" must use the https:// scheme when a credential is configured ` +
+          '(EVENT_BUS_PEER_AUTH_TOKEN set) or the relay runs in production; refusing to boot to ' +
+          'avoid transmitting the shared-secret credential and admin.* envelope in cleartext',
+      );
+    }
+  }
+}
+
 // /ready thresholds (REQ-F004-024/026): backlog rows, lag ms. Defaults 1000 / 30000.
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];

@@ -5,6 +5,33 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [D-006 / D-007 — TLS-Enforcement for Relay Peer URLs]
+
+### Fixed
+
+- **Relay peer-URL HTTPS enforcement (D-006 / GH #16 & D-007 / GH #39):** The relay now enforces
+  `https://` scheme on all peer URLs configured in `EVENT_BUS_URL` whenever a credential is set
+  (`EVENT_BUS_PEER_AUTH_TOKEN` configured) or the relay runs in production; plaintext `http://`
+  peers are rejected at boot with a clear error naming the offending URL. This prevents the shared
+  secret and `admin.*` envelope from traversing cleartext on misconfigured peers.
+  
+  **Symptom:** F-010 attached the shared-secret credential to every outbound peer POST in the
+  `X-Event-Auth-Token` header, but the relay accepted plaintext `http://` peer URLs and would
+  transmit both the credential and `admin.*` envelope in cleartext.
+  
+  **Root cause:** `bff/src/relay/config.ts` parsed `EVENT_BUS_URL` peers with no scheme validation,
+  allowing unencrypted HTTP transport.
+  
+  **Boot behavior:** The relay refuses to boot with error
+  `EVENT_BUS_URL peer "<url>" must use the https:// scheme when a credential is configured (EVENT_BUS_PEER_AUTH_TOKEN set) or the relay runs in production; refusing to boot to avoid transmitting the shared-secret credential and admin.* envelope in cleartext`
+  when any peer lacks the `https://` scheme in production or when a credential is configured. Bare
+  `http://` is allowed only in development with no credential (dev-loopback convenience).
+  
+  HMAC/mTLS message authentication and the SSRF host-allowlist remain future scope (deferred from
+  F-006 and D-006).
+
+---
+
 ## [F-010 — Deliver Admin Events to customer-web-app (Relay Peer + Shared-Secret Credential)]
 
 ### Added
