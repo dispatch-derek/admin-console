@@ -5,6 +5,19 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [D-010 — Relay E2E Test Infrastructure: HTTPS Stub Peer]
+
+### Fixed
+
+- **Relay e2e stub peer HTTPS support (D-010 / GH #48):** After D-006's https-only peer guard landed,
+  three credential-configured e2e journeys (`setup-with-peer-token-at-boot`, `peer-failure-parks`,
+  `successful-delivery`) refused to boot because the relay e2e stub peer served only `http://`. Fixed:
+  the stub peer now serves `https://` via a checked-in self-signed loopback cert, and the e2e-spawned
+  relay trusts it via `NODE_EXTRA_CA_CERTS` (scoped to the test child process). No production code change;
+  restores the relay e2e suite to green (16/16 tests passing).
+
+---
+
 ## [D-008 — Observability: Event Counters and Park-Type Distinction]
 
 ### Fixed
