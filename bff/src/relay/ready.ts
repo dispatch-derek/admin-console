@@ -4,6 +4,7 @@
 // AND lag are BOTH STRICTLY below their thresholds; at-or-over is degraded (rev-10 boundary).
 
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { Counters } from './metrics.js';
 
 export interface ReadyDeps {
   isTransportReachable: () => boolean | Promise<boolean>;
@@ -13,6 +14,7 @@ export interface ReadyDeps {
   backlogThreshold: number;
   lagThresholdMs: number;
   isStoreWritable?: () => boolean | Promise<boolean>;
+  getCounters: () => Counters;
 }
 
 export function buildReadyApp(deps: ReadyDeps): FastifyInstance {
@@ -36,6 +38,17 @@ export function buildReadyApp(deps: ReadyDeps): FastifyInstance {
       return reply.code(503).send({ reason: 'lag-over-threshold' });
     }
     return reply.code(200).send({ ready: true });
+  });
+
+  // GET /metrics (D-008, GH #40; REQ-F004-025, design §6) — read-only observability surface exposing
+  // the event counters (delivered/attemptFailures/never- vs partially-delivered park/postAckCap) that
+  // getCounters() tracks but nothing else read, plus the two live gauges. Purely additive to /ready.
+  app.get('/metrics', async (_req, reply) => {
+    return reply.code(200).send({
+      ...deps.getCounters(),
+      backlogCount: deps.getBacklogCount(),
+      relayLagMs: deps.getRelayLagMs(),
+    });
   });
 
   return app;

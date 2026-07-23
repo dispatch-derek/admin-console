@@ -26,7 +26,7 @@ export function getBacklogCount(): number {
 }
 
 // ── Event counters (REQ-F004-025) ───────────────────────────────────────────────────────────────
-interface Counters {
+export interface Counters {
   delivered: number;
   attemptFailures: number;
   neverDeliveredPark: number;
