@@ -53,7 +53,7 @@ The relay reads its own environment variables (prefixed `EVENT_BUS_*` and `DB_PA
 |----------|---------|---------|-------------------------|
 | `DB_PATH` | (required) | Absolute path to the shared SQLite outbox DB file. Same value as the BFF uses. | — |
 | `EVENT_BUS_URL` | (empty) | Comma-delimited list of peer endpoints (whitespace trimmed per entry). Peer URLs must use `https://` scheme when a credential is configured or in production; plaintext `http://` is allowed only in development without a credential. Example: `https://peer-1:8080/api/events,https://peer-2:8080/api/events` | Yes: relay refuses to boot in production without this set (but starts soft in dev, reporting not-ready on `/ready`); also hard-refuses if any peer lacks `https://` when a credential is set or in production. |
-| `EVENT_BUS_PEER_AUTH_TOKEN` | (empty) | Shared-secret credential attached to every outbound peer POST as the `X-Event-Auth-Token` HTTP header (F-010 REQ-F010-007). Read as a raw single string — NOT trimmed or split like the peer list. When a peer is configured, this MUST be set (non-empty) in production; see boot posture below. | Yes (production + peer configured + unset/empty): relay refuses to boot, preventing silent 401 loops. Development + unset: boots soft; delivery to a credential-requiring peer parks per REQ-F010-014. |
+| `EVENT_BUS_PEER_AUTH_TOKEN` | (empty) | Shared-secret credential attached to every outbound peer POST as the `X-Event-Ingest-Secret` HTTP header (F-010 REQ-F010-007). Read as a raw single string — NOT trimmed or split like the peer list. When a peer is configured, this MUST be set (non-empty) in production; see boot posture below. | Yes (production + peer configured + unset/empty): relay refuses to boot, preventing silent 401 loops. Development + unset: boots soft; delivery to a credential-requiring peer parks per REQ-F010-014. |
 | `EVENT_BUS_TRANSPORT` | `http` | Transport adapter selector: `http` (GTM HTTP peer delivery) or `broker` (future). | Yes: `broker` hard-refuses to boot in **all environments** — no broker transport exists in this build yet. |
 | `EVENT_BUS_BACKLOG_THRESHOLD` | `1000` | Row count; `/ready` reports not-ready when unpublished backlog ≥ this. | — |
 | `EVENT_BUS_LAG_THRESHOLD_MS` | `30000` | Milliseconds; `/ready` reports not-ready when the age of the oldest unpublished row ≥ this. | — |
@@ -65,7 +65,7 @@ The relay reads its own environment variables (prefixed `EVENT_BUS_*` and `DB_PA
 
 ### Shared-secret credential (F-010)
 
-The relay attaches the shared-secret credential to every outbound peer POST as the `X-Event-Auth-Token`
+The relay attaches the shared-secret credential to every outbound peer POST as the `X-Event-Ingest-Secret`
 HTTP header (F-010 REQ-F010-004/005). This credential is sourced from `EVENT_BUS_PEER_AUTH_TOKEN`
 and is read as a raw single string — NOT comma-split or whitespace-trimmed like `EVENT_BUS_URL`
 (REQ-F010-007). The configured value is set on the header byte-for-byte at the transport layer, but
