@@ -5,6 +5,32 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [D-008 — Observability: Event Counters and Park-Type Distinction]
+
+### Fixed
+
+- **Observable event counters and park-type distinction (D-008 / GH #40):** The relay now exposes a
+  new read-only `GET /metrics` endpoint on the ready-probe port (default `3003`) that returns JSON
+  with five event counters (`delivered`, `attemptFailures`, `neverDeliveredPark`, `partiallyDeliveredPark`,
+  `postAckCap`) plus two live gauges (`backlogCount`, `relayLagMs`). This allows operators to
+  distinguish a **partially-delivered park** (at least one peer acked the row, holds a dedupable copy)
+  from a **never-delivered park** (no peer ever accepted) — a critical operational signal.
+  
+  **Symptom:** The relay's internal metrics (`getCounters()` in `metrics.ts`) tracked five event
+  counter fields, but the relay's only HTTP surface (`GET /ready` in `ready.ts`) never read them,
+  leaving operators blind to the distinction between partially- and never-delivered parks. The counters
+  were dead code.
+  
+  **Root cause:** `getCounters()` in `bff/src/relay/metrics.ts` was exported but had no callers in
+  the relay codebase — the relay's HTTP routes (ready probe only) never surfaced the counters.
+  
+  **Fix:** Added a new read-only `GET /metrics` route in `buildReadyApp` that returns the five
+  counters from `getCounters()` plus the two gauges (`backlogCount` / `relayLagMs`) as JSON. The
+  endpoint is unauthenticated and exposes only aggregate operational counters (no secrets/PII);
+  operators should network-fence the relay port (consistent with F-004 security review, F3).
+
+---
+
 ## [D-006 / D-007 — TLS-Enforcement for Relay Peer URLs]
 
 ### Fixed
