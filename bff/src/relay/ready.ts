@@ -44,8 +44,16 @@ export function buildReadyApp(deps: ReadyDeps): FastifyInstance {
   // the event counters (delivered/attemptFailures/never- vs partially-delivered park/postAckCap) that
   // getCounters() tracks but nothing else read, plus the two live gauges. Purely additive to /ready.
   app.get('/metrics', async (_req, reply) => {
+    // Explicit allow-list (not a spread): surfacing a newly-added counter must be a deliberate
+    // one-line edit here, never an automatic addition to this response contract.
+    const { delivered, attemptFailures, neverDeliveredPark, partiallyDeliveredPark, postAckCap } =
+      deps.getCounters();
     return reply.code(200).send({
-      ...deps.getCounters(),
+      delivered,
+      attemptFailures,
+      neverDeliveredPark,
+      partiallyDeliveredPark,
+      postAckCap,
       backlogCount: deps.getBacklogCount(),
       relayLagMs: deps.getRelayLagMs(),
     });
