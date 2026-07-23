@@ -5,6 +5,71 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [F-010 — Deliver Admin Events to customer-web-app (Relay Peer + Shared-Secret Credential)]
+
+### Added
+
+- **customer-web-app as a relay peer:** The relay now registers customer-web-app's `/api/events/ingest`
+  as a configurable HTTP peer (via `EVENT_BUS_URL`), enabling `admin.*` and `admin.user.*` events to be
+  delivered to cwa in real time (REQ-F010-003; cwa REQ-F005-060).
+
+- **Shared-secret credential on the outbound peer POST:** The relay now attaches a shared-secret
+  credential as the HTTP header `X-Event-Auth-Token` to every peer POST (REQ-F010-004/005), satisfying
+  cwa's authentication requirement (cwa REQ-F005-061). The credential is sourced from the new
+  `EVENT_BUS_PEER_AUTH_TOKEN` environment variable, read as a raw single string without trimming or
+  splitting (REQ-F010-007).
+
+- **Credential validation & boot posture (REQ-F010-017):**
+  - **Production:** The relay refuses to boot with a clear error if a peer is configured but
+    `EVENT_BUS_PEER_AUTH_TOKEN` is unset or empty — preventing a silent, self-inflicted 401 permanent
+    park loop.
+  - **Development:** The relay boots soft (consistent with F-004's posture) and delivery to a
+    credential-requiring peer parks per REQ-F010-014.
+  - **Header-legality validation (any environment):** The relay refuses to boot if the credential
+    contains any byte illegal in an HTTP header field value (CR, LF, NUL, or other control bytes),
+    preventing malformed requests.
+
+- **Peer/credential/rotation runbook:** Operational documentation at `docs/runbooks/F-010-peer-registration-and-credential.md`
+  covering peer registration, credential provisioning (by the deployment operator), rotation (with
+  cwa coordination), operator response to credential-mismatch parks, and a deployment-validation step
+  against a real cwa endpoint (REQ-F010-016).
+
+### Changed
+
+- **Relay config & transport wiring:** The shared-secret credential is threaded through the relay
+  config to the `HttpPeerTransport` exactly like the peer timeout (`peerTimeoutMs`), preserving the
+  REQ-F004-049 seam: the credential is owned entirely inside the transport and never surfaces in the
+  drainer, logs, errors, metrics, `/ready`, or the outbox (REQ-F010-008/011).
+
+- **Fan-out composition:** When a peer returns 401 (credential mismatch), the outcome classifies
+  **permanent** per REQ-F004-055, and the orchestration layer parks the ordering key immediately
+  (REQ-F010-014). With multiple peers, a permanent outcome from any peer parks the ordering key,
+  even if other peers have already 2xx-acked, resulting in a "partially delivered" park that operators
+  can surface distinctly (REQ-F010-015).
+
+### Security & Operational Notes
+
+- **Credential and secrets hygiene:** The credential is never committed to source, never logged, and
+  never included in the envelope (REQ-F010-010/011/020). `bff/.env.example` documents the key with
+  an empty value only; real secrets are supplied by the deployment operator at runtime.
+
+- **HTTP whitespace handling:** The configured credential value is set on the header byte-for-byte at
+  the transport layer, but WHATWG Fetch may strip leading/trailing HTTP whitespace in transit.
+  Operators should not rely on padding whitespace for security or function.
+
+- **Plaintext peer exposure (D-006/D-007 scope):** The relay accepts plaintext `http://` peer URLs
+  (no scheme validation). Sending shared secrets over plaintext peers is a live exposure until
+  https-only enforcement lands in D-006 (GH #16) / D-007 (GH #39). Prefer `https://` peers and use
+  private networks.
+
+### Spec & Design
+
+- **Specification:** `specs/F-010-deliver-admin-events-to-customer-web-app.md` (rev 3, fully ruled).
+- **Runbook:** `docs/runbooks/F-010-peer-registration-and-credential.md`.
+- **Security review:** `security/F-010-security-review.md` (pass with notes; one informational finding on HTTP whitespace handling).
+
+---
+
 ## [F-004 — Production Event-Bus Delivery (Outbox Relay)]
 
 ### Added

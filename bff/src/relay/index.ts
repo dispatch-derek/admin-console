@@ -31,6 +31,7 @@ async function main(): Promise<void> {
     kind: config.transportKind,
     peerUrls: config.peerUrls,
     peerTimeoutMs: config.peerTimeoutMs, // EVENT_BUS_PEER_TIMEOUT_MS → wire timeout inside the transport
+    peerAuthToken: config.peerAuthToken, // EVENT_BUS_PEER_AUTH_TOKEN → shared-secret credential (F-010)
   });
   const drainer = createDrainer({ transport });
 

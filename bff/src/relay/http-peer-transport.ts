@@ -9,6 +9,14 @@ import { TransportError, type EventTransport } from './transport.js';
 // distinct from the frozen envelope body (REQ-F004-004).
 const DELIVERY_ID_HEADER = 'x-event-delivery-id';
 
+// Header carrying the shared-secret credential to each peer as the third wire element cwa requires
+// (F-010 REQ-F010-004/005; cwa REQ-F005-061). Added ALONGSIDE the two pre-existing headers, never in
+// place of them. The value is the configured secret byte-for-byte at this point (no trim/case-fold/
+// re-encode here), though WHATWG Fetch may strip leading/trailing HTTP whitespace in transit.
+// The credential is owned entirely inside this transport (REQ-F010-008 seam) and never appears in
+// logs, errors, metrics, or /ready (REQ-F010-011).
+const AUTH_TOKEN_HEADER = 'X-Event-Auth-Token';
+
 // Default per-peer request timeout — a provisional constant of record, operator-tunable via
 // EVENT_BUS_PEER_TIMEOUT_MS (threaded in through the relay-scoped config → createTransport → this
 // constructor; the value stays a WIRE concern inside the transport, never seen by the drainer, to
@@ -18,6 +26,15 @@ const DELIVERY_ID_HEADER = 'x-event-delivery-id';
 // network-level), so the row retries with backoff and eventually parks at the cap like any other
 // transient failure — never a silent, unbounded stall.
 const DEFAULT_PEER_REQUEST_TIMEOUT_MS = 10_000;
+
+// Predicate: "unset or empty" (REQ-F010-017 normative definition). The credential is configured iff
+// it is a non-empty string; `undefined` and `''` are absent/unset; a whitespace-only value (' ') is
+// non-empty and IS configured (though the HTTP client may strip surrounding whitespace in transit,
+// so padding is almost certainly a misconfiguration). Single home for this predicate — imported by
+// config.ts (boot-time fail-fast) and used below (attach-or-not-attach) so the definition never drifts.
+export function isCredentialConfigured(token: string | undefined): token is string {
+  return token !== undefined && token !== '';
+}
 
 type PeerOutcome = 'ack' | 'transient' | 'permanent';
 
@@ -42,6 +59,11 @@ export class HttpPeerTransport implements EventTransport {
   constructor(
     private readonly peerUrls: string[],
     private readonly peerTimeoutMs: number = DEFAULT_PEER_REQUEST_TIMEOUT_MS,
+    // Shared-secret credential (F-010 REQ-F010-005/008). A credential is attached iff this is a
+    // non-empty string: `undefined` and `''` are treated as absent (REQ-F010-017 "unset or empty"),
+    // while a whitespace-only value (' ') is non-empty and IS attached (though HTTP client may strip
+    // surrounding whitespace in transit, so padding whitespace should not be relied upon).
+    private readonly peerAuthToken?: string,
   ) {}
 
   async deliver(envelope: string, deliveryId: string): Promise<void> {
@@ -57,9 +79,20 @@ export class HttpPeerTransport implements EventTransport {
     const results = await Promise.all(
       pending.map(async (url): Promise<{ url: string; outcome: PeerOutcome }> => {
         try {
+          // Two pre-existing headers unchanged (REQ-F010-006); the credential header is added
+          // alongside them ONLY when a credential is configured (non-empty string), carrying the
+          // value byte-for-byte at this point (REQ-F010-005/017). Note: WHATWG Fetch may strip
+          // leading/trailing HTTP whitespace in transit, so don't rely on padding.
+          const headers: Record<string, string> = {
+            'content-type': 'application/json',
+            [DELIVERY_ID_HEADER]: deliveryId,
+          };
+          if (isCredentialConfigured(this.peerAuthToken)) {
+            headers[AUTH_TOKEN_HEADER] = this.peerAuthToken;
+          }
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'content-type': 'application/json', [DELIVERY_ID_HEADER]: deliveryId },
+            headers,
             body: envelope,
             // Bound a peer that never responds (REQ-F004-055 connection-timeout / network-level
             // transient); the abort surfaces in the catch below and is classified transient.

@@ -1253,3 +1253,380 @@ None of the above blocks writing a concrete, spec-derived test — each is eithe
 most defensible, uncontroversial layer while flagging the genuinely-open narrower question, or
 (b) an interface-shape assumption already reasoned through and documented, per hard rule 4's
 "write the test for the most defensible reading, mark it, list it" instruction.
+
+---
+
+# TEST_PLAN — F-010 Deliver admin.* Events to customer-web-app (Register cwa as a Relay Peer + Shared-Secret Credential)
+
+Spec: `specs/F-010-deliver-admin-events-to-customer-web-app.md` (Draft rev 3 — human ruling gate
+complete 2026-07-22; Q1/Q2/Q4/Q5/Q6/Q8/Q9 resolved, Q3/Q7 explicitly deferred). Parent/composed
+specs: `specs/F-004-production-event-bus.md` (REQ-F004-049/051/052/055), cwa's
+`~/git/customer-web-app/specs/F-005-cross-app-identity-sync.md` §3.6 (REQ-F005-060..063, the
+contract of record this feature satisfies — not owned here).
+
+## Framework & harness choice
+
+Same established BFF suite as F-002/F-004/F-005: `vitest` (node env), real (tmp-file) SQLite via
+`bff/src/store/db.ts`, real local `node:http` servers standing in for peers (the F-004 convention
+in `bff/test/relay/http-peer-transport.test.ts` — no mocking of the transport's own networking),
+and the `vi.resetModules() + dynamic import()` pattern for load-time-throwing config modules
+(`bff/test/relay/relay-config.test.ts`). No new framework introduced. Run with `npm test` (=
+`vitest run`) from `bff/`.
+
+**Directory-ownership boundary honored:** every file below lives under `bff/test/relay/` or
+`bff/test/store/` — the existing relay/event unit+integration home. Nothing was written to
+`tests/e2e/` (owned by the e2e-tester, Phase-6) or `tests/unit/` (owned by the unit-test-writer).
+Every new file is a **dedicated, separate file** for F-010's additions to an already-existing
+F-004 module (mirrors this repo's own `bff/test/config.f004.test.ts` precedent of isolating one
+feature's additions rather than editing a pre-existing, other-feature-owned spec-level test file)
+— **zero pre-existing test file was edited**, so there is zero regression risk to the established
+green F-004 baseline.
+
+## What exists vs. what does not, as of this task
+
+F-004 is fully implemented (`bff/src/relay/**` — `config.ts`, `transport.ts`,
+`http-peer-transport.ts`, `drainer.ts`, `metrics.ts`, `ready.ts`, `backoff.ts`, `delivery-id.ts` —
+all exist and their F-004 suites are green). **F-010's credential path does not exist yet**: no
+`X-Event-Auth-Token` header is ever attached, no `EVENT_BUS_PEER_AUTH_TOKEN` config key exists, no
+boot-posture validation for it exists, and `bff/.env.example` does not document the key. Every new
+test below is written strictly from the spec (this task did not read `bff/src/**` before writing
+it), and is **expected to fail now** on a clean assertion mismatch — not a syntax/import error in
+the test files themselves. Confirmed by running the full suite (see "Suite status" below).
+
+## Interface-shape assumptions (NOT pinned verbatim by the spec — flagged, not silently guessed)
+
+The spec pins every requirement's **observable wire/config behavior** exactly (REQ-F010-004/005/
+007/017 in particular are pinned to a concrete header name, env-var name, "verbatim value", and a
+three-application-level-header set, per the spec's own §7 self-check). It does **not** pin the
+internal **call signatures** F-010 must extend. Each assumption below is documented inline in the
+relevant file's header comment; summarized here for a single reference point:
+
+| Module | Assumed extension | Rationale |
+|---|---|---|
+| `bff/src/relay/http-peer-transport.ts` | `new HttpPeerTransport(peerUrls, peerTimeoutMs?, peerAuthToken?)` — a 3rd optional positional constructor param | Mirrors the EXACT precedent this repo already used to add `peerTimeoutMs` as a 2nd optional positional param (`bff/test/relay/http-peer-transport.unit.test.ts`, Phase-7 remediation) — the next wire-adjacent concern extends the same way. A credential is attached iff the param is a non-empty string, which maps directly onto REQ-F010-017's "absent/empty is empty, whitespace-only is not" definition via ordinary JS truthiness — no extra plumbing assumption needed. |
+| `bff/src/relay/transport.ts` | `createTransport({ kind, peerUrls, peerTimeoutMs?, peerAuthToken? })` | Mirrors the same `peerTimeoutMs`-threading precedent one level up the factory, needed to test REQ-F010-008's threading claim (config → createTransport → HttpPeerTransport) rather than only the transport constructor in isolation. |
+| `bff/src/relay/config.ts` | Exposes the credential as `config.peerAuthToken: string \| undefined` | Mirrors the camelCase convention of every other peer-scoped config key (`peerUrls`, `peerTimeoutMs`). |
+
+**Confirmed, not guessed:** running the suite incidentally showed (via vitest's own failure-diff
+output, not a deliberate read of `bff/src/**`) that `http-peer-transport.ts` does call `fetch()` —
+this validated, rather than invented, the assumption behind the REQ-F010-005
+"whitespace-verification-point" test's fetch-spy technique (see Ambiguities below for the residual
+risk this was written against **before** that incidental confirmation).
+
+None of these are `SPEC-AMBIGUITY` in the blocking sense (hard rule 4) — the spec's *behavior* is
+unambiguous in every case above; only the internal call-shape needed inventing, exactly the same
+situation F-004's own `TEST_PLAN.md` section documented for its unpinned `HttpPeerTransport`/
+`createDrainer` signatures.
+
+## Test files created
+
+- `bff/test/relay/http-peer-transport.f010.test.ts` — 17 tests (see Phase-4 addendum below —
+  net +1 vs. the original 16: one mis-targeted assertion was replaced by two correctly-targeted
+  ones). REQ-F010-004/005/006/009/013/022.
+  Three-application-level-header presence when a credential is configured; the "exactly one NEW
+  header vs. the no-credential baseline" diff assertion; the REQ-F010-005 whitespace-verification-
+  point test (asserted at the `fetch()` call boundary, not the peer-observed wire value, per the
+  spec's own explicit instruction that some HTTP clients strip OWS in transit); absent/empty-string
+  credential → no header; whitespace-only credential → header sent verbatim; two-peer shared-secret
+  fan-out; single-POST-per-delivery (no added round-trip); the REQ-F004-055 classification table
+  re-affirmed unchanged with a credential configured (REQ-F010-013/028).
+- `bff/test/relay/transport.f010.test.ts` — 5 tests. REQ-F010-008 (credential threaded through
+  `createTransport`, not just the transport constructor in isolation) and REQ-F010-029 (broker
+  still hard-refuses even with a credential supplied).
+- `bff/test/relay/relay-config.f010.test.ts` — 20 tests (see Phase-4 addendum below — net -1 vs.
+  the original 21: two platform-impossible assertions were replaced by one). REQ-F010-003 (peer registration reuses the
+  unchanged `EVENT_BUS_URL` wire shape, demonstrated with a representative cwa-shaped URL, not a
+  literal spec constant), REQ-F010-007 (new config key, raw single string — NOT comma-split, NOT
+  trimmed, no hard-coded literal), REQ-F010-017 (the full boot-posture matrix: production
+  absent/empty → refuse naming the var; production whitespace-only → boots verbatim; production/
+  development present → boots; development absent/empty → boots soft; CR/LF/NUL/other-illegal-byte
+  → refuse in ANY environment, distinct from the empty-value check).
+- `bff/test/relay/drainer.f010.test.ts` — 4 tests. Integration: the REAL `HttpPeerTransport` (not
+  the F-004 `FakeTransport` double) driven by the REAL `createDrainer` against a REAL local stub
+  peer that authenticates the credential header. REQ-F010-014 (401 → permanent → immediate park,
+  no backoff, never-delivered-park counter fires), REQ-F010-018 (wrong-credential park is
+  RECOVERABLE: re-provisioning the correct credential + replaying the parked row delivers it, event
+  never lost), REQ-F010-019 (misconfiguration never silently drops an event, never corrupts
+  bookkeeping, does not wedge an unrelated ordering key).
+- `bff/test/relay/confidentiality.f010.test.ts` — 8 tests. REQ-F010-010 (credential never in the
+  envelope; `admin.user.created` keeps `changes={username,role}` exactly), REQ-F010-011 (credential
+  never in a thrown/serialized `TransportError`, never in `console.log/warn/error/info` output
+  during a real credentialed delivery, static proxy checks that `ready.ts`/`metrics.ts` reference no
+  credential token), REQ-F010-020 (`.env.example` documents the key with an empty value; no
+  hard-coded literal in `config.ts`).
+- `bff/test/relay/static-scans.f010.test.ts` — 8 tests. REQ-F010-001 (a genuine credential-carrying
+  code path exists in the transport, not config alone — plus the explicit pre-implementation
+  RED-flag test, mirroring the F-004 `static-scans.test.ts` dual-test convention), REQ-F010-002/012/
+  027 (the 21-name/5-`admin.user.*` catalog is unchanged; catalog.ts carries no credential-related
+  field), REQ-F010-008/023 (the drainer/orchestration layer references no credential value/header
+  constant/env-var — transport-swap boundary preserved), REQ-F010-025 (no HMAC/mTLS signing, no
+  https-only peer-URL scheme enforcement introduced — stays with D-006).
+- `bff/test/store/f010-no-new-outbox-state.test.ts` — 2 tests. REQ-F010-022's DB-state half: no new
+  `event_outbox` column, no plausible credential-storing table.
+
+**Total: 7 new files, 64 test cases** (16 + 5 + 21 + 4 + 8 + 8 + 2), matching `vitest run`'s own
+collected count exactly.
+
+## Suite status as of this run
+
+Run from `bff/`: `npm test` (= `vitest run`).
+
+```
+Test Files  6 failed | 71 passed (77)
+     Tests  26 failed | 1267 passed (1293)
+```
+
+- All **70 pre-existing test files / 1229 pre-existing tests** (F-001..F-005, F-004's relay suite
+  included) **pass unchanged** — this task added 7 new files and edited zero pre-existing files, so
+  there is zero regression risk to the existing green baseline. `bff/test/store/
+  f010-no-new-outbox-state.test.ts` (new) also passes fully, cleanly.
+- The **26 new failing assertions**, all within the 6 files that assert genuinely-new F-010
+  behavior, are every one a clean, informative assertion mismatch (`expected 'X' to be undefined` /
+  `rejects.toThrow()` not throwing / a missing `.env.example` line) — confirmed via
+  `--reporter=verbose`: **zero** are a `SyntaxError`, a `ReferenceError` in the test file's own
+  code, or an uncaught exception that crashed test collection. This is the correct, expected
+  pre-implementation RED signal.
+- `npx tsc --noEmit -p bff` exits 0 (test files are outside `bff/tsconfig.json`'s `include: ["src"]`,
+  matching this repo's existing convention).
+- **Note on which failures are "genuinely F-010 RED" vs. "passes now by legitimately reusing
+  F-004 machinery":** a few assertions in `drainer.f010.test.ts` (REQ-F010-014/019) **pass today**
+  even though no credential code path exists, because a stub peer that requires a matching
+  `X-Event-Auth-Token` header already sees "no header at all" as a mismatch regardless of F-010's
+  status — this legitimately proves F-004's classify/park/metrics machinery already composes
+  correctly with a credential-authenticating peer, which F-010 must not regress. The genuinely-new
+  RED signal for the credential mechanism itself is `REQ-F010-018`'s replay test (requires the
+  CORRECT credential to actually reach the peer after re-provisioning) and every
+  `http-peer-transport.f010.test.ts` / `transport.f010.test.ts` / `relay-config.f010.test.ts`
+  failure (all directly assert the credential's presence/value, which is impossible before F-010
+  ships). This is called out explicitly rather than silently claimed as uniform RED, per the same
+  transparency standard the F-004 `TEST_PLAN.md` section applied to its own vacuously-passing
+  `consumer-contract.test.ts`.
+
+## Phase-4 addendum (2026-07-23) — post-implementation verification, two disputed test vectors corrected
+
+F-010 has since been implemented (`bff/src/relay/**`, `bff/.env.example`, and the runbook now
+exist). Re-ran the full suite (`npm test` from `bff/`, plus `npx tsc --noEmit -p bff`). The
+implementer self-reported 1290 pass / 3 fail, disputing all 3 as platform/spec impossibilities in
+the TEST vectors, not implementation bugs. Per instruction, neither claim was taken on the
+implementer's word — both were independently reproduced with standalone scripts before any test
+file was touched.
+
+**Initial post-implementation run (before this addendum's fixes):**
+
+```
+Test Files  2 failed | 75 passed (77)
+     Tests  3 failed | 1290 passed (1293)
+```
+
+All 70 pre-existing files and 5 of this task's 7 F-010 files were already fully green against the
+real implementation — confirming REQ-F010-021 (no F-004 regression) and the bulk of F-010's own
+coverage passed on the FIRST post-implementation run with no test changes needed.
+
+### Dispute 1 — `relay-config.f010.test.ts`, NUL-byte-in-credential boot-refusal (REQ-F010-017)
+
+**Implementer's claim:** `process.env['EVENT_BUS_PEER_AUTH_TOKEN'] = 'tok\x00more'` truncates to
+`'tok'` at assignment (Node/libuv `setenv` uses NUL-terminated C strings), so config reads a valid,
+non-illegal value and correctly boots — the NUL never reaches the process, in tests or reality.
+
+**Independently verified, not assumed:** ran a standalone script (`node`, this exact runtime,
+v24.18.0/linux) that set `process.env['TEST_NUL_VAR'] = 'tok\x00more'` and read it back BOTH
+in-process and via a freshly spawned child process inheriting the same env — both observed `'tok'`
+(3 chars), confirming truncation happens at the OS/environment-variable layer, before any
+JavaScript (including config.ts) ever runs. This is not Node-specific: POSIX `setenv`/`putenv` and
+the Windows environment block are both fundamentally NUL-terminated C-string storage — no real OS
+can carry a NUL byte inside an environment variable's value, for any process, ever.
+
+**Classification: TEST-VECTOR DEFECT, CORRECTED (not an implementation bug).** The two failing
+assertions (`production`/`development` × "NUL byte refuses to boot") asserted behavior that is
+architecturally unreachable via `process.env` on any real OS — the implementation cannot be faulted
+for not rejecting a byte it can never receive. **What changed, in `bff/test/relay/
+relay-config.f010.test.ts`:** removed the two `it.each` assertions asserting `rejects.toThrow()`
+for the NUL-byte vector; replaced them with a single new test that (a) asserts the truncation
+itself in-process (`expect(process.env['EVENT_BUS_PEER_AUTH_TOKEN']).toBe('tok')`) as a pinned,
+executable regression guard rather than a comment-only claim, and (b) asserts the truncated value
+boots normally and is exposed verbatim (`config.peerAuthToken === 'tok'`) — turning an
+unreachable-vector failure into a documented, passing fact. **REQ-F010-017 coverage is NOT
+reduced:** the pre-existing CR-byte and LF-byte `it.each` tests (both environments) and the VT
+(0x0B) "non-exhaustive illustration" test are untouched, still pass against the real
+implementation, and independently exercise the SAME header-legality-refusal code path on bytes that
+ARE reachable via `process.env` — which is REQ-F010-017's actual testable intent ("CR, LF, and NUL
+are non-exhaustive illustrations... of any byte illegal in an HTTP header field value").
+
+### Dispute 2 — `http-peer-transport.f010.test.ts`, whitespace-only `' '` credential observed at the peer (REQ-F010-005/017)
+
+**Implementer's claim:** WHATWG `fetch`/undici strips leading/trailing HTTP whitespace from header
+values before the request is sent, so a peer stub observes `''`, not `' '`; REQ-F010-005's own text
+says the whitespace-verbatim check must be done at the TRANSPORT boundary (the `fetch()` call), not
+at the peer, for exactly this reason; the sibling fetch-spy test (value `' abc '`) already passes,
+proving the transport itself sets the value verbatim.
+
+**Independently verified, not assumed:** wrote a standalone script driving a real local
+`node:http` server with real `fetch()` calls. Confirmed: (a) a whitespace-only header value `' '`
+arrives at the server as `''`; (b) `new Headers({'x': ' '}).get('x')` is ALREADY `''` immediately
+after construction, with zero network I/O — i.e., the stripping happens inside the WHATWG `Headers`
+class itself, not "in transit" on the wire, so it is unconditional for any code using `fetch`/
+`Headers`, not implementation-specific; (c) the padded case `' abc '` likewise normalizes to
+`'abc'` at the peer, corroborating the effect is general, not a one-off.
+
+**Classification: TEST-VECTOR DEFECT, CORRECTED (not an implementation bug).** The failing
+assertion checked the whitespace-only value at the peer-observed wire boundary — precisely the
+verification point REQ-F010-005's own text says is insufficient ("a peer stub that observes trimmed
+surrounding whitespace does not by itself prove a spec violation, whereas the transport setting a
+trimmed value does"). **What changed, in `bff/test/relay/http-peer-transport.f010.test.ts`:**
+1. Extracted the existing fetch-spy plumbing (previously inlined only in the `' abc '` test) into
+   a shared `captureTransportHeaderValue(peerAuthToken)` helper, so the correct verification
+   technique is reusable rather than re-duplicated per value.
+2. Replaced the single peer-observed `' '` assertion with **two** tests: (a) a corrected test using
+   `captureTransportHeaderValue(' ')` that asserts the TRANSPORT sets the header to `' '` verbatim
+   at the `fetch()` call boundary — this is the test that actually proves/disproves REQ-F010-017's
+   "whitespace-only is non-empty, sent verbatim" claim, and it now passes; (b) a new,
+   explicitly-labeled DOCUMENTATION test at the peer boundary that asserts the header KEY is
+   present (proving the transport did not treat `' '` as absent, contrasting with the `''`→omitted
+   case) while its VALUE is normalized to `''` by the client — asserting the real, verified outcome
+   rather than a false expectation, with an inline comment citing REQ-F010-005's own text for why
+   this is not itself a spec violation.
+
+REQ-F010-005/017 coverage is NOT reduced — if anything it is more precise: the mechanism the spec
+actually requires (transport sets the value verbatim) is now the one asserted, and the previously
+over-claiming peer-level assertion is retained as accurate documentation instead of a false claim.
+
+### Final suite status (after both corrections)
+
+```
+Test Files  77 passed (77)
+     Tests  1293 passed (1293)
+```
+
+`npx tsc --noEmit -p bff` exits 0. Zero regressions: all 70 pre-existing files remain green: all 7
+F-010 files (now 64 tests total, unchanged count — the two corrections were 2-for-1 and 1-for-2
+swaps that net to zero) pass against the real implementation. Every REQ-F010-### id in the
+coverage map below remains covered at the same or a strictly more precise verification point;
+none was weakened, skipped, or deleted to make the suite pass, per this role's hard rule 4.
+
+## REQ-F010-### → test coverage map (every REQ mapped)
+
+Legend: **unit/integration (bff/test/)** = covered by a file in this task. **Phase-6 e2e
+(tests/e2e/relay)** = explicitly deferred to the e2e-tester per this task's directory-ownership
+instruction — NOT written here. **doc/process-only** = deliberately NOT an in-repo automated test,
+per this task's own explicit framing; reasoning given inline. **F-004-owned (reused)** = already
+covered by the pre-existing F-004 suite, unchanged and re-affirmed rather than duplicated.
+
+| REQ | Requirement (short) | Coverage |
+|---|---|---|
+| REQ-F010-001 | Core work is a transport code-path change, not config alone | `static-scans.f010.test.ts` (credential-header literal scan + explicit RED-flag) + `http-peer-transport.f010.test.ts` (behavioral header-set proof) |
+| REQ-F010-002 | Delivery wire metadata/config only, NOT the event contract | `static-scans.f010.test.ts` (catalog 21-name/5-family scan) + F-004-owned `drainer.test.ts` byte-for-byte envelope (reused) |
+| REQ-F010-003 | cwa registered via the EXISTING `EVENT_BUS_URL` peer-list shape | `relay-config.f010.test.ts` |
+| REQ-F010-004 | Credential is the 3rd wire element, same single POST | `http-peer-transport.f010.test.ts` |
+| REQ-F010-005 | Credential header name + byte-for-byte verbatim value + 3-app-header set | `http-peer-transport.f010.test.ts` (incl. the whitespace-verification-point fetch-spy test) |
+| REQ-F010-006 | The two existing wire elements are unchanged | `http-peer-transport.f010.test.ts` |
+| REQ-F010-007 | New config key, raw single string, not split/trimmed, not hard-coded | `relay-config.f010.test.ts` |
+| REQ-F010-008 | Threaded config → createTransport → HttpPeerTransport; drainer never sees it | `transport.f010.test.ts` (threading) + `static-scans.f010.test.ts` (drainer no-leak) |
+| REQ-F010-009 | Single shared secret applied to every configured peer | `http-peer-transport.f010.test.ts` |
+| REQ-F010-010 | Credential never in the envelope | `confidentiality.f010.test.ts` |
+| REQ-F010-011 | Credential never in logs/errors/metrics/`/ready`/outbox | `confidentiality.f010.test.ts` (TransportError + console spy, strong; `ready.ts`/`metrics.ts` static proxy, weaker — see Ambiguities) |
+| REQ-F010-012 | Envelope delivered byte-for-byte; catalog unchanged | `static-scans.f010.test.ts` + F-004-owned `drainer.test.ts`/`bus.f004.test.ts` (reused) |
+| REQ-F010-013 | REQ-F004-055 classifier semantics unchanged | `http-peer-transport.f010.test.ts` (regression re-run with credential configured) + F-004-owned classification suite (reused) |
+| REQ-F010-014 | 401 from cwa → permanent → immediate park (documented outcome) | `drainer.f010.test.ts` (real transport + real drainer + real metrics) |
+| REQ-F010-015 | Row published only after ALL peers ack; one peer's permanent park parks the whole key | **Phase-6 e2e (tests/e2e/relay)** — explicitly named in this task's instructions as e2e-tester territory (the two-peer partially-delivered park journey) |
+| REQ-F010-016 | Runbook: peer reg, credential provisioning, rotation, park-response, real-cwa deployment-validation | **doc/process-only** — this task's own instructions name REQ-F010-016 as a doc check, not an in-repo automated test; see rationale below |
+| REQ-F010-017 | Boot posture: prod fail-fast naming the var / whitespace-only boots / dev boot-soft / CR-LF-NUL refuse in any env | `relay-config.f010.test.ts` |
+| REQ-F010-018 | Wrong/stale credential → permanent park, recoverable via re-provision + replay | `drainer.f010.test.ts` |
+| REQ-F010-019 | Misconfiguration never silently drops an event/corrupts bookkeeping | `drainer.f010.test.ts` (delivery-outcome half) + `relay-config.f010.test.ts` (boot-refusal half — nothing runs, so nothing is dropped, vacuously true since outbox writes happen in the BFF process, not the relay process) |
+| REQ-F010-020 | Secret handling posture: env-sourced, `.env.example` empty value, no committed literal | `confidentiality.f010.test.ts` |
+| REQ-F010-021 | No regression to F-004 | **doc/process-only** — the full pre-existing 70-file/1229-test F-004+ suite passing UNCHANGED (confirmed this run) IS the regression evidence; the "F-010 touches only transport/config/.env.example/tests/runbook" claim is a `git diff --stat` scope check at implementation-review time (mirrors the F-001 `TEST_PLAN.md`'s own precedent for this exact kind of claim), not a pre-implementation unit test (there is no diff yet) |
+| REQ-F010-022 | No added round-trip; no new persisted DB state | `http-peer-transport.f010.test.ts` (single-POST) + `bff/test/store/f010-no-new-outbox-state.test.ts` (schema) |
+| REQ-F010-023 | Transport-swap boundary preserved | `static-scans.f010.test.ts` (drainer no-leak, shared block with REQ-F010-008) + F-004-owned `drainer.test.ts`'s `FakeTransport` swap-ability proof (reused, unaffected by the credential) |
+| REQ-F010-024(a) | e2e stub-peer: correct credential → 2xx → published | **Phase-6 e2e (tests/e2e/relay)** — explicitly named e2e-tester territory |
+| REQ-F010-024(b-wrong) | e2e stub-peer: wrong credential (env-independent) → 401 → permanent park | **Phase-6 e2e (tests/e2e/relay)** |
+| REQ-F010-024(b-missing) | e2e stub-peer: missing credential, DEV-ONLY → 401 → permanent park; PRODUCTION → boot refusal, not a 401 | **Phase-6 e2e (tests/e2e/relay)** — the production boot-refusal HALF of this arm is unit-covered by `relay-config.f010.test.ts`'s REQ-F010-017 tests, reused |
+| REQ-F010-024(b) real-cwa integration | Live delivery accepted by the real cwa deployment | **doc/process-only** — explicitly named in this task's instructions as a runbook deployment-validation step, NOT an in-repo automated test (cwa is a separate deployment) |
+| REQ-F010-025 | No HMAC/mTLS peer auth, no https-only scheme enforcement (stays with D-006) | `static-scans.f010.test.ts` |
+| REQ-F010-026 | No cwa/`customer-web-app` repo file changed | **doc/process-only** — a cross-repo negative claim outside this repo's test harness; verified by PR-diff scope review (mirrors the F-001 `TEST_PLAN.md` precedent for REQ-F001-004/007's identical "negative claim about a separate deployment/repo" shape) |
+| REQ-F010-027 | Envelope/`changes` shape/catalog unchanged | `static-scans.f010.test.ts` + `confidentiality.f010.test.ts` (same tests as REQ-F010-002/010/012) |
+| REQ-F010-028 | Classifier semantics unchanged (non-goal restated) | `http-peer-transport.f010.test.ts` REQ-F010-013 regression block + F-004-owned classification-token static scan (reused, unchanged) |
+| REQ-F010-029 | No broker/non-HTTP transport added | `transport.f010.test.ts` + F-004-owned `transport.test.ts`/`transport.unit.test.ts` (reused) |
+| REQ-F010-030 | No deployment-topology artifacts (docker-compose/k8s/Dockerfile) | **doc/process-only** — this task's own instructions name REQ-F010-030 explicitly as a non-goal NOT covered by an in-repo test; see rationale below |
+
+**30/30 REQ ids traced.** Of these: **25** have a concrete executable test in this task's 7 new
+files (several also cross-reference pre-existing F-004-owned tests that already prove the
+"unchanged" half of a requirement); **3** (`REQ-F010-015`, `REQ-F010-024(a)`, `REQ-F010-024(b-wrong)`,
+`REQ-F010-024(b-missing)`'s delivering half) are explicitly deferred to the Phase-6 e2e-tester per
+this task's own directory-ownership instruction; **5** (`REQ-F010-016`, `REQ-F010-024(b)` real-cwa
+integration, `REQ-F010-021`, `REQ-F010-026`, `REQ-F010-030`) are deliberately **doc/process-only**,
+per this task's own explicit framing, with rationale given per-row above and expanded just below.
+
+### Why REQ-F010-016 / REQ-F010-024(b) / REQ-F010-030 have NO in-repo automated test (by design)
+
+This task's own brief explicitly names these three as requirements to **deliberately not** cover
+with an in-repo automated test, and this plan follows that framing rather than inventing a
+mechanical proxy that would either be vacuous or overreach:
+
+- **REQ-F010-016 (runbook)** — a content-completeness check ("does the runbook's prose cover
+  registration/provisioning/rotation/park-response/deployment-validation") is a documentation-review
+  concern, not a spec *behavior* a test can independently verify without re-grading prose quality.
+  Writing a keyword-grep test would only prove the right WORDS appear, not that the runbook is
+  operationally correct — a false-confidence proxy this task's brief explicitly asked to avoid by
+  naming this item as doc-only up front.
+- **REQ-F010-024(b) real-cwa integration** — by the spec's own text (§4/§8 Q2), this is "captured as
+  a deployment-validation step in the F-010 runbook... NOT an in-repo automated test (cwa is a
+  separate deployment)". A real `customer-web-app` deployment is not reachable from this test
+  harness; simulating it with yet another local stub would just re-test REQ-F010-024(a), which is
+  already the e2e-tester's Phase-6 stub-peer journey.
+- **REQ-F010-030 (topology artifacts)** — the *Test* clause ("F-010 introduces no such artifact") is
+  an absence-of-a-FUTURE-change claim. A glob-based existence check for `docker-compose*.yml`/
+  `Dockerfile`/k8s manifests would pass **vacuously today** (none exist, unrelated to F-010) and
+  would only ever catch a violation if some LATER, unrelated PR added one — at which point it is a
+  PR-scope/review-time concern (does this PR's diff introduce a topology artifact), not a
+  spec-behavior regression this feature's own test suite is positioned to guard. This task's brief
+  names this item as its own example of a non-goal better handled as a review-time check than a
+  standing unit test.
+
+REQ-F010-021's "no regression to F-004" is handled the same way for the same reason (a diff-scope
+claim, not a behavior a fresh unit test can assert pre-diff) — its BEHAVIORAL half ("the F-004
+suites keep passing") is, however, concretely demonstrated by this run's own green 1229-test
+baseline, so it is listed as doc/process-only for the diff-scope half only, not left completely
+untested.
+
+## Ambiguities / risks needing human ruling or acknowledgement
+
+1. **HttpPeerTransport's assumed constructor extension (3rd positional `peerAuthToken` param) is
+   not spec-pinned.** The spec pins the WIRE behavior exactly but leaves the internal call shape to
+   the implementer, exactly as it already left `peerTimeoutMs`'s call shape open. This task's choice
+   mirrors the established precedent (see the assumptions table above). **Not blocking** — if the
+   implementer instead threads the credential via an options object, only the CALL SITES in the new
+   test files need adjusting; every assertion is behavioral (headers observed by a real peer, or the
+   value passed to `fetch()`), not shape-derived.
+2. **REQ-F010-005's whitespace-verification-point test assumes `HttpPeerTransport` calls the global
+   `fetch()`.** This was written BEFORE reading any implementation source, based on `bff/package.json`
+   shipping no alternate HTTP client dependency and Node's `>=20` engine requirement. Running the
+   suite incidentally confirmed this (via vitest's own failure-diff output, not a deliberate read of
+   `bff/src/**`) — the fetch-spy technique correctly intercepted a real call. Flagged here because the
+   test was DESIGNED to fail gracefully with an explicit diagnostic (`expect.fail(...)` naming the
+   assumption) rather than a false pass/fail if the client had turned out to be `node:http` directly;
+   that fallback branch did not trigger in this run, and is retained in the test as a safety net
+   against a future refactor changing the client.
+3. **REQ-F010-011's `/ready`/metrics-surface redaction checks are a static-text PROXY, not a live
+   `/ready` HTTP call carrying a real credential through the whole boot path.** `ready.ts`'s own
+   established test convention (`bff/test/relay/ready.test.ts`) constructs its deps object by hand
+   (not by loading real `config`), so there is no existing seam to drive a genuinely end-to-end
+   "`/ready` served while a credential is configured" check without inventing wiring the spec does
+   not pin. The TransportError/console-log checks in the same file ARE strong, live, behavioral
+   checks (a real 401 delivery with a real credential, real console spies) — only the `/ready`/
+   metrics half is the weaker static proxy. Recommend a human ruling on whether this proxy is
+   sufficient or whether `ready.ts`'s deps shape should be extended (by the implementer) with an
+   explicit seam this suite could then drive live.
+4. **REQ-F010-019's "boot refusal never drops an event" half is asserted as vacuously true by
+   construction, not independently re-verified against a live outbox.** Since the relay process
+   refusing to boot means the drain loop never runs at all, and outbox writes happen entirely in the
+   separate BFF process (unaffected by the relay's own boot), there is no code path by which a boot
+   refusal could ever touch `event_outbox` — this is a structural argument, not a live behavioral
+   test, and is presented as such rather than manufacturing an artificial test that would just
+   re-confirm the relay process didn't start.
+5. **The camelCase config field name `peerAuthToken`** (vs., say, `credential` or `authToken`) is an
+   assumption, not a spec pin — flagged in the assumptions table; low-risk since it only affects the
+   TEST's own property-access call sites if the implementer picks a different name.
+
+None of the above blocks a concrete, spec-derived test from having been written — each is either
+(a) tested at the most defensible, uncontroversial layer while flagging the genuinely-open narrower
+question, or (b) an interface-shape assumption already reasoned through and documented, per hard
+rule 4's "write the test for the most defensible reading, mark it, list it" instruction.
