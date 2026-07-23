@@ -103,7 +103,7 @@ describe('http-peer-transport.ts — module resolution (F-010 credential extensi
 });
 
 describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carried as the third wire element, on the SAME POST, verbatim', () => {
-  it('with a credential configured, the outbound POST carries all three application-level headers: content-type, x-event-delivery-id, X-Event-Auth-Token', async () => {
+  it('with a credential configured, the outbound POST carries all three application-level headers: content-type, x-event-delivery-id, X-Event-Ingest-Secret', async () => {
     const p = await startFakePeer(200);
     peers = [p];
     const transport = new HttpPeerTransport!([p.url], undefined, 'super-secret-token');
@@ -123,10 +123,10 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     const h = lowerHeaders(p.requests[0]!);
     expect(h['content-type']).toMatch(/application\/json/);
     expect(h['x-event-delivery-id']).toBe('epoch-1:1');
-    expect(h['x-event-auth-token']).toBe('super-secret-token');
+    expect(h['x-event-ingest-secret']).toBe('super-secret-token');
   });
 
-  it('F-010 introduces EXACTLY ONE new application-level header vs. the pre-F-010 (no-credential) baseline — the header-NAME-SET differs by exactly {x-event-auth-token}', async () => {
+  it('F-010 introduces EXACTLY ONE new application-level header vs. the pre-F-010 (no-credential) baseline — the header-NAME-SET differs by exactly {x-event-ingest-secret}', async () => {
     const pBaseline = await startFakePeer(200);
     const pWithCred = await startFakePeer(200);
     peers = [pBaseline, pWithCred];
@@ -139,7 +139,7 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     const baselineNames = new Set(Object.keys(pBaseline.requests[0]!.headers).map((h) => h.toLowerCase()));
     const withCredNames = new Set(Object.keys(pWithCred.requests[0]!.headers).map((h) => h.toLowerCase()));
     const added = [...withCredNames].filter((h) => !baselineNames.has(h));
-    expect(added).toEqual(['x-event-auth-token']);
+    expect(added).toEqual(['x-event-ingest-secret']);
   });
 
   // Shared fetch-spy helper (extracted during Phase-4 verification so the whitespace-only case
@@ -158,10 +158,10 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
       await transport.deliver('{}', 'epoch-1:ws').catch(() => undefined);
       if (calls.length === 0) return undefined;
       const headersArg = calls[0]!.init?.['headers'];
-      if (headersArg instanceof Headers) return headersArg.get('X-Event-Auth-Token');
+      if (headersArg instanceof Headers) return headersArg.get('X-Event-Ingest-Secret');
       if (headersArg && typeof headersArg === 'object') {
         const rec = headersArg as Record<string, string>;
-        return rec['X-Event-Auth-Token'] ?? rec['x-event-auth-token'];
+        return rec['X-Event-Ingest-Secret'] ?? rec['x-event-ingest-secret'];
       }
       return undefined;
     } finally {
@@ -188,13 +188,13 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     expect(value).toBe(' abc ');
   });
 
-  it('with NO credential configured (constructor arg omitted entirely), the outbound POST carries only the two pre-F-010 headers — no X-Event-Auth-Token at all (REQ-F010-005 scoping: the three-header MUST applies only "when a credential is configured")', async () => {
+  it('with NO credential configured (constructor arg omitted entirely), the outbound POST carries only the two pre-F-010 headers — no X-Event-Ingest-Secret at all (REQ-F010-005 scoping: the three-header MUST applies only "when a credential is configured")', async () => {
     const p = await startFakePeer(200);
     peers = [p];
     const transport = new HttpPeerTransport!([p.url]); // no peerAuthToken arg
     await transport.deliver('{}', 'epoch-1:no-cred');
     const names = Object.keys(p.requests[0]!.headers).map((h) => h.toLowerCase());
-    expect(names).not.toContain('x-event-auth-token');
+    expect(names).not.toContain('x-event-ingest-secret');
   });
 
   it('an EMPTY-STRING credential ("") is treated as absent — no header attached (REQ-F010-017 "unset or empty" definition, mirrored at the transport boundary)', async () => {
@@ -203,7 +203,7 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     const transport = new HttpPeerTransport!([p.url], undefined, '');
     await transport.deliver('{}', 'epoch-1:empty-cred');
     const names = Object.keys(p.requests[0]!.headers).map((h) => h.toLowerCase());
-    expect(names).not.toContain('x-event-auth-token');
+    expect(names).not.toContain('x-event-ingest-secret');
   });
 
   // CORRECTED (Phase-4 verification, 2026-07-23): the original assertion here checked the
@@ -246,12 +246,12 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     const transport = new HttpPeerTransport!([p.url], undefined, ' ');
     await transport.deliver('{}', 'epoch-1:ws-only-cred');
     const h = lowerHeaders(p.requests[0]!);
-    expect(Object.keys(h)).toContain('x-event-auth-token'); // attached, not omitted (contrast with the "" -> absent case above)
+    expect(Object.keys(h)).toContain('x-event-ingest-secret'); // attached, not omitted (contrast with the "" -> absent case above)
     // The value itself is normalized to '' by the fetch/undici client BEFORE it ever reaches the
     // wire (confirmed independently, see comment above) — this is the client's own behavior, not
     // a transport defect, and is exactly why REQ-F010-005 pins verbatim-value verification to the
     // transport boundary (the test above), not here.
-    expect(h['x-event-auth-token']).toBe('');
+    expect(h['x-event-ingest-secret']).toBe('');
   });
 });
 
@@ -274,8 +274,8 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-009 — a single configured creden
     peers = [p1, p2];
     const transport = new HttpPeerTransport!([p1.url, p2.url], undefined, 'shared-secret');
     await transport.deliver('{}', 'epoch-1:multi');
-    expect(lowerHeaders(p1.requests[0]!)['x-event-auth-token']).toBe('shared-secret');
-    expect(lowerHeaders(p2.requests[0]!)['x-event-auth-token']).toBe('shared-secret');
+    expect(lowerHeaders(p1.requests[0]!)['x-event-ingest-secret']).toBe('shared-secret');
+    expect(lowerHeaders(p2.requests[0]!)['x-event-ingest-secret']).toBe('shared-secret');
   });
 });
 

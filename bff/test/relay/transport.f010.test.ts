@@ -74,13 +74,13 @@ describe('transport.ts — module resolution (F-010 credential threading)', () =
 });
 
 describe.skipIf(!createTransport)('REQ-F010-008 — the credential is threaded config -> createTransport -> HttpPeerTransport', () => {
-  it('a peerAuthToken passed to createTransport reaches the outbound POST as the X-Event-Auth-Token header — proves the THREADING, not just the transport constructor in isolation', async () => {
+  it('a peerAuthToken passed to createTransport reaches the outbound POST as the X-Event-Ingest-Secret header — proves the THREADING, not just the transport constructor in isolation', async () => {
     const p = await startFakePeer(200);
     peers = [p];
     const transport = createTransport!({ kind: 'http', peerUrls: [p.url], peerAuthToken: 'threaded-secret' });
     await transport.deliver('{}', 'epoch-1:threaded');
     const h = Object.fromEntries(Object.entries(p.requests[0]!.headers).map(([k, v]) => [k.toLowerCase(), v]));
-    expect(h['x-event-auth-token']).toBe('threaded-secret');
+    expect(h['x-event-ingest-secret']).toBe('threaded-secret');
   });
 
   it('omitting peerAuthToken from createTransport opts sends no credential header (mirrors the constructor-level default)', async () => {
@@ -89,7 +89,7 @@ describe.skipIf(!createTransport)('REQ-F010-008 — the credential is threaded c
     const transport = createTransport!({ kind: 'http', peerUrls: [p.url] });
     await transport.deliver('{}', 'epoch-1:threaded-none');
     const names = Object.keys(p.requests[0]!.headers).map((h) => h.toLowerCase());
-    expect(names).not.toContain('x-event-auth-token');
+    expect(names).not.toContain('x-event-ingest-secret');
   });
 
   it('kind undefined (defaults to "http") also threads the credential correctly', async () => {
@@ -98,7 +98,7 @@ describe.skipIf(!createTransport)('REQ-F010-008 — the credential is threaded c
     const transport = createTransport!({ kind: undefined, peerUrls: [p.url], peerAuthToken: 'default-kind-secret' });
     await transport.deliver('{}', 'epoch-1:threaded-default-kind');
     const h = Object.fromEntries(Object.entries(p.requests[0]!.headers).map(([k, v]) => [k.toLowerCase(), v]));
-    expect(h['x-event-auth-token']).toBe('default-kind-secret');
+    expect(h['x-event-ingest-secret']).toBe('default-kind-secret');
   });
 });
 

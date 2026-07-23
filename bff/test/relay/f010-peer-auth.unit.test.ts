@@ -168,7 +168,7 @@ afterEach(async () => {
 const { HttpPeerTransport } = await import('../../src/relay/http-peer-transport.js');
 
 describe('HttpPeerTransport — a partial-ack re-drive still attaches the credential to the re-POST of the still-pending peer only', () => {
-  it('peer A acks (200) on the first attempt, peer B permanently rejects (403); re-driving the SAME deliveryId without release() re-POSTs ONLY peer B, and that re-POST still carries X-Event-Auth-Token', async () => {
+  it('peer A acks (200) on the first attempt, peer B permanently rejects (403); re-driving the SAME deliveryId without release() re-POSTs ONLY peer B, and that re-POST still carries X-Event-Ingest-Secret', async () => {
     const acker = await startFakePeer(200);
     const rejecter = await startFakePeer(403);
     peers = [acker, rejecter];
@@ -189,7 +189,7 @@ describe('HttpPeerTransport — a partial-ack re-drive still attaches the creden
     expect(rejecter.requests).toHaveLength(2); // re-POSTed exactly once more
 
     // The credential header rides EVERY outbound POST for the still-pending peer, including re-drives.
-    expect(lowerHeaders(rejecter.requests[1]!)['x-event-auth-token']).toBe('partial-ack-secret');
+    expect(lowerHeaders(rejecter.requests[1]!)['x-event-ingest-secret']).toBe('partial-ack-secret');
   });
 });
 
@@ -206,6 +206,6 @@ describe('createTransport — an explicit empty-string peerAuthToken (as opposed
     const transport = createTransport({ kind: 'http', peerUrls: [p.url], peerAuthToken: '' });
     await transport.deliver('{}', 'epoch-1:threaded-empty-string');
     const names = Object.keys(p.requests[0]!.headers).map((h) => h.toLowerCase());
-    expect(names).not.toContain('x-event-auth-token');
+    expect(names).not.toContain('x-event-ingest-secret');
   });
 });
