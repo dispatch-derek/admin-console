@@ -11,9 +11,10 @@ const DELIVERY_ID_HEADER = 'x-event-delivery-id';
 
 // Header carrying the shared-secret credential to each peer as the third wire element cwa requires
 // (F-010 REQ-F010-004/005; cwa REQ-F005-061). Added ALONGSIDE the two pre-existing headers, never in
-// place of them. The value is the configured secret byte-for-byte verbatim (no trim/case-fold/
-// re-encode). The credential is owned entirely inside this transport (REQ-F010-008 seam) and never
-// appears in logs, errors, metrics, or /ready (REQ-F010-011).
+// place of them. The value is the configured secret byte-for-byte at this point (no trim/case-fold/
+// re-encode here), though WHATWG Fetch may strip leading/trailing HTTP whitespace in transit.
+// The credential is owned entirely inside this transport (REQ-F010-008 seam) and never appears in
+// logs, errors, metrics, or /ready (REQ-F010-011).
 const AUTH_TOKEN_HEADER = 'X-Event-Auth-Token';
 
 // Default per-peer request timeout — a provisional constant of record, operator-tunable via
@@ -26,10 +27,11 @@ const AUTH_TOKEN_HEADER = 'X-Event-Auth-Token';
 // transient failure — never a silent, unbounded stall.
 const DEFAULT_PEER_REQUEST_TIMEOUT_MS = 10_000;
 
-// "Unset or empty" (REQ-F010-017 normative definition): the credential is configured iff it is a
-// non-empty string. `undefined` and `''` are absent; a whitespace-only value (' ') is non-empty and
-// IS configured (carried verbatim). Single home for this predicate — imported by config.ts (boot-time
-// fail-fast) and used below (attach-or-not-attach) so the definition can never drift between the two.
+// Predicate: "unset or empty" (REQ-F010-017 normative definition). The credential is configured iff
+// it is a non-empty string; `undefined` and `''` are absent/unset; a whitespace-only value (' ') is
+// non-empty and IS configured (though the HTTP client may strip surrounding whitespace in transit,
+// so padding is almost certainly a misconfiguration). Single home for this predicate — imported by
+// config.ts (boot-time fail-fast) and used below (attach-or-not-attach) so the definition never drifts.
 export function isCredentialConfigured(token: string | undefined): token is string {
   return token !== undefined && token !== '';
 }
@@ -59,7 +61,8 @@ export class HttpPeerTransport implements EventTransport {
     private readonly peerTimeoutMs: number = DEFAULT_PEER_REQUEST_TIMEOUT_MS,
     // Shared-secret credential (F-010 REQ-F010-005/008). A credential is attached iff this is a
     // non-empty string: `undefined` and `''` are treated as absent (REQ-F010-017 "unset or empty"),
-    // while a whitespace-only value (' ') is non-empty and IS attached, carried verbatim.
+    // while a whitespace-only value (' ') is non-empty and IS attached (though HTTP client may strip
+    // surrounding whitespace in transit, so padding whitespace should not be relied upon).
     private readonly peerAuthToken?: string,
   ) {}
 
@@ -78,7 +81,8 @@ export class HttpPeerTransport implements EventTransport {
         try {
           // Two pre-existing headers unchanged (REQ-F010-006); the credential header is added
           // alongside them ONLY when a credential is configured (non-empty string), carrying the
-          // value byte-for-byte verbatim at the point it is set (REQ-F010-005/017).
+          // value byte-for-byte at this point (REQ-F010-005/017). Note: WHATWG Fetch may strip
+          // leading/trailing HTTP whitespace in transit, so don't rely on padding.
           const headers: Record<string, string> = {
             'content-type': 'application/json',
             [DELIVERY_ID_HEADER]: deliveryId,

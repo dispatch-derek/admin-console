@@ -44,9 +44,11 @@ if (isProduction && peerUrls.length === 0) {
 
 // EVENT_BUS_PEER_AUTH_TOKEN — the shared-secret credential attached to every outbound peer POST
 // (F-010 REQ-F010-007). Read as a RAW single string: NOT comma-split and NOT whitespace-trimmed the
-// way the EVENT_BUS_URL peer list is (that split/trim is peer-list-only). The value is delivered
-// verbatim on the wire (REQ-F010-005); it must never be hard-coded here or sourced from the BFF's
-// engine/auth secrets. `undefined` when unset — no invented fallback default.
+// way the EVENT_BUS_URL peer list is (that split/trim is peer-list-only). The value is set on the
+// HTTP header byte-for-byte at the transport layer (REQ-F010-005), but WHATWG Fetch may strip
+// leading/trailing HTTP whitespace in transit — do not rely on padding whitespace. It must never
+// be hard-coded here or sourced from the BFF's engine/auth secrets. `undefined` when unset — no
+// invented fallback default.
 const peerAuthToken = process.env['EVENT_BUS_PEER_AUTH_TOKEN'];
 
 if (peerAuthToken !== undefined && ILLEGAL_HEADER_VALUE_BYTE.test(peerAuthToken)) {
@@ -58,7 +60,8 @@ if (peerAuthToken !== undefined && ILLEGAL_HEADER_VALUE_BYTE.test(peerAuthToken)
 
 // Missing/empty-credential-while-a-peer-is-configured fail-fast (REQ-F010-017), mirroring the
 // empty-peer-list posture above (REQ-F004-045). "Unset or empty" = the var is ABSENT or the
-// zero-length string (""); a whitespace-only value (" ") is NON-empty and boots (delivered verbatim).
+// zero-length string (""); a whitespace-only value (" ") is NON-empty and boots (though the HTTP
+// client may strip the spaces in transit, so this is almost certainly a misconfiguration).
 // Production: refuse to boot naming the missing variable — this prevents the silent 401 park loop a
 // credential-less peer would otherwise produce. Development: boot SOFT (delivery to a
 // credential-requiring peer parks per REQ-F010-014) — this dev posture is normative.
@@ -80,7 +83,7 @@ function intEnv(name: string, fallback: number): number {
 export const config = {
   eventBusUrl, // raw value (may be undefined)
   peerUrls, // parsed peer endpoints for HttpPeerTransport fan-out
-  peerAuthToken, // EVENT_BUS_PEER_AUTH_TOKEN — raw verbatim shared-secret credential (may be undefined)
+  peerAuthToken, // EVENT_BUS_PEER_AUTH_TOKEN — raw shared-secret credential (may be undefined; set on header byte-for-byte at transport but HTTP client may strip surrounding whitespace)
   transportKind, // 'http' (broker already refused above)
   backlogThreshold: intEnv('EVENT_BUS_BACKLOG_THRESHOLD', 1000),
   lagThresholdMs: intEnv('EVENT_BUS_LAG_THRESHOLD_MS', 30_000),
