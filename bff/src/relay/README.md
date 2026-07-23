@@ -19,11 +19,12 @@ Example:
 
 ```bash
 # Production boot with just the relay-scoped config (no BFF secrets needed).
-# Note: if EVENT_BUS_URL is set (a peer is configured), EVENT_BUS_PEER_AUTH_TOKEN must also be set
+# Note: peer URLs must use https:// scheme when a credential is configured or in production.
+# If EVENT_BUS_URL is set (a peer is configured), EVENT_BUS_PEER_AUTH_TOKEN must also be set
 # (the shared-secret credential), or the relay will refuse to boot (REQ-F010-017).
 DB_PATH=/data/console.db \
 EVENT_BUS_TRANSPORT=http \
-EVENT_BUS_URL=http://bus-peer-1:8080/api/events,http://bus-peer-2:8080/api/events \
+EVENT_BUS_URL=https://bus-peer-1:8080/api/events,https://bus-peer-2:8080/api/events \
 EVENT_BUS_PEER_AUTH_TOKEN=<the-shared-secret> \
 node dist/relay/index.js
 ```
@@ -36,8 +37,8 @@ In a built/deployed environment:
 
 ```bash
 cd bff && npm run build  # compiles src/**/*.ts to dist/
-# Start the relay as a supervised process (when a peer is configured, the credential is required):
-DB_PATH=/data/console.db EVENT_BUS_URL=http://peer:8080/api/events EVENT_BUS_PEER_AUTH_TOKEN=<secret> node dist/relay/index.js
+# Start the relay as a supervised process (peer URLs must use https:// when a credential is set or in production):
+DB_PATH=/data/console.db EVENT_BUS_URL=https://peer:8080/api/events EVENT_BUS_PEER_AUTH_TOKEN=<secret> node dist/relay/index.js
 ```
 
 The compiled output at `dist/relay/index.js` is the real entrypoint for production.
@@ -51,7 +52,7 @@ The relay reads its own environment variables (prefixed `EVENT_BUS_*` and `DB_PA
 | Variable | Default | Meaning | Hard-refuse (production) |
 |----------|---------|---------|-------------------------|
 | `DB_PATH` | (required) | Absolute path to the shared SQLite outbox DB file. Same value as the BFF uses. | — |
-| `EVENT_BUS_URL` | (empty) | Comma-delimited list of peer endpoints (whitespace trimmed per entry). Example: `http://peer-1:8080/api/events,http://peer-2:8080/api/events` | Yes: relay refuses to boot in production without this set (but starts soft in dev, reporting not-ready on `/ready`). |
+| `EVENT_BUS_URL` | (empty) | Comma-delimited list of peer endpoints (whitespace trimmed per entry). Peer URLs must use `https://` scheme when a credential is configured or in production; plaintext `http://` is allowed only in development without a credential. Example: `https://peer-1:8080/api/events,https://peer-2:8080/api/events` | Yes: relay refuses to boot in production without this set (but starts soft in dev, reporting not-ready on `/ready`); also hard-refuses if any peer lacks `https://` when a credential is set or in production. |
 | `EVENT_BUS_PEER_AUTH_TOKEN` | (empty) | Shared-secret credential attached to every outbound peer POST as the `X-Event-Auth-Token` HTTP header (F-010 REQ-F010-007). Read as a raw single string — NOT trimmed or split like the peer list. When a peer is configured, this MUST be set (non-empty) in production; see boot posture below. | Yes (production + peer configured + unset/empty): relay refuses to boot, preventing silent 401 loops. Development + unset: boots soft; delivery to a credential-requiring peer parks per REQ-F010-014. |
 | `EVENT_BUS_TRANSPORT` | `http` | Transport adapter selector: `http` (GTM HTTP peer delivery) or `broker` (future). | Yes: `broker` hard-refuses to boot in **all environments** — no broker transport exists in this build yet. |
 | `EVENT_BUS_BACKLOG_THRESHOLD` | `1000` | Row count; `/ready` reports not-ready when unpublished backlog ≥ this. | — |
@@ -87,10 +88,12 @@ See `docs/runbooks/F-010-peer-registration-and-credential.md` for detailed opera
 operator, never committed to source); (c) rotating the credential; (d) responding to credential-mismatch
 parks; (e) validating end-to-end delivery against the real cwa endpoint.
 
-**Security caveat:** The relay attaches the credential to all peers in `EVENT_BUS_URL`, and performs
-no peer-URL scheme validation, so a misconfigured plaintext `http://` peer would carry the secret in
-cleartext. Prefer `https://` peers and use private networks. HTTPS-only enforcement is tracked in
-D-006 (GH #16) and D-007 (GH #39).
+**Security note on peer URLs (D-006 / D-007):** The relay now enforces `https://` scheme on all
+peer URLs in `EVENT_BUS_URL` whenever a credential is configured or in production (refusing to boot
+with a clear error if any peer lacks `https://`). This prevents the shared-secret credential and
+`admin.*` envelope from traversing cleartext on misconfigured peers. Bare `http://` peers are
+allowed only in development with no credential set (for dev-loopback convenience). Future scope
+includes HMAC/mTLS message authentication and an SSRF host-allowlist; these remain deferred.
 
 ### BFF-side configuration
 
@@ -227,6 +230,7 @@ Check `stderr` and look for:
 
 - `EVENT_BUS_URL must be set ... when the relay runs in production bus mode` — production hard-refuse; set the env var.
 - `EVENT_BUS_PEER_AUTH_TOKEN must be set ... when a peer is configured` — production hard-refuse when a peer is configured but the credential is unset or empty (F-010 REQ-F010-017); set the env var to the shared secret, or remove all peers from `EVENT_BUS_URL`.
+- `EVENT_BUS_URL peer "<url>" must use the https:// scheme when a credential is configured (EVENT_BUS_PEER_AUTH_TOKEN set) or the relay runs in production` — a peer URL lacks the `https://` scheme (D-006 / GH #16). Fix by updating the URL to use `https://`, or if the peer truly requires plaintext HTTP, move it to a development-only setup without the `EVENT_BUS_PEER_AUTH_TOKEN` credential.
 - `EVENT_BUS_PEER_AUTH_TOKEN contains a byte that is illegal in an HTTP header field value` — the credential contains a control character (CR, LF, NUL, etc.); fix the credential value to use only legal header bytes.
 - `broker transport not available in this build` — `EVENT_BUS_TRANSPORT=broker` is not supported in this GTM; use `http`.
 - Any other startup error — check that `DB_PATH` points to a valid, writable SQLite file with the F-004 migration applied.
@@ -247,9 +251,9 @@ Check `stderr` and look for:
 - [ ] Relay runs as a separate supervised process (systemd, container restart, etc.) with exactly one instance.
 - [ ] `DB_PATH` points to the shared SQLite file (same value as the BFF).
 - [ ] `EVENT_BUS_MODE=bus` is set for the BFF in production (causes hard-refuse if unset or typo'd).
-- [ ] `EVENT_BUS_URL` is set to your peer list (relay hard-refuses in production without it).
+- [ ] `EVENT_BUS_URL` is set to your peer list using `https://` scheme (relay hard-refuses in production without it, and hard-refuses any non-`https://` peer when a credential is set or in production).
 - [ ] `EVENT_BUS_TRANSPORT=http` (the only GTM option).
-- [ ] Peer endpoints are reachable and listening on the specified URLs.
+- [ ] Peer endpoints are reachable and listening on the specified HTTPS URLs.
 - [ ] Peers deduplicate on the `x-event-delivery-id` header (required for effectively-once semantics).
 - [ ] `/ready` is wired into your orchestrator's health-check policy (probe port `RELAY_READY_PORT`, default `3003`).
 - [ ] `EVENT_BUS_PEER_AUTH_TOKEN` is provisioned at deploy time by the operator (F-010; never committed to source).
@@ -257,7 +261,7 @@ Check `stderr` and look for:
 - [ ] A live `admin.user.*` delivery is validated end-to-end against the real cwa endpoint (F-010 REQ-F010-024).
 - [ ] (Optional) `EVENT_BUS_PEER_TIMEOUT_MS` is tuned to your network latency (default 10s).
 - [ ] (Optional) `EVENT_BUS_BACKLOG_THRESHOLD` / `EVENT_BUS_LAG_THRESHOLD_MS` are tuned to your SLO.
-- [ ] Peers use HTTPS and are on a private network or run with mTLS (defend against MITM of `admin.*` events and the shared secret; F-010 does no peer-URL scheme validation, tracked in D-006 GH #16).
+- [ ] All peer URLs use HTTPS and are on a private network or run with mTLS (D-006 / GH #16 now enforces `https://` scheme; HMAC/mTLS message authentication and SSRF allowlist remain future scope).
 
 ## References
 
