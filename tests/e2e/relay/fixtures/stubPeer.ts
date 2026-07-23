@@ -1,9 +1,16 @@
-// Ephemeral localhost HTTP peer double for HttpPeerTransport (bff/src/relay/http-peer-transport.ts).
-// A real `node:http` server on a real OS-assigned port -- the relay's `fetch()` POST hits this
-// exactly as it would hit a real peer. Every received request is recorded (method, headers, raw
-// body, parsed JSON) so tests can assert byte-for-byte envelope delivery. Response behavior is
-// scriptable per test (status code queues, hangs, always-status) to drive retry/park/crash
-// journeys deterministically -- no sleep()-based flakiness.
+// Ephemeral localhost HTTPS peer double for HttpPeerTransport (bff/src/relay/http-peer-transport.ts).
+// A real `node:https` server (self-signed loopback cert, see fixtures/tls.ts) on a real OS-assigned
+// port -- the relay's `fetch()` POST hits this exactly as it would hit a real peer. Every received
+// request is recorded (method, headers, raw body, parsed JSON) so tests can assert byte-for-byte
+// envelope delivery. Response behavior is scriptable per test (status code queues, hangs,
+// always-status) to drive retry/park/crash journeys deterministically -- no sleep()-based flakiness.
+//
+// D-010 (GH #48): this stub used to serve plain http://, which made the D-006 https-only-peer boot
+// guard (bff/src/relay/config.ts ~82-92) refuse to boot the relay in every credential-configured
+// journey (a set EVENT_BUS_PEER_AUTH_TOKEN requires every EVENT_BUS_URL peer to be https://) --
+// those journeys died at boot before any HTTP exchange. The stub now serves https:// uniformly (see
+// startStubPeer below); the spawned relay child trusts the self-signed cert via
+// NODE_TLS_REJECT_UNAUTHORIZED=0 scoped to that child process only (fixtures/relayProcess.ts).
 //
 // F-010 addition: requireAuthToken() turns the stub into a credential-checking peer (standing in
 // for cwa's REQ-F005-061 constant-time comparison, at the level of detail an e2e stub needs) --
@@ -14,7 +21,9 @@
 // presence of the three F-010 application-level headers without asserting a literal total count
 // (REQ-F010-005: the HTTP client also attaches Host/Content-Length/Accept-Encoding/Connection etc).
 
-import { createServer, type IncomingMessage, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http';
+import { createServer, type Server } from 'node:https';
+import type { IncomingMessage, IncomingHttpHeaders, ServerResponse } from 'node:http';
+import { loadSelfSignedCert } from './tls.js';
 
 export interface PeerRequest {
   deliveryId: string;
@@ -63,7 +72,8 @@ export async function startStubPeer(): Promise<StubPeer> {
   const hanging = new Map<string, ServerResponse>();
   const inflight = new Set<IncomingMessage>();
 
-  const server: Server = createServer((req, res) => {
+  const { key, cert } = loadSelfSignedCert();
+  const server: Server = createServer({ key, cert }, (req, res) => {
     inflight.add(req);
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
@@ -111,7 +121,7 @@ export async function startStubPeer(): Promise<StubPeer> {
   if (address === null || typeof address === 'string') {
     throw new Error('stub peer: expected an AddressInfo from listen(0)');
   }
-  const url = `http://127.0.0.1:${address.port}`;
+  const url = `https://127.0.0.1:${address.port}`;
 
   return {
     url,

@@ -86,6 +86,13 @@ export async function spawnRelay(opts: SpawnRelayOpts): Promise<RelayHandle> {
     ...process.env,
     NODE_ENV: opts.nodeEnv ?? 'development',
     DB_PATH: opts.dbPath,
+    // D-010 (GH #48): the e2e stub peer (fixtures/stubPeer.ts) serves https:// over a self-signed
+    // loopback cert (fixtures/tls.ts) so credential-configured journeys can satisfy the D-006
+    // https-only-peer boot guard (bff/src/relay/config.ts ~82-92). The relay's outbound `fetch()`
+    // would otherwise reject that cert as untrusted. This is scoped to ONLY this spawned relay
+    // CHILD PROCESS's env (never process.env of the test runner itself, never bff/src) -- test-only,
+    // never appropriate outside a harness that controls exactly which peer it is trusting.
+    NODE_TLS_REJECT_UNAUTHORIZED: '0',
     EVENT_BUS_URL: (opts.peerUrls ?? []).join(','),
     EVENT_BUS_TRANSPORT: opts.transport ?? 'http',
     EVENT_BUS_BACKLOG_THRESHOLD: String(opts.backlogThreshold ?? 1000),
