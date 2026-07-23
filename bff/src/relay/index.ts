@@ -11,7 +11,7 @@ import { config } from './config.js';
 import { createTransport } from './transport.js';
 import { createDrainer } from './drainer.js';
 import { buildReadyApp } from './ready.js';
-import { getBacklogCount, getRelayLagMs } from './metrics.js';
+import { getBacklogCount, getRelayLagMs, getCounters } from './metrics.js';
 import { outboxRepo } from '../store/repositories/outbox.repo.js';
 
 // Implementation-defined poll cadence (REQ-F004-010/M8) and graceful-shutdown drain bound.
@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     eventBusUrlConfigured: config.peerUrls.length > 0,
     getBacklogCount,
     getRelayLagMs: () => getRelayLagMs(),
+    getCounters,
     backlogThreshold: config.backlogThreshold,
     lagThresholdMs: config.lagThresholdMs,
     // Surface the ratified store-unwritable 503 reason (REQ-F004-011/044) via a real probe write.

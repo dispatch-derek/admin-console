@@ -172,6 +172,52 @@ Possible reasons:
 
 Wire this probe into your orchestrator's health-check policy. A 503 reason does not imply data loss — it is a signal to investigate and recover.
 
+## Observability metrics (`GET /metrics`)
+
+The relay serves a read-only `GET /metrics` HTTP endpoint on `RELAY_READY_PORT` (same port as `/ready`, default `3003`), bound to `0.0.0.0`. This endpoint exposes operational telemetry for monitoring and debugging delivery.
+
+### 200 OK
+
+Relay metrics snapshot:
+
+```json
+{
+  "delivered": 1250,
+  "attemptFailures": 14,
+  "neverDeliveredPark": 2,
+  "partiallyDeliveredPark": 3,
+  "postAckCap": 1,
+  "backlogCount": 18,
+  "relayLagMs": 5240
+}
+```
+
+**Field meanings:**
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `delivered` | number | Total events successfully delivered to all configured peers (acked by every peer). |
+| `attemptFailures` | number | Total transient delivery failures (network errors, 5xx, 408/429 responses) before reaching the retry cap. |
+| `neverDeliveredPark` | number | Events parked after exhausting retries with **no peer ever accepting them** (permanent failure, transient exhaustion, or network isolation). Indicates a genuine poison event or persistent transport/peer issue. |
+| `partiallyDeliveredPark` | number | Events parked with **at least one peer having already acked** (and holding a dedupable copy). The ordering key is blocked but the event reached the consumer; this is distinct from never-delivered and often indicates a credential mismatch or one misconfigured peer. |
+| `postAckCap` | number | Events force-published after `acked_at` was set but local bookkeeping (`published_at` update) repeatedly failed — not a loss (consumer already has the event), not a park (marked published despite the transient). |
+| `backlogCount` | number | Current count of unpublished, non-parked rows awaiting delivery — active work queue depth. |
+| `relayLagMs` | number | Age in milliseconds of the oldest unpublished, non-parked row; `0` if none exist. Indicates how far behind the relay is in processing the backlog. |
+
+**Security posture:** `/metrics` is **unauthenticated** (no credential required) and serves only aggregate operational counters — no secrets, PII, event payloads, or peer identities are exposed. It serves on the same port and bind address (`0.0.0.0`) as `/ready`. This is consistent with the F-004 security review (finding F3, unauthenticated probe): **operators should network-fence the relay port** (firewall rules, pod-internal binding, or service-mesh ingress policy) to prevent external visibility of these metrics. In a private network or pod cluster, this level of telemetry is acceptable; in an internet-facing setup, restrict access to operators only.
+
+### Diagnosing a partially-delivered park
+
+If `/metrics` shows a rising `partiallyDeliveredPark` counter, investigate:
+
+1. **Credential mismatch (most common):** One or more peers are rejecting deliveries with 401. Check that `EVENT_BUS_PEER_AUTH_TOKEN` matches what the peer expects (e.g., the cwa `/api/events/ingest` shared secret). See `docs/runbooks/F-010-peer-registration-and-credential.md` for credential provisioning and troubleshooting.
+
+2. **Misconfigured peer:** One peer is returning permanent errors (4xx other than 401) while others are 2xx-acking. Verify all peers are healthy and on the same code version.
+
+3. **Fan-out ordering key stall:** A multiple-peer setup has an ordering key stuck on the misconfigured peer. Run `SELECT COUNT(*) FROM event_outbox WHERE parked_at IS NOT NULL` to count total parked rows, and check `last_error` for details on the blocked key.
+
+If `neverDeliveredPark` is rising instead, the relay cannot reach any peer (network, DNS, or firewall issue) — check `/ready` reason and peer reachability first.
+
 ## Known limitations & operational security
 
 The security review (`security/F-004-review.md`) identified the following known limitations. They are **not bugs** but deployment guidance:
@@ -184,9 +230,9 @@ A peer that accepts the TCP connection but never sends a response can stall the 
 
 Events are delivered to peers over plain HTTP (if configured) with no authentication, no HMAC/signature, and no TLS enforcement. An MITM or an untrusted peer can read or forge `admin.*` events. **F-010 adds a shared-secret credential to the wire (F-010 REQ-F010-005)**, which is exposed in cleartext if sent to a plaintext `http://` peer. **Mitigation:** enforce HTTPS-only in your peer list (reject non-`https` URLs in config), run peers on private networks, and use mTLS or bearer tokens if available. HTTPS-only enforcement is tracked in D-006 (GH #16) and D-007 (GH #39). This is a trusted-network assumption (the same assumption as the BFF's engine adapter, which also has no TLS requirement at this stage).
 
-### [Low] Unauthenticated `/ready` probe (F3)
+### [Low] Unauthenticated `/ready` and `/metrics` probes (F3)
 
-The `/ready` endpoint is served on `0.0.0.0` with no authentication. An unauthenticated network peer can determine whether the relay is running and infer its health (backlog/lag/transport state). **Mitigation:** bind `/ready` to loopback or a pod-internal interface and gate external visibility via network policy. Collapse the reason detail for anonymous callers if you need to expose the probe.
+The `/ready` and `/metrics` endpoints are served on `0.0.0.0` with no authentication. An unauthenticated network peer can determine whether the relay is running and infer its health (backlog/lag/transport state) or observe operational counter trends. **Mitigation:** bind both probes to loopback or a pod-internal interface and gate external visibility via network policy. Collapse the reason detail for anonymous callers if you need to expose the probes.
 
 ### [Low] No outbound SSRF allowlist (F4)
 
