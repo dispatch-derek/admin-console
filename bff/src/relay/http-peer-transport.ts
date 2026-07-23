@@ -26,6 +26,14 @@ const AUTH_TOKEN_HEADER = 'X-Event-Auth-Token';
 // transient failure — never a silent, unbounded stall.
 const DEFAULT_PEER_REQUEST_TIMEOUT_MS = 10_000;
 
+// "Unset or empty" (REQ-F010-017 normative definition): the credential is configured iff it is a
+// non-empty string. `undefined` and `''` are absent; a whitespace-only value (' ') is non-empty and
+// IS configured (carried verbatim). Single home for this predicate — imported by config.ts (boot-time
+// fail-fast) and used below (attach-or-not-attach) so the definition can never drift between the two.
+export function isCredentialConfigured(token: string | undefined): token is string {
+  return token !== undefined && token !== '';
+}
+
 type PeerOutcome = 'ack' | 'transient' | 'permanent';
 
 // REQ-F004-055 (rev 11) — the closed, total per-peer HTTP-response → permanent/transient mapping,
@@ -75,7 +83,7 @@ export class HttpPeerTransport implements EventTransport {
             'content-type': 'application/json',
             [DELIVERY_ID_HEADER]: deliveryId,
           };
-          if (this.peerAuthToken !== undefined && this.peerAuthToken !== '') {
+          if (isCredentialConfigured(this.peerAuthToken)) {
             headers[AUTH_TOKEN_HEADER] = this.peerAuthToken;
           }
           const res = await fetch(url, {

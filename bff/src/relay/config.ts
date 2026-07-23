@@ -5,8 +5,17 @@
 // This config requires only the DB path + the EVENT_BUS_* family.
 
 import { dbPath } from '../store/db-path.js';
+import { isCredentialConfigured } from './http-peer-transport.js';
 
 const isProduction = process.env['NODE_ENV'] === 'production';
+
+// Boot-time header-legality validation (REQ-F010-017), environment-INDEPENDENT and DISTINCT from the
+// empty-value check below. If the credential is present but carries any byte that is illegal in an
+// HTTP header field value, refuse to boot rather than attempt a malformed request or silently drop
+// the header. CR/LF/NUL are non-exhaustive illustrations of the rule: legal bytes are HTAB, visible
+// ASCII (0x21–0x7E), space (0x20), and obs-text (0x80–0xFF); anything else (other C0 controls, DEL)
+// is illegal. The credential value is NOT included in the message (REQ-F010-011 redaction).
+const ILLEGAL_HEADER_VALUE_BYTE = /[^\t\x20-\x7e\x80-\xff]/;
 
 // EVENT_BUS_URL — comma-delimited peer list (comma delimiter, per-entry whitespace trimmed, empty
 // entries dropped — mirrors WEB_ORIGINS, bff/src/config.ts). Relay-only (REQ-F004-045/052).
@@ -40,13 +49,6 @@ if (isProduction && peerUrls.length === 0) {
 // engine/auth secrets. `undefined` when unset — no invented fallback default.
 const peerAuthToken = process.env['EVENT_BUS_PEER_AUTH_TOKEN'];
 
-// Boot-time header-legality validation (REQ-F010-017), environment-INDEPENDENT and DISTINCT from the
-// empty-value check below. If the credential is present but carries any byte that is illegal in an
-// HTTP header field value, refuse to boot rather than attempt a malformed request or silently drop
-// the header. CR/LF/NUL are non-exhaustive illustrations of the rule: legal bytes are HTAB, visible
-// ASCII (0x21–0x7E), space (0x20), and obs-text (0x80–0xFF); anything else (other C0 controls, DEL)
-// is illegal. The credential value is NOT included in the message (REQ-F010-011 redaction).
-const ILLEGAL_HEADER_VALUE_BYTE = /[^\t\x20-\x7e\x80-\xff]/;
 if (peerAuthToken !== undefined && ILLEGAL_HEADER_VALUE_BYTE.test(peerAuthToken)) {
   throw new Error(
     'EVENT_BUS_PEER_AUTH_TOKEN contains a byte that is illegal in an HTTP header field value ' +
@@ -60,7 +62,7 @@ if (peerAuthToken !== undefined && ILLEGAL_HEADER_VALUE_BYTE.test(peerAuthToken)
 // Production: refuse to boot naming the missing variable — this prevents the silent 401 park loop a
 // credential-less peer would otherwise produce. Development: boot SOFT (delivery to a
 // credential-requiring peer parks per REQ-F010-014) — this dev posture is normative.
-if (isProduction && peerUrls.length > 0 && (peerAuthToken === undefined || peerAuthToken === '')) {
+if (isProduction && peerUrls.length > 0 && !isCredentialConfigured(peerAuthToken)) {
   throw new Error(
     'EVENT_BUS_PEER_AUTH_TOKEN must be set (shared-secret credential) when a peer is configured ' +
       '(EVENT_BUS_URL non-empty) and the relay runs in production bus mode',

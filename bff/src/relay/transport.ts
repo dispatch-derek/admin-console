@@ -49,7 +49,9 @@ export function createTransport(opts: {
   peerAuthToken?: string;
 }): EventTransport {
   const kind = opts.kind ?? 'http';
-  if (kind === 'http') return new HttpPeerTransport(opts.peerUrls, opts.peerTimeoutMs, opts.peerAuthToken);
+  if (kind === 'http') {
+    return new HttpPeerTransport(opts.peerUrls, opts.peerTimeoutMs, opts.peerAuthToken);
+  }
   if (kind === 'broker') {
     throw new Error('broker transport not available in this build (EVENT_BUS_TRANSPORT=broker)');
   }
