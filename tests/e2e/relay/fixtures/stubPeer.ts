@@ -5,12 +5,8 @@
 // envelope delivery. Response behavior is scriptable per test (status code queues, hangs,
 // always-status) to drive retry/park/crash journeys deterministically -- no sleep()-based flakiness.
 //
-// D-010 (GH #48): this stub used to serve plain http://, which made the D-006 https-only-peer boot
-// guard (bff/src/relay/config.ts ~82-92) refuse to boot the relay in every credential-configured
-// journey (a set EVENT_BUS_PEER_AUTH_TOKEN requires every EVENT_BUS_URL peer to be https://) --
-// those journeys died at boot before any HTTP exchange. The stub now serves https:// uniformly (see
-// startStubPeer below); the spawned relay child trusts the self-signed cert via
-// NODE_TLS_REJECT_UNAUTHORIZED=0 scoped to that child process only (fixtures/relayProcess.ts).
+// D-010 (GH #48): why this serves https:// (not http://) -- see fixtures/tls.ts, the canonical
+// explanation.
 //
 // F-010 addition: requireAuthToken() turns the stub into a credential-checking peer (standing in
 // for cwa's REQ-F005-061 constant-time comparison, at the level of detail an e2e stub needs) --
@@ -22,6 +18,9 @@
 // (REQ-F010-005: the HTTP client also attaches Host/Content-Length/Accept-Encoding/Connection etc).
 
 import { createServer, type Server } from 'node:https';
+// https servers reuse http's IncomingMessage/ServerResponse types -- 'node:https' re-exports the
+// `Server`/`createServer` surface but not these request/response types, so they come from
+// 'node:http' instead (same shapes the request/response callback actually receives at runtime).
 import type { IncomingMessage, IncomingHttpHeaders, ServerResponse } from 'node:http';
 import { loadSelfSignedCert } from './tls.js';
 
