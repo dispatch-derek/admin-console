@@ -43,9 +43,13 @@ export function createTransport(opts: {
   // Optional here so callers/tests may omit it and take the transport's built-in default; the value
   // is passed straight through as a wire concern the transport owns (REQ-F004-049 seam).
   peerTimeoutMs?: number;
+  // Shared-secret credential (EVENT_BUS_PEER_AUTH_TOKEN), threaded config → createTransport →
+  // HttpPeerTransport exactly like peerTimeoutMs (F-010 REQ-F010-008). It is a WIRE concern owned
+  // entirely inside the transport; the drainer/orchestration layer never receives it.
+  peerAuthToken?: string;
 }): EventTransport {
   const kind = opts.kind ?? 'http';
-  if (kind === 'http') return new HttpPeerTransport(opts.peerUrls, opts.peerTimeoutMs);
+  if (kind === 'http') return new HttpPeerTransport(opts.peerUrls, opts.peerTimeoutMs, opts.peerAuthToken);
   if (kind === 'broker') {
     throw new Error('broker transport not available in this build (EVENT_BUS_TRANSPORT=broker)');
   }

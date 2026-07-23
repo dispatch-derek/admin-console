@@ -33,6 +33,40 @@ if (isProduction && peerUrls.length === 0) {
   );
 }
 
+// EVENT_BUS_PEER_AUTH_TOKEN — the shared-secret credential attached to every outbound peer POST
+// (F-010 REQ-F010-007). Read as a RAW single string: NOT comma-split and NOT whitespace-trimmed the
+// way the EVENT_BUS_URL peer list is (that split/trim is peer-list-only). The value is delivered
+// verbatim on the wire (REQ-F010-005); it must never be hard-coded here or sourced from the BFF's
+// engine/auth secrets. `undefined` when unset — no invented fallback default.
+const peerAuthToken = process.env['EVENT_BUS_PEER_AUTH_TOKEN'];
+
+// Boot-time header-legality validation (REQ-F010-017), environment-INDEPENDENT and DISTINCT from the
+// empty-value check below. If the credential is present but carries any byte that is illegal in an
+// HTTP header field value, refuse to boot rather than attempt a malformed request or silently drop
+// the header. CR/LF/NUL are non-exhaustive illustrations of the rule: legal bytes are HTAB, visible
+// ASCII (0x21–0x7E), space (0x20), and obs-text (0x80–0xFF); anything else (other C0 controls, DEL)
+// is illegal. The credential value is NOT included in the message (REQ-F010-011 redaction).
+const ILLEGAL_HEADER_VALUE_BYTE = /[^\t\x20-\x7e\x80-\xff]/;
+if (peerAuthToken !== undefined && ILLEGAL_HEADER_VALUE_BYTE.test(peerAuthToken)) {
+  throw new Error(
+    'EVENT_BUS_PEER_AUTH_TOKEN contains a byte that is illegal in an HTTP header field value ' +
+      '(e.g. CR, LF, NUL, or another control character); refusing to boot with a malformed credential',
+  );
+}
+
+// Missing/empty-credential-while-a-peer-is-configured fail-fast (REQ-F010-017), mirroring the
+// empty-peer-list posture above (REQ-F004-045). "Unset or empty" = the var is ABSENT or the
+// zero-length string (""); a whitespace-only value (" ") is NON-empty and boots (delivered verbatim).
+// Production: refuse to boot naming the missing variable — this prevents the silent 401 park loop a
+// credential-less peer would otherwise produce. Development: boot SOFT (delivery to a
+// credential-requiring peer parks per REQ-F010-014) — this dev posture is normative.
+if (isProduction && peerUrls.length > 0 && (peerAuthToken === undefined || peerAuthToken === '')) {
+  throw new Error(
+    'EVENT_BUS_PEER_AUTH_TOKEN must be set (shared-secret credential) when a peer is configured ' +
+      '(EVENT_BUS_URL non-empty) and the relay runs in production bus mode',
+  );
+}
+
 // /ready thresholds (REQ-F004-024/026): backlog rows, lag ms. Defaults 1000 / 30000.
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -44,6 +78,7 @@ function intEnv(name: string, fallback: number): number {
 export const config = {
   eventBusUrl, // raw value (may be undefined)
   peerUrls, // parsed peer endpoints for HttpPeerTransport fan-out
+  peerAuthToken, // EVENT_BUS_PEER_AUTH_TOKEN — raw verbatim shared-secret credential (may be undefined)
   transportKind, // 'http' (broker already refused above)
   backlogThreshold: intEnv('EVENT_BUS_BACKLOG_THRESHOLD', 1000),
   lagThresholdMs: intEnv('EVENT_BUS_LAG_THRESHOLD_MS', 30_000),
