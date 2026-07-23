@@ -1320,7 +1320,9 @@ situation F-004's own `TEST_PLAN.md` section documented for its unpinned `HttpPe
 
 ## Test files created
 
-- `bff/test/relay/http-peer-transport.f010.test.ts` — 16 tests. REQ-F010-004/005/006/009/013/022.
+- `bff/test/relay/http-peer-transport.f010.test.ts` — 17 tests (see Phase-4 addendum below —
+  net +1 vs. the original 16: one mis-targeted assertion was replaced by two correctly-targeted
+  ones). REQ-F010-004/005/006/009/013/022.
   Three-application-level-header presence when a credential is configured; the "exactly one NEW
   header vs. the no-credential baseline" diff assertion; the REQ-F010-005 whitespace-verification-
   point test (asserted at the `fetch()` call boundary, not the peer-observed wire value, per the
@@ -1331,7 +1333,8 @@ situation F-004's own `TEST_PLAN.md` section documented for its unpinned `HttpPe
 - `bff/test/relay/transport.f010.test.ts` — 5 tests. REQ-F010-008 (credential threaded through
   `createTransport`, not just the transport constructor in isolation) and REQ-F010-029 (broker
   still hard-refuses even with a credential supplied).
-- `bff/test/relay/relay-config.f010.test.ts` — 21 tests. REQ-F010-003 (peer registration reuses the
+- `bff/test/relay/relay-config.f010.test.ts` — 20 tests (see Phase-4 addendum below — net -1 vs.
+  the original 21: two platform-impossible assertions were replaced by one). REQ-F010-003 (peer registration reuses the
   unchanged `EVENT_BUS_URL` wire shape, demonstrated with a representative cwa-shaped URL, not a
   literal spec constant), REQ-F010-007 (new config key, raw single string — NOT comma-split, NOT
   trimmed, no hard-coded literal), REQ-F010-017 (the full boot-posture matrix: production
@@ -1398,6 +1401,107 @@ Test Files  6 failed | 71 passed (77)
   ships). This is called out explicitly rather than silently claimed as uniform RED, per the same
   transparency standard the F-004 `TEST_PLAN.md` section applied to its own vacuously-passing
   `consumer-contract.test.ts`.
+
+## Phase-4 addendum (2026-07-23) — post-implementation verification, two disputed test vectors corrected
+
+F-010 has since been implemented (`bff/src/relay/**`, `bff/.env.example`, and the runbook now
+exist). Re-ran the full suite (`npm test` from `bff/`, plus `npx tsc --noEmit -p bff`). The
+implementer self-reported 1290 pass / 3 fail, disputing all 3 as platform/spec impossibilities in
+the TEST vectors, not implementation bugs. Per instruction, neither claim was taken on the
+implementer's word — both were independently reproduced with standalone scripts before any test
+file was touched.
+
+**Initial post-implementation run (before this addendum's fixes):**
+
+```
+Test Files  2 failed | 75 passed (77)
+     Tests  3 failed | 1290 passed (1293)
+```
+
+All 70 pre-existing files and 5 of this task's 7 F-010 files were already fully green against the
+real implementation — confirming REQ-F010-021 (no F-004 regression) and the bulk of F-010's own
+coverage passed on the FIRST post-implementation run with no test changes needed.
+
+### Dispute 1 — `relay-config.f010.test.ts`, NUL-byte-in-credential boot-refusal (REQ-F010-017)
+
+**Implementer's claim:** `process.env['EVENT_BUS_PEER_AUTH_TOKEN'] = 'tok\x00more'` truncates to
+`'tok'` at assignment (Node/libuv `setenv` uses NUL-terminated C strings), so config reads a valid,
+non-illegal value and correctly boots — the NUL never reaches the process, in tests or reality.
+
+**Independently verified, not assumed:** ran a standalone script (`node`, this exact runtime,
+v24.18.0/linux) that set `process.env['TEST_NUL_VAR'] = 'tok\x00more'` and read it back BOTH
+in-process and via a freshly spawned child process inheriting the same env — both observed `'tok'`
+(3 chars), confirming truncation happens at the OS/environment-variable layer, before any
+JavaScript (including config.ts) ever runs. This is not Node-specific: POSIX `setenv`/`putenv` and
+the Windows environment block are both fundamentally NUL-terminated C-string storage — no real OS
+can carry a NUL byte inside an environment variable's value, for any process, ever.
+
+**Classification: TEST-VECTOR DEFECT, CORRECTED (not an implementation bug).** The two failing
+assertions (`production`/`development` × "NUL byte refuses to boot") asserted behavior that is
+architecturally unreachable via `process.env` on any real OS — the implementation cannot be faulted
+for not rejecting a byte it can never receive. **What changed, in `bff/test/relay/
+relay-config.f010.test.ts`:** removed the two `it.each` assertions asserting `rejects.toThrow()`
+for the NUL-byte vector; replaced them with a single new test that (a) asserts the truncation
+itself in-process (`expect(process.env['EVENT_BUS_PEER_AUTH_TOKEN']).toBe('tok')`) as a pinned,
+executable regression guard rather than a comment-only claim, and (b) asserts the truncated value
+boots normally and is exposed verbatim (`config.peerAuthToken === 'tok'`) — turning an
+unreachable-vector failure into a documented, passing fact. **REQ-F010-017 coverage is NOT
+reduced:** the pre-existing CR-byte and LF-byte `it.each` tests (both environments) and the VT
+(0x0B) "non-exhaustive illustration" test are untouched, still pass against the real
+implementation, and independently exercise the SAME header-legality-refusal code path on bytes that
+ARE reachable via `process.env` — which is REQ-F010-017's actual testable intent ("CR, LF, and NUL
+are non-exhaustive illustrations... of any byte illegal in an HTTP header field value").
+
+### Dispute 2 — `http-peer-transport.f010.test.ts`, whitespace-only `' '` credential observed at the peer (REQ-F010-005/017)
+
+**Implementer's claim:** WHATWG `fetch`/undici strips leading/trailing HTTP whitespace from header
+values before the request is sent, so a peer stub observes `''`, not `' '`; REQ-F010-005's own text
+says the whitespace-verbatim check must be done at the TRANSPORT boundary (the `fetch()` call), not
+at the peer, for exactly this reason; the sibling fetch-spy test (value `' abc '`) already passes,
+proving the transport itself sets the value verbatim.
+
+**Independently verified, not assumed:** wrote a standalone script driving a real local
+`node:http` server with real `fetch()` calls. Confirmed: (a) a whitespace-only header value `' '`
+arrives at the server as `''`; (b) `new Headers({'x': ' '}).get('x')` is ALREADY `''` immediately
+after construction, with zero network I/O — i.e., the stripping happens inside the WHATWG `Headers`
+class itself, not "in transit" on the wire, so it is unconditional for any code using `fetch`/
+`Headers`, not implementation-specific; (c) the padded case `' abc '` likewise normalizes to
+`'abc'` at the peer, corroborating the effect is general, not a one-off.
+
+**Classification: TEST-VECTOR DEFECT, CORRECTED (not an implementation bug).** The failing
+assertion checked the whitespace-only value at the peer-observed wire boundary — precisely the
+verification point REQ-F010-005's own text says is insufficient ("a peer stub that observes trimmed
+surrounding whitespace does not by itself prove a spec violation, whereas the transport setting a
+trimmed value does"). **What changed, in `bff/test/relay/http-peer-transport.f010.test.ts`:**
+1. Extracted the existing fetch-spy plumbing (previously inlined only in the `' abc '` test) into
+   a shared `captureTransportHeaderValue(peerAuthToken)` helper, so the correct verification
+   technique is reusable rather than re-duplicated per value.
+2. Replaced the single peer-observed `' '` assertion with **two** tests: (a) a corrected test using
+   `captureTransportHeaderValue(' ')` that asserts the TRANSPORT sets the header to `' '` verbatim
+   at the `fetch()` call boundary — this is the test that actually proves/disproves REQ-F010-017's
+   "whitespace-only is non-empty, sent verbatim" claim, and it now passes; (b) a new,
+   explicitly-labeled DOCUMENTATION test at the peer boundary that asserts the header KEY is
+   present (proving the transport did not treat `' '` as absent, contrasting with the `''`→omitted
+   case) while its VALUE is normalized to `''` by the client — asserting the real, verified outcome
+   rather than a false expectation, with an inline comment citing REQ-F010-005's own text for why
+   this is not itself a spec violation.
+
+REQ-F010-005/017 coverage is NOT reduced — if anything it is more precise: the mechanism the spec
+actually requires (transport sets the value verbatim) is now the one asserted, and the previously
+over-claiming peer-level assertion is retained as accurate documentation instead of a false claim.
+
+### Final suite status (after both corrections)
+
+```
+Test Files  77 passed (77)
+     Tests  1293 passed (1293)
+```
+
+`npx tsc --noEmit -p bff` exits 0. Zero regressions: all 70 pre-existing files remain green: all 7
+F-010 files (now 64 tests total, unchanged count — the two corrections were 2-for-1 and 1-for-2
+swaps that net to zero) pass against the real implementation. Every REQ-F010-### id in the
+coverage map below remains covered at the same or a strictly more precise verification point;
+none was weakened, skipped, or deleted to make the suite pass, per this role's hard rule 4.
 
 ## REQ-F010-### → test coverage map (every REQ mapped)
 

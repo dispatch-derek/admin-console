@@ -168,15 +168,36 @@ describe('relay/config.ts — REQ-F010-017: boot posture on a missing/empty cred
     },
   );
 
-  it.each(['production', 'development'] as const)(
-    '%s: a credential containing a NUL byte refuses to boot',
-    async (env) => {
-      process.env['NODE_ENV'] = env;
-      process.env['EVENT_BUS_URL'] = 'https://a.example';
-      process.env['EVENT_BUS_PEER_AUTH_TOKEN'] = 'tok\u0000more';
-      await expect(loadRelayConfig()).rejects.toThrow();
-    },
-  );
+  // CORRECTED (Phase-4 verification, 2026-07-23): the original two assertions here asserted
+  // `loadRelayConfig()` REJECTS when `EVENT_BUS_PEER_AUTH_TOKEN` is set to a value containing an
+  // embedded NUL byte. Independently verified (NOT taking the implementer's word for it) that
+  // this vector is a PLATFORM IMPOSSIBILITY, not an implementation gap: `process.env['X'] =
+  // '...\x00...'` silently TRUNCATES AT THE NUL at the point of ASSIGNMENT, before config.ts (or
+  // any JS code) ever runs -- confirmed on this exact runtime (Node v24.18.0, linux) both
+  // in-process and via a freshly spawned child process reading the same env var, ruling out a
+  // V8-internal-map-only artifact. This is not Node-specific: POSIX (`putenv`/`setenv`) and
+  // Windows environment blocks are both fundamentally NUL-terminated C-string storage -- no real
+  // OS can carry a NUL byte inside an environment variable's value, for ANY process, ever. So
+  // config.ts is architecturally incapable of ever OBSERVING a NUL byte via
+  // `process.env.EVENT_BUS_PEER_AUTH_TOKEN`; the two deleted assertions were testing a vector the
+  // credential can never actually traverse, and therefore could never legitimately fail for an
+  // implementation-side reason. REQ-F010-017's OWN text calls CR/LF/NUL "non-exhaustive
+  // illustrations" of "any byte illegal in an HTTP header field value" -- NUL specifically just
+  // happens to be one that no env-var-based config vector can ever carry. REQ-F010-017 coverage
+  // is NOT reduced: the CR/LF tests above and the VT (0x0B) test below independently prove the
+  // SAME header-legality-refusal code path fires on a reachable illegal byte, which is the
+  // requirement's actual testable intent. Replaced with a test that documents and asserts the
+  // truncation itself as a pinned regression guard, rather than silently deleting the assertion.
+  it('EVENT_BUS_PEER_AUTH_TOKEN containing an embedded NUL byte is UNREACHABLE via process.env on any real OS (platform-level truncation at assignment, confirmed independently) -- the truncated remainder is itself a valid, non-illegal credential and correctly BOOTS', async () => {
+    process.env['NODE_ENV'] = 'production';
+    process.env['EVENT_BUS_URL'] = 'https://a.example';
+    process.env['EVENT_BUS_PEER_AUTH_TOKEN'] = 'tok\u0000more';
+    // Confirms the platform-truncation claim in THIS process, at THIS assignment -- not merely
+    // asserted in a comment.
+    expect(process.env['EVENT_BUS_PEER_AUTH_TOKEN']).toBe('tok');
+    const { config } = await loadRelayConfig();
+    expect((config as { peerAuthToken?: string }).peerAuthToken).toBe('tok');
+  });
 
   it('the header-illegal-byte refusal error is distinct from the empty-value refusal error (spec: "this validation is distinct from the empty-value check")', async () => {
     process.env['NODE_ENV'] = 'production';

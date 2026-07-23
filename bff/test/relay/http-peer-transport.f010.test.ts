@@ -142,42 +142,50 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     expect(added).toEqual(['x-event-auth-token']);
   });
 
+  // Shared fetch-spy helper (extracted during Phase-4 verification so the whitespace-only case
+  // below can reuse the SAME transport-boundary technique as the padded-value case, rather than
+  // duplicating the plumbing). Spies on globalThis.fetch, captures the header value the TRANSPORT
+  // itself passed into the HTTP client call — BEFORE any client-internal (WHATWG Headers/undici)
+  // normalization — and returns it, or `undefined` if fetch was never called at all.
+  async function captureTransportHeaderValue(peerAuthToken: string): Promise<string | null | undefined> {
+    const calls: Array<{ init: Record<string, unknown> | undefined }> = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input: unknown, init?: unknown) => {
+      calls.push({ init: init as Record<string, unknown> | undefined });
+      return new Response(null, { status: 200 });
+    });
+    try {
+      const transport = new HttpPeerTransport!(['http://127.0.0.1:1'], undefined, peerAuthToken);
+      await transport.deliver('{}', 'epoch-1:ws').catch(() => undefined);
+      if (calls.length === 0) return undefined;
+      const headersArg = calls[0]!.init?.['headers'];
+      if (headersArg instanceof Headers) return headersArg.get('X-Event-Auth-Token');
+      if (headersArg && typeof headersArg === 'object') {
+        const rec = headersArg as Record<string, string>;
+        return rec['X-Event-Auth-Token'] ?? rec['x-event-auth-token'];
+      }
+      return undefined;
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }
+
   it('the credential value is delivered BYTE-FOR-BYTE verbatim — no trim/case-fold/re-encode — asserted at the point the transport sets the header value (REQ-F010-005 whitespace-verification point: some HTTP clients strip optional surrounding whitespace in transit, so this is NOT asserted via the peer-observed wire value)', async () => {
     if (typeof globalThis.fetch !== 'function') {
       expect.fail('globalThis.fetch is not available in this runtime — cannot apply the assumed fetch-spy technique.');
       return;
     }
-    const calls: Array<{ url: string; init: Record<string, unknown> | undefined }> = [];
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown, init?: unknown) => {
-      calls.push({ url: String(input), init: init as Record<string, unknown> | undefined });
-      return new Response(null, { status: 200 });
-    });
-    try {
-      const transport = new HttpPeerTransport!(['http://127.0.0.1:1'], undefined, ' abc ');
-      await transport.deliver('{}', 'epoch-1:ws').catch(() => undefined);
-
-      if (calls.length === 0) {
-        expect.fail(
-          'HttpPeerTransport does not appear to call globalThis.fetch — this whitespace-verbatim-at-the-' +
-            'transport-boundary assertion assumed a fetch-based client (bff/package.json ships no alternate ' +
-            'HTTP client dependency). If the real transport uses node:http directly instead, this test needs ' +
-            'adapting to spy on that client instead; REQ-F010-005 whitespace-verbatim MUST still be verified ' +
-            'at the transport boundary via an equivalent white-box hook. Flagged in TEST_PLAN.md Ambiguities.',
-        );
-        return;
-      }
-      const headersArg = calls[0]!.init?.['headers'];
-      let value: string | null | undefined;
-      if (headersArg instanceof Headers) {
-        value = headersArg.get('X-Event-Auth-Token');
-      } else if (headersArg && typeof headersArg === 'object') {
-        const rec = headersArg as Record<string, string>;
-        value = rec['X-Event-Auth-Token'] ?? rec['x-event-auth-token'];
-      }
-      expect(value).toBe(' abc ');
-    } finally {
-      fetchSpy.mockRestore();
+    const value = await captureTransportHeaderValue(' abc ');
+    if (value === undefined) {
+      expect.fail(
+        'HttpPeerTransport does not appear to call globalThis.fetch — this whitespace-verbatim-at-the-' +
+          'transport-boundary assertion assumed a fetch-based client (bff/package.json ships no alternate ' +
+          'HTTP client dependency). If the real transport uses node:http directly instead, this test needs ' +
+          'adapting to spy on that client instead; REQ-F010-005 whitespace-verbatim MUST still be verified ' +
+          'at the transport boundary via an equivalent white-box hook. Flagged in TEST_PLAN.md Ambiguities.',
+      );
+      return;
     }
+    expect(value).toBe(' abc ');
   });
 
   it('with NO credential configured (constructor arg omitted entirely), the outbound POST carries only the two pre-F-010 headers — no X-Event-Auth-Token at all (REQ-F010-005 scoping: the three-header MUST applies only "when a credential is configured")', async () => {
@@ -198,13 +206,52 @@ describe.skipIf(!HttpPeerTransport)('REQ-F010-004/005 — the credential is carr
     expect(names).not.toContain('x-event-auth-token');
   });
 
-  it('a WHITESPACE-ONLY credential (" ") is NOT treated as absent — the header IS attached, carrying the whitespace verbatim (REQ-F010-017: whitespace-only is non-empty)', async () => {
+  // CORRECTED (Phase-4 verification, 2026-07-23): the original assertion here checked the
+  // whitespace-only value as OBSERVED BY THE PEER (`lowerHeaders(...)`) and expected literal ' '
+  // to survive. Independently verified (NOT taking the implementer's word for it — reproduced
+  // with a standalone script against a real local node:http server) that WHATWG `Headers`/undici
+  // (Node's global `fetch`) normalizes a header value's OPTIONAL leading/trailing HTTP whitespace
+  // AWAY at `Headers` construction/`.set()` time — i.e. `new Headers({'x': ' '}).get('x')` is
+  // already `''`, synchronously, with ZERO network I/O involved — so NO conforming fetch-based
+  // HTTP client can ever deliver a whitespace-only value to a peer un-normalized. This is exactly
+  // the failure mode REQ-F010-005 itself names and explicitly routes AROUND: "some HTTP clients
+  // or intermediaries strip optional surrounding whitespace in transit; a peer stub that observes
+  // trimmed surrounding whitespace does not by itself prove a spec violation, whereas the
+  // transport setting a trimmed value does." The peer-observed assertion was therefore asserting
+  // a byte-for-byte-at-the-wire claim the spec's OWN text says is not the correct verification
+  // point — replaced with two tests: (1) below, the CORRECT transport-boundary check (reusing the
+  // padded-value case's fetch-spy technique), which is the test that actually proves/disproves
+  // REQ-F010-017's "whitespace-only is non-empty, sent verbatim" claim; (2) further below, the
+  // peer-observed behavior is kept as an explicitly-labeled DOCUMENTATION test of the client's own
+  // normalization (asserting the real, verified outcome), not a false expectation.
+  it('a WHITESPACE-ONLY credential (" ") is NOT treated as absent — the TRANSPORT sets the header value verbatim (asserted at the fetch() call boundary, per REQ-F010-005\'s own whitespace-verification-point instruction, NOT via the peer-observed wire value)', async () => {
+    if (typeof globalThis.fetch !== 'function') {
+      expect.fail('globalThis.fetch is not available in this runtime — cannot apply the assumed fetch-spy technique.');
+      return;
+    }
+    const value = await captureTransportHeaderValue(' ');
+    if (value === undefined) {
+      expect.fail(
+        'HttpPeerTransport does not appear to call globalThis.fetch — see the sibling padded-value test for ' +
+          'the full explanation of this assumption.',
+      );
+      return;
+    }
+    expect(value).toBe(' ');
+  });
+
+  it('a WHITESPACE-ONLY credential (" ") IS attached as a header (the KEY is present at the peer, proving the transport did not treat it as absent) even though undici/fetch\'s own Headers normalization empties its VALUE in transit — DOCUMENTED, not a spec violation (REQ-F010-005\'s own text: a peer observing trimmed whitespace "does not by itself prove a spec violation")', async () => {
     const p = await startFakePeer(200);
     peers = [p];
     const transport = new HttpPeerTransport!([p.url], undefined, ' ');
     await transport.deliver('{}', 'epoch-1:ws-only-cred');
     const h = lowerHeaders(p.requests[0]!);
-    expect(h['x-event-auth-token']).toBe(' ');
+    expect(Object.keys(h)).toContain('x-event-auth-token'); // attached, not omitted (contrast with the "" -> absent case above)
+    // The value itself is normalized to '' by the fetch/undici client BEFORE it ever reaches the
+    // wire (confirmed independently, see comment above) — this is the client's own behavior, not
+    // a transport defect, and is exactly why REQ-F010-005 pins verbatim-value verification to the
+    // transport boundary (the test above), not here.
+    expect(h['x-event-auth-token']).toBe('');
   });
 });
 
