@@ -14,7 +14,7 @@ import { OutboxTestDb, makeEnvelope } from '../fixtures/db.js';
 import { spawnRelay, waitFor, type RelayHandle } from '../fixtures/relayProcess.js';
 import { makeTmpDbPath } from '../fixtures/tmp.js';
 
-const AUTH_HEADER = 'x-event-auth-token';
+const AUTH_HEADER = 'x-event-ingest-secret';
 
 let peerA: StubPeer | undefined;
 let peerB: StubPeer | undefined;

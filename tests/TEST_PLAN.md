@@ -1287,7 +1287,7 @@ green F-004 baseline.
 F-004 is fully implemented (`bff/src/relay/**` — `config.ts`, `transport.ts`,
 `http-peer-transport.ts`, `drainer.ts`, `metrics.ts`, `ready.ts`, `backoff.ts`, `delivery-id.ts` —
 all exist and their F-004 suites are green). **F-010's credential path does not exist yet**: no
-`X-Event-Auth-Token` header is ever attached, no `EVENT_BUS_PEER_AUTH_TOKEN` config key exists, no
+`X-Event-Ingest-Secret` header is ever attached, no `EVENT_BUS_PEER_AUTH_TOKEN` config key exists, no
 boot-posture validation for it exists, and `bff/.env.example` does not document the key. Every new
 test below is written strictly from the spec (this task did not read `bff/src/**` before writing
 it), and is **expected to fail now** on a clean assertion mismatch — not a syntax/import error in
@@ -1391,7 +1391,7 @@ Test Files  6 failed | 71 passed (77)
 - **Note on which failures are "genuinely F-010 RED" vs. "passes now by legitimately reusing
   F-004 machinery":** a few assertions in `drainer.f010.test.ts` (REQ-F010-014/019) **pass today**
   even though no credential code path exists, because a stub peer that requires a matching
-  `X-Event-Auth-Token` header already sees "no header at all" as a mismatch regardless of F-010's
+  `X-Event-Ingest-Secret` header already sees "no header at all" as a mismatch regardless of F-010's
   status — this legitimately proves F-004's classify/park/metrics machinery already composes
   correctly with a credential-authenticating peer, which F-010 must not regress. The genuinely-new
   RED signal for the credential mechanism itself is `REQ-F010-018`'s replay test (requires the
