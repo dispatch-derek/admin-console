@@ -74,7 +74,7 @@ if (isProduction && peerUrls.length > 0 && !isCredentialConfigured(peerAuthToken
 
 // Non-https peer-scheme fail-fast (D-006 / GH #16), mirroring the empty-peer-list (REQ-F004-045)
 // and missing-credential (REQ-F010-017) fail-fasts above. The transport POSTs the
-// X-Event-Auth-Token shared secret + admin.* envelope to each peer, so a plaintext http:// peer
+// X-Event-Bus-Peer-Auth-Token shared secret + admin.* envelope to each peer, so a plaintext http:// peer
 // would ship both in cleartext. Refuse to boot on any peer whose scheme is not https:// WHENEVER a
 // credential is configured OR the relay runs in production. Bare http:// is allowed ONLY in
 // development with no credential configured (dev-loopback convenience). The offending scheme is
