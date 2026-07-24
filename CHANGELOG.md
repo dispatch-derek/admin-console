@@ -5,6 +5,14 @@ All notable changes to the Admin Console are documented here. This project follo
 
 ## [Unreleased]
 
+## [D-011 — Outbound Credential Header Rename (Unified Wire Contract)]
+
+### Fixed
+
+- **Relay outbound credential header renamed (D-011 / GH #51):** The relay's outbound HTTP credential header for peer authentication has been renamed from `X-Event-Auth-Token` to `X-Event-Bus-Peer-Auth-Token` to align with the unified cross-app wire-contract naming. The environment variable `EVENT_BUS_PEER_AUTH_TOKEN` remains unchanged. This change supersedes the stranded D-009 fix (which never reached main) and pairs with customer-web-app D-003 (consumer-side header adoption); both apps must adopt the same header name for peer delivery to succeed. Updated runbook: `docs/runbooks/F-010-peer-registration-and-credential.md`.
+
+---
+
 ## [D-010 — Relay E2E Test Infrastructure: HTTPS Stub Peer]
 
 ### Fixed
