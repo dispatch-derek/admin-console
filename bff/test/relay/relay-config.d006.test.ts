@@ -1,7 +1,7 @@
 // bff/src/relay/config.ts — D-006 (GH #16) regression test. Root-cause per debugger's report:
 // EVENT_BUS_URL parsing (config.ts:22-26) performs split/trim/filter with NO URL-scheme
 // validation, so an `http://` peer is silently accepted and the relay POSTs the
-// `X-Event-Auth-Token` shared secret + `admin.*` envelope in cleartext.
+// `X-Event-Bus-Peer-Auth-Token` shared secret + `admin.*` envelope in cleartext.
 //
 // Expected-fixed behavior (per the fix ticket): the relay MUST fail fast at config load/boot on
 // any non-`https://` peer URL when a credential is configured (EVENT_BUS_PEER_AUTH_TOKEN set) OR

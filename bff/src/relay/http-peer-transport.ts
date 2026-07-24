@@ -15,7 +15,7 @@ const DELIVERY_ID_HEADER = 'x-event-delivery-id';
 // re-encode here), though WHATWG Fetch may strip leading/trailing HTTP whitespace in transit.
 // The credential is owned entirely inside this transport (REQ-F010-008 seam) and never appears in
 // logs, errors, metrics, or /ready (REQ-F010-011).
-const AUTH_TOKEN_HEADER = 'X-Event-Auth-Token';
+const AUTH_TOKEN_HEADER = 'X-Event-Bus-Peer-Auth-Token';
 
 // Default per-peer request timeout — a provisional constant of record, operator-tunable via
 // EVENT_BUS_PEER_TIMEOUT_MS (threaded in through the relay-scoped config → createTransport → this
