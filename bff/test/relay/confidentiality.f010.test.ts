@@ -16,7 +16,7 @@ describe('REQ-F010-010 — the credential is NEVER placed in the event envelope 
       ['event', 'actor', 'target', 'changes', 'verified', 'timestamp', 'payload'].sort(),
     );
     const json = JSON.stringify(envelope);
-    expect(json).not.toMatch(/credential|authtoken|auth_token|x-event-auth-token/i);
+    expect(json).not.toMatch(/credential|authtoken|auth_token|x-event-bus-peer-auth-token/i);
   });
 
   it('a static scan of the emitted-envelope-shaping modules references no credential-carrying field/name', () => {
@@ -25,7 +25,7 @@ describe('REQ-F010-010 — the credential is NEVER placed in the event envelope 
     for (const p of [emitterPath, catalogPath]) {
       if (!existsSync(p)) continue;
       const text = readFileSync(p, 'utf8');
-      expect(text, p).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|peerAuthToken|X-Event-Auth-Token/);
+      expect(text, p).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|peerAuthToken|X-Event-Bus-Peer-Auth-Token/);
     }
   });
 });
@@ -122,14 +122,14 @@ describe('REQ-F010-011 — /ready and metrics surfaces never reference a credent
     const path = resolve(import.meta.dirname, '../../src/relay/ready.ts');
     if (!existsSync(path)) return; // covered elsewhere if ready.ts is missing entirely
     const text = readFileSync(path, 'utf8');
-    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Auth-Token|peerAuthToken/);
+    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Bus-Peer-Auth-Token|peerAuthToken/);
   });
 
   it('metrics.ts recorder functions carry no credential-shaped parameter/field in their source text', () => {
     const path = resolve(import.meta.dirname, '../../src/relay/metrics.ts');
     if (!existsSync(path)) return;
     const text = readFileSync(path, 'utf8');
-    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Auth-Token|peerAuthToken/);
+    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Bus-Peer-Auth-Token|peerAuthToken/);
   });
 });
 

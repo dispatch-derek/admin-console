@@ -45,7 +45,7 @@ describe('REQ-F010-001 — the outbound transport gains a REAL credential-carryi
 
   it.skipIf(!existsSync(transportPath))('http-peer-transport.ts references the credential header name literal — a genuine code-path change, not config alone', () => {
     const text = readFileSync(transportPath, 'utf8');
-    expect(text).toMatch(/X-Event-Auth-Token/i);
+    expect(text).toMatch(/X-Event-Bus-Peer-Auth-Token/i);
   });
 
   it('flags pre-implementation state explicitly rather than silently passing (RED signal until the credential code path exists)', () => {
@@ -54,9 +54,9 @@ describe('REQ-F010-001 — the outbound transport gains a REAL credential-carryi
       return;
     }
     const text = readFileSync(transportPath, 'utf8');
-    if (!/X-Event-Auth-Token/i.test(text)) {
+    if (!/X-Event-Bus-Peer-Auth-Token/i.test(text)) {
       expect.fail(
-        'http-peer-transport.ts does not yet reference the X-Event-Auth-Token credential header — ' +
+        'http-peer-transport.ts does not yet reference the X-Event-Bus-Peer-Auth-Token credential header — ' +
           'pre-F-010 state (exactly two headers, no credential), expected RED signal per REQ-F010-001.',
       );
     }
@@ -105,7 +105,7 @@ describe('REQ-F010-002/012/027 — the admin.* catalog is UNCHANGED by F-010 (21
   it('catalog.ts is not edited to add a credential-related field/name (F-010 is transport metadata, never an envelope/catalog field)', () => {
     if (!existsSync(catalogPath)) return;
     const text = readFileSync(catalogPath, 'utf8');
-    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Auth-Token|peerAuthToken/);
+    expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN|X-Event-Bus-Peer-Auth-Token|peerAuthToken/);
   });
 });
 
@@ -114,7 +114,7 @@ describe('REQ-F010-008/023 — the credential is transport-internal ONLY: the dr
 
   it.skipIf(!existsSync(drainerPath))('drainer.ts contains no credential value, credential-header constant, or credential env-var reference', () => {
     const text = readFileSync(drainerPath, 'utf8');
-    expect(text).not.toMatch(/X-Event-Auth-Token/i);
+    expect(text).not.toMatch(/X-Event-Bus-Peer-Auth-Token/i);
     expect(text).not.toMatch(/EVENT_BUS_PEER_AUTH_TOKEN/);
     expect(text).not.toMatch(/peerAuthToken/);
   });

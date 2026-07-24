@@ -51,7 +51,7 @@ function deliveryIdOf(rowId: number): string {
 }
 void deliveryIdOf; // available for future assertions; not every test needs it
 
-// A stub peer that authenticates the X-Event-Auth-Token header against a fixed expected value —
+// A stub peer that authenticates the X-Event-Bus-Peer-Auth-Token header against a fixed expected value —
 // 200 on match, 401 (permanent per REQ-F004-055) on mismatch/absence, mirroring cwa's documented
 // REQ-F005-063 contract ("401 = permanent park by design", cited by REQ-F010-014).
 interface AuthPeer {
@@ -66,7 +66,7 @@ function startAuthPeer(expectedToken: string): Promise<AuthPeer> {
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      const got = req.headers['x-event-auth-token'];
+      const got = req.headers['x-event-bus-peer-auth-token'];
       const ok = got === expectedToken;
       res.writeHead(ok ? 200 : 401).end();
     });
