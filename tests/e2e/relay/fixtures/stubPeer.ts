@@ -1,9 +1,12 @@
-// Ephemeral localhost HTTP peer double for HttpPeerTransport (bff/src/relay/http-peer-transport.ts).
-// A real `node:http` server on a real OS-assigned port -- the relay's `fetch()` POST hits this
-// exactly as it would hit a real peer. Every received request is recorded (method, headers, raw
-// body, parsed JSON) so tests can assert byte-for-byte envelope delivery. Response behavior is
-// scriptable per test (status code queues, hangs, always-status) to drive retry/park/crash
-// journeys deterministically -- no sleep()-based flakiness.
+// Ephemeral localhost HTTPS peer double for HttpPeerTransport (bff/src/relay/http-peer-transport.ts).
+// A real `node:https` server (self-signed loopback cert, see fixtures/tls.ts) on a real OS-assigned
+// port -- the relay's `fetch()` POST hits this exactly as it would hit a real peer. Every received
+// request is recorded (method, headers, raw body, parsed JSON) so tests can assert byte-for-byte
+// envelope delivery. Response behavior is scriptable per test (status code queues, hangs,
+// always-status) to drive retry/park/crash journeys deterministically -- no sleep()-based flakiness.
+//
+// D-010 (GH #48): why this serves https:// (not http://) -- see fixtures/tls.ts, the canonical
+// explanation.
 //
 // F-010 addition: requireAuthToken() turns the stub into a credential-checking peer (standing in
 // for cwa's REQ-F005-061 constant-time comparison, at the level of detail an e2e stub needs) --
@@ -14,7 +17,12 @@
 // presence of the three F-010 application-level headers without asserting a literal total count
 // (REQ-F010-005: the HTTP client also attaches Host/Content-Length/Accept-Encoding/Connection etc).
 
-import { createServer, type IncomingMessage, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http';
+import { createServer, type Server } from 'node:https';
+// https servers reuse http's IncomingMessage/ServerResponse types -- 'node:https' re-exports the
+// `Server`/`createServer` surface but not these request/response types, so they come from
+// 'node:http' instead (same shapes the request/response callback actually receives at runtime).
+import type { IncomingMessage, IncomingHttpHeaders, ServerResponse } from 'node:http';
+import { loadSelfSignedCert } from './tls.js';
 
 export interface PeerRequest {
   deliveryId: string;
@@ -63,7 +71,8 @@ export async function startStubPeer(): Promise<StubPeer> {
   const hanging = new Map<string, ServerResponse>();
   const inflight = new Set<IncomingMessage>();
 
-  const server: Server = createServer((req, res) => {
+  const { key, cert } = loadSelfSignedCert();
+  const server: Server = createServer({ key, cert }, (req, res) => {
     inflight.add(req);
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
@@ -111,7 +120,7 @@ export async function startStubPeer(): Promise<StubPeer> {
   if (address === null || typeof address === 'string') {
     throw new Error('stub peer: expected an AddressInfo from listen(0)');
   }
-  const url = `http://127.0.0.1:${address.port}`;
+  const url = `https://127.0.0.1:${address.port}`;
 
   return {
     url,
